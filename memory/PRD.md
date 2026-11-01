@@ -30,3 +30,9 @@ Play The Traitors with 10–15 family players in one hotel in Egypt, ~12 days, 2
 - Secret actions editor (/actions): add, edit, delete and reset actions; saved in Mongo `settings` and kept between games
 - Shareable Finale (/finale): picture of the final results made with react-native-view-shot and shared with expo-sharing (phone only; on web it shows a message instead)
 - "Start a new game" now asks for confirmation first
+
+## Iteration 3 (2026-06) - Several phones at once
+- Every phone shares the one online game. The dashboard checks for updates every 4s and again when the app is reopened
+- `/game/advance?expected=<phase>&expected_day=<day>` only moves the game on once, even if two phones tap the same button
+- Game changes are handled one at a time (asyncio lock), so turns sent from different phones at the same moment are never lost
+- How to play: new "Playing on several phones" card

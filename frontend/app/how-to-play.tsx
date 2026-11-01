@@ -33,6 +33,11 @@ const STEPS: { icon: React.ComponentProps<typeof Ionicons>["name"]; title: strin
     body: "The Faithful win if every Traitor is out. The Traitors win if they equal the number of Faithful, or if any Traitor survives until the end of Day 12.",
   },
   {
+    icon: "phone-portrait-outline",
+    title: "Playing on several phones",
+    body: "Open the app on as many phones as you like, for example one per couple. Every phone shows the same game and updates by itself every few seconds. Anyone can take their turn on any phone: tap your own name and enter your PIN, then tap \"Hide\" before handing it back. You need an internet connection.",
+  },
+  {
     icon: "eye-off",
     title: "Forgot your secret?",
     body: "Tap \"Check my secret\" on the main screen, then your name, to see your role (and, for Traitors, today's victim and action).",

@@ -3,6 +3,8 @@ from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
 import os
+import asyncio
+import functools
 import logging
 import random
 import hashlib
@@ -140,6 +142,18 @@ class TurnIn(AuthIn):
 
 
 # ---------------- Helpers ----------------
+GAME_LOCK = asyncio.Lock()
+
+
+def locked(fn):
+    """Serialise game writes so turns sent from several phones at once are never lost."""
+    @functools.wraps(fn)
+    async def wrapper(*args, **kwargs):
+        async with GAME_LOCK:
+            return await fn(*args, **kwargs)
+    return wrapper
+
+
 async def load_game() -> Optional[Game]:
     doc = await db.games.find_one({"key": GAME_KEY}, {"_id": 0})
     return Game.from_mongo(doc) if doc else None
@@ -308,6 +322,7 @@ async def get_game():
 
 
 @api_router.post("/game")
+@locked
 async def create_game(data: CreateGameIn):
     names = [p.name.strip() for p in data.players]
     if len(names) < 4 or len(names) > 15:
@@ -331,6 +346,7 @@ async def create_game(data: CreateGameIn):
 
 
 @api_router.delete("/game")
+@locked
 async def delete_game():
     await db.games.delete_many({"key": GAME_KEY})
     return {"exists": False}
@@ -362,6 +378,7 @@ async def private_view(data: AuthIn):
 
 
 @api_router.post("/game/turn")
+@locked
 async def take_turn(data: TurnIn):
     g = await require_game()
     p = auth(g, data)
@@ -410,8 +427,12 @@ async def take_turn(data: TurnIn):
 
 
 @api_router.post("/game/advance")
-async def advance():
+@locked
+async def advance(expected: Optional[str] = None, expected_day: Optional[int] = None):
     g = await require_game()
+    # Several phones may tap the same button: only the first one moves the game on
+    if (expected and expected != g.phase) or (expected_day and expected_day != g.day):
+        return public_state(g)
     if g.phase == "setup":
         if len(g.turns_done) < len(g.players):
             raise HTTPException(400, "Every player must see their role first")

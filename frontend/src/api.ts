@@ -94,7 +94,8 @@ export const api = {
     murder_done?: boolean;
     target_id?: string;
   }) => request<PrivateView>("/game/turn", "POST", body),
-  advance: () => request<GameState>("/game/advance", "POST"),
+  advance: (expected: Phase, day: number) =>
+    request<GameState>(`/game/advance?expected=${expected}&expected_day=${day}`, "POST"),
   getActions: () => request<ActionList>("/actions"),
   saveActions: (actions: string[]) => request<ActionList>("/actions", "PUT", { actions }),
   resetActions: () => request<ActionList>("/actions", "DELETE"),

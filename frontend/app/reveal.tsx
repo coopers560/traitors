@@ -19,7 +19,7 @@ export default function Reveal() {
   const [step, setStep] = useState(0);
 
   const advance = useMutation({
-    mutationFn: api.advance,
+    mutationFn: () => api.advance("reveal", data?.exists ? data.day : 0),
     onSuccess: (s) => {
       qc.setQueryData(["game"], s);
       router.dismissTo("/");

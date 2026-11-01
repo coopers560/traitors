@@ -16,7 +16,17 @@ type ActiveGame = Extract<GameState, { exists: true }>;
 export default function Home() {
   const styles = useStyles();
   const { colors } = useTheme();
-  const { data, isLoading, refetch, isRefetching, error } = useQuery({ queryKey: ["game"], queryFn: api.getGame });
+  const { data, isLoading, refetch, error } = useQuery({
+    queryKey: ["game"],
+    queryFn: api.getGame,
+    refetchInterval: 4000, // keeps every phone in sync
+  });
+  const [pulling, setPulling] = useState(false);
+  const onRefresh = async () => {
+    setPulling(true);
+    await refetch();
+    setPulling(false);
+  };
 
   if (isLoading) {
     return (
@@ -34,7 +44,7 @@ export default function Home() {
     );
   }
   if (!data.exists) return <Welcome />;
-  return <Dashboard game={data} refreshing={isRefetching} onRefresh={refetch} />;
+  return <Dashboard game={data} refreshing={pulling} onRefresh={onRefresh} />;
 }
 
 function Welcome() {
@@ -79,7 +89,7 @@ const PHASE_COPY: Record<string, { eyebrow: string; title: string; body: string 
   setup: {
     eyebrow: "The Gathering",
     title: "Discover your role",
-    body: "Pass the phone around. Each player taps their own name, enters their PIN and secretly learns if they are Faithful or a Traitor.",
+    body: "Pass the phone around, or use several phones at once. Each player taps their own name, enters their PIN and secretly learns if they are Faithful or a Traitor.",
   },
   day: {
     eyebrow: "During the day",
@@ -89,7 +99,7 @@ const PHASE_COPY: Record<string, { eyebrow: string; title: string; body: string 
   roundtable: {
     eyebrow: "This evening",
     title: "The Round Table",
-    body: "Argue, accuse, defend. Then pass the phone around: everyone casts a secret vote to banish someone.",
+    body: "Argue, accuse, defend. Then everyone casts a secret vote to banish someone — on any phone, all at the same time if you like.",
   },
   reveal: {
     eyebrow: "The verdict",
@@ -109,7 +119,7 @@ function Dashboard({ game, refreshing, onRefresh }: { game: ActiveGame; refreshi
   const [peekMode, setPeekMode] = useState(false);
 
   const advance = useMutation({
-    mutationFn: api.advance,
+    mutationFn: () => api.advance(game.phase, game.day),
     onSuccess: (s) => {
       qc.setQueryData(["game"], s);
       if (s.exists && s.phase === "reveal") router.push("/reveal");

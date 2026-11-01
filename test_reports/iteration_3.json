@@ -1,0 +1,36 @@
+{
+  "summary": "Iteration 3 tested multi-phone play. Backend: 34 of 35 pytest tests passed (with -n 0). The new test_multi_device.py confirms that /game/advance?expected=X is idempotent for setup, day, roundtable and reveal: a second call with the same expected value returns the current state and moves nothing. A wrong or bogus expected value leaves the phase unchanged, and advance with no param still works. One real bug was found: when several phones take turns at the same moment, some turns are lost. Every request returns 200, but turns_done ends up short (lost 1, 2 and 1 turns out of 10 over 3 trials). Frontend: two separate browser contexts at 390x844. B showed the dashboard 3.3s after A created the game, without reloading. Setup turns taken on A (traitor plus 1 faithful) and on B (3 faithful) showed the same 'N of 5' count and check marks on both phones. After A tapped Begin Day 1, B showed Day 1 within 3.8s. On B, Gather at the Round Table followed by a stale tap on A: A's GET polling was blocked, one vote was already cast, and the game stayed in roundtable on Day 2 with the vote kept and no error. Votes were split 3 on A and 2 on B and the counts synced. After A tapped reveal, B showed 'Open the envelope' within 3.8s. A finished the reveal and both moved to Day 2. B then tapped finish on its stale reveal screen: phase stayed day, Day 2, history length 1, so Day 2's Round Table was not skipped. No progressbar spinner appeared during 9s of background polling (refreshing is tied to the local pulling state). How to play shows the 'Playing on several phones' card. History (history-day-1) and the Actions screen load. The finale was covered by iteration 2 and its code is unchanged. No page errors. Deprecated packages detected: none.",
+  "backend_issues": {
+    "critical": [
+      {"endpoint": "POST /api/game/turn (and any read-modify-write on the single game doc)", "issue": "Turns are lost when phones submit at the same time. Each handler calls load_game, mutates the object, then save() does replace_one of the whole document. Two concurrent requests both read the old state and the last write wins, which drops the other player's turns_done entry, vote and next_target. Every request returns 200, so the player sees 'sealed' while the dashboard stays at e.g. 9 of 10 and the reveal stays blocked on 'Waiting for votes…'. Reproduced: 12 players with 10 parallel setup turns lost 1, 2 and 1 turns over 3 trials. Test: /app/backend/tests/test_multi_device.py::TestConcurrentTurns", "priority": "HIGH"}
+    ],
+    "minor": [
+      {"endpoint": "POST /api/game/advance", "issue": "expected only compares the phase, not the day. A phone that stays stale for a whole cycle (e.g. offline from Day N 'day' until Day N+1 'day') would still advance. With 4s polling this is unlikely. Optionally pass expected_day too."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [
+      {"flow": "Simultaneous voting / setup turns on several phones", "issue": "The backend race above silently drops turns. The UI shows the turn as sealed while the count never reaches N, so that player has to vote again.", "affected_testIDs": ["vote-submit-button", "setup-turn-confirm-button", "turn-progress", "advance-reveal-button"]}
+    ],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": ["/app/backend/tests/test_multi_device.py", "/app/backend/tests/test_traitors_game.py", "/app/backend/tests/test_actions_history.py", "/app/test_reports/pytest/pytest_results.xml"],
+  "action_items": [
+    "HIGH: Make game mutations atomic. Wrap the read-modify-write in /game/turn, /game/advance, /game/private (if it writes) and DELETE/POST /game in a module-level asyncio.Lock. This works with the current --workers 1. For a more robust fix, use atomic Mongo updates ($addToSet turns_done, $set votes.<pid>) or optimistic concurrency (a version field plus replace_one filter {key, version} with a retry). Then make TestConcurrentTurns pass.",
+    "Optional: include the day in the advance idempotency check (expected_day)."
+  ],
+  "critical_code_review_comments": [
+    "server.py save() uses replace_one on the whole game doc, with no lock or version check. This is the root cause of the lost-update race.",
+    "reveal.tsx uses useQuery without refetchInterval. It still stays in sync because the index screen's polling observer remains mounted under the stack. That is fine, but it is fragile if the navigation structure changes.",
+    "React Query focusManager/AppState is not wired in _layout.tsx. On native, a phone coming back to the foreground waits up to 4s for the next interval tick instead of refetching immediately. This is minor."
+  ],
+  "updated_files": ["/app/backend/tests/test_multi_device.py (new)"],
+  "success_rate": {"backend": "97% (34/35; the failure is a real concurrency bug)", "frontend": "100% of requested multi-device flows"},
+  "seed_data_creation": "TEST_P1..P5 (and TEST_P1..P12 for the race test) games were created. Cleanup done: DELETE /api/game (exists:false) and DELETE /api/actions (defaults restored).",
+  "retest_needed": true,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Run pytest with -n 0. The multi-device UI test used page.context.browser.new_context() for phone B. To make A stale, A.route('**/api/game', abort GET) blocked A's polling. Screenshots must be .jpeg when quality is set. Use TestConcurrentTurns to verify the lock/atomic fix.",
+  "rca_of_issue": "Lost update: concurrent POST /game/turn requests each await find_one (load), mutate their own Game copy, then await replace_one. Uvicorn interleaves the coroutines at the awaits, so request 2 reads the state before request 1 has saved it, and request 2's later replace_one overwrites request 1's turn. Repro: python /tmp/race.py or pytest test_multi_device.py -k Concurrent. Fix: serialise mutations with an asyncio.Lock, or use atomic/versioned Mongo updates."
+}
