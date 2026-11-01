@@ -95,4 +95,18 @@ export const api = {
     target_id?: string;
   }) => request<PrivateView>("/game/turn", "POST", body),
   advance: () => request<GameState>("/game/advance", "POST"),
+  getActions: () => request<ActionList>("/actions"),
+  saveActions: (actions: string[]) => request<ActionList>("/actions", "PUT", { actions }),
+  resetActions: () => request<ActionList>("/actions", "DELETE"),
 };
+
+export type ActionList = { actions: string[]; is_default: boolean };
+
+/** How and when a player left the game, from the public history. */
+export function exitOf(history: DayResult[], playerId: string): { how: "murdered" | "banished"; day: number } | null {
+  for (const h of history) {
+    if (h.murder.success && h.murder.eliminated && h.murder.victim_id === playerId) return { how: "murdered", day: h.day };
+    if (h.banish.target_id === playerId && h.banish.eliminated && !h.banish.already_dead) return { how: "banished", day: h.day };
+  }
+  return null;
+}

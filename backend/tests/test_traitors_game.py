@@ -28,6 +28,14 @@ def private(pid, pin):
     return S.post(f"{API}/game/private", json={"player_id": pid, "pin": pin})
 
 
+def finish_setup(ps):
+    # everyone (non-traitor already done is harmless) sees their role, then advance setup -> day
+    for p in ps:
+        S.post(f"{API}/game/turn", json={"player_id": p["id"], "pin": pin_of(p["name"])})
+    r = S.post(f"{API}/game/advance")
+    assert r.status_code == 200 and r.json()["phase"] == "day", r.text
+
+
 def setup_game(n=10):
     r = S.post(f"{API}/game", json={"players": mk_players(n)})
     assert r.status_code == 200, r.text
@@ -187,7 +195,7 @@ class TestFlow:
         tr = next(p for p in ps if roles[p["id"]] == "traitor")
         fa = [p for p in ps if roles[p["id"]] == "faithful"]
         S.post(f"{API}/game/turn", json={"player_id": tr["id"], "pin": pin_of(tr["name"]), "target_id": fa[0]["id"]})
-        S.post(f"{API}/game/advance?force=true"); S.post(f"{API}/game/advance")
+        finish_setup(ps); S.post(f"{API}/game/advance")
         # tie: 2 votes vs 2 votes
         votes = {fa[0]["id"]: fa[1]["id"], fa[1]["id"]: fa[0]["id"], fa[2]["id"]: fa[0]["id"], tr["id"]: fa[1]["id"]}
         for p in ps:
@@ -212,7 +220,7 @@ class TestFlow:
         tr = next(p for p in ps if roles[p["id"]] == "traitor")
         fa = [p for p in ps if roles[p["id"]] == "faithful"]
         S.post(f"{API}/game/turn", json={"player_id": tr["id"], "pin": pin_of(tr["name"]), "target_id": fa[0]["id"]})
-        S.post(f"{API}/game/advance?force=true")
+        finish_setup(ps)
         winner = None
         for _ in range(4):
             S.post(f"{API}/game/advance")

@@ -24,3 +24,9 @@ Play The Traitors with 10–15 family players in one hotel in Egypt, ~12 days, 2
 ## Backlog
 - P1: Limit wrong PIN attempts
 - P2: History screen of all past days, custom action list, recruitment of new Traitors
+
+## Iteration 2 (2026-06)
+- Day History screen (/history): murder victim + action and Round Table result + vote tally for each day
+- Secret actions editor (/actions): add, edit, delete and reset actions; saved in Mongo `settings` and kept between games
+- Shareable Finale (/finale): picture of the final results made with react-native-view-shot and shared with expo-sharing (phone only; on web it shows a message instead)
+- "Start a new game" now asks for confirmation first

@@ -112,8 +112,8 @@ class Game(BaseModel):
     def alive(self) -> List[Player]:
         return [p for p in self.players if p.lives > 0]
 
-    def pick_action(self) -> str:
-        pool = [a for a in ACTIONS if a not in self.used_actions] or ACTIONS
+    def pick_action(self, actions: List[str]) -> str:
+        pool = [a for a in actions if a not in self.used_actions] or actions
         a = random.choice(pool)
         self.used_actions.append(a)
         return a
@@ -143,6 +143,15 @@ class TurnIn(AuthIn):
 async def load_game() -> Optional[Game]:
     doc = await db.games.find_one({"key": GAME_KEY}, {"_id": 0})
     return Game.from_mongo(doc) if doc else None
+
+
+class ActionsIn(BaseModel):
+    actions: List[str]
+
+
+async def get_actions() -> List[str]:
+    doc = await db.settings.find_one({"key": "actions"}, {"_id": 0})
+    return doc["actions"] if doc and doc.get("actions") else ACTIONS
 
 
 async def require_game() -> Game:
@@ -264,6 +273,32 @@ async def root():
     return {"message": "The Traitors"}
 
 
+@api_router.get("/actions")
+async def list_actions():
+    actions = await get_actions()
+    return {"actions": actions, "is_default": actions == ACTIONS}
+
+
+@api_router.put("/actions")
+async def save_actions(data: ActionsIn):
+    cleaned, seen = [], set()
+    for a in data.actions:
+        a = a.strip()
+        if a and a.lower() not in seen and len(a) <= 120:
+            cleaned.append(a)
+            seen.add(a.lower())
+    if len(cleaned) < 3:
+        raise HTTPException(400, "Keep at least 3 actions so the Traitors have choices")
+    await db.settings.replace_one({"key": "actions"}, {"key": "actions", "actions": cleaned}, upsert=True)
+    return {"actions": cleaned, "is_default": cleaned == ACTIONS}
+
+
+@api_router.delete("/actions")
+async def reset_actions():
+    await db.settings.delete_many({"key": "actions"})
+    return {"actions": ACTIONS, "is_default": True}
+
+
 @api_router.get("/game")
 async def get_game():
     g = await load_game()
@@ -338,7 +373,7 @@ async def take_turn(data: TurnIn):
                 valid_victim(g, data.target_id)
                 g.target_id = data.target_id
                 if not g.action:
-                    g.action = g.pick_action()
+                    g.action = g.pick_action(await get_actions())
             elif not g.target_id:
                 raise HTTPException(400, "Choose who to murder on Day 1")
     elif g.phase == "roundtable":
@@ -355,14 +390,14 @@ async def take_turn(data: TurnIn):
                 valid_victim(g, data.target_id)
                 g.next_target_id = data.target_id
                 if not g.next_action:
-                    g.next_action = g.pick_action()
+                    g.next_action = g.pick_action(await get_actions())
     elif g.phase == "day" and is_traitor and p.lives > 0 and data.target_id:
         # Traitors re-pick if their planned victim was eliminated overnight
         if g.target_id and g.player(g.target_id).lives > 0:
             raise HTTPException(400, "Today's victim is already chosen")
         valid_victim(g, data.target_id)
         g.target_id = data.target_id
-        g.action = g.pick_action()
+        g.action = g.pick_action(await get_actions())
         await save(g)
         return await private_view(AuthIn(player_id=data.player_id, pin=data.pin))
     else:

@@ -62,6 +62,13 @@ function Welcome() {
             icon="book-outline"
             onPress={() => router.push("/how-to-play")}
           />
+          <Button
+            testID="welcome-actions-button"
+            label="Edit secret actions"
+            variant="ghost"
+            icon="list-outline"
+            onPress={() => router.push("/actions")}
+          />
         </Animated.View>
       </View>
     </View>
@@ -157,6 +164,8 @@ function Dashboard({ game, refreshing, onRefresh }: { game: ActiveGame; refreshi
       {menu ? (
         <View style={styles.menu} testID="dashboard-menu">
           <Button testID="menu-how-to-play-button" label="How to play" variant="secondary" icon="book-outline" onPress={() => { setMenu(false); router.push("/how-to-play"); }} />
+          <Button testID="menu-history-button" label="Day history" variant="secondary" icon="time-outline" onPress={() => { setMenu(false); router.push("/history"); }} />
+          <Button testID="menu-actions-button" label="Secret actions" variant="secondary" icon="list-outline" onPress={() => { setMenu(false); router.push("/actions"); }} />
           <Button testID="menu-end-game-button" label="End this game" variant="danger" icon="trash-outline" onPress={() => { setMenu(false); setConfirmEnd(true); }} />
         </View>
       ) : null}
@@ -278,7 +287,9 @@ function PlayerRow({ p, index, showTurn, onPress, disabled }: { p: PublicPlayer;
 function EndedCard({ game }: { game: ActiveGame }) {
   const styles = useStyles();
   const qc = useQueryClient();
-  const del = useMutation({ mutationFn: api.deleteGame, onSuccess: (s) => qc.setQueryData(["game"], s) });
+  const router = useRouter();
+  const [confirmNew, setConfirmNew] = useState(false);
+  const del = useMutation({ mutationFn: api.deleteGame, onSuccess: (s) => { setConfirmNew(false); qc.setQueryData(["game"], s); } });
   const traitorsWin = game.winner === "traitors";
   return (
     <Animated.View entering={FadeInDown.duration(600)} style={styles.phaseCard} testID="ended-card">
@@ -287,7 +298,18 @@ function EndedCard({ game }: { game: ActiveGame }) {
         {traitorsWin ? "The Traitors win" : "The Faithful win"}
       </Title>
       <Body>All roles are now revealed below. Well played, everyone.</Body>
-      <Button testID="new-game-button" label="Start a new game" icon="refresh" loading={del.isPending} onPress={() => del.mutate()} />
+      <Button testID="share-finale-button" label="Share the finale" icon="share-social" onPress={() => router.push("/finale")} />
+      <Button testID="ended-history-button" label="Day history" variant="secondary" icon="time-outline" onPress={() => router.push("/history")} />
+      <Button testID="new-game-button" label="Start a new game" variant="ghost" icon="refresh" onPress={() => setConfirmNew(true)} />
+      <ConfirmSheet
+        visible={confirmNew}
+        title="Start a new game?"
+        message="This game's results and history will be cleared. Share the picture first if you want to keep it."
+        confirmLabel="Yes, start fresh"
+        loading={del.isPending}
+        onConfirm={() => del.mutate()}
+        onCancel={() => setConfirmNew(false)}
+      />
     </Animated.View>
   );
 }
