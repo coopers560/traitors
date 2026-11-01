@@ -1,0 +1,167 @@
+{
+  "app_name": "The Traitors: Holiday Edition",
+  "personality": "6 Glass / Luxe DARK",
+  "personality_one_liner": "A cinematic, moody, and deeply dramatic shared-screen experience inspired by medieval castles, candlelight, and betrayal.",
+  "color": {
+    "surface": "#0D1113",
+    "onSurface": "#F3EFE7",
+    "surfaceSecondary": "#1A2024",
+    "onSurfaceSecondary": "#E1D9CD",
+    "surfaceTertiary": "#252D32",
+    "onSurfaceTertiary": "#C0B4A4",
+    "surfaceInverse": "#F3EFE7",
+    "onSurfaceInverse": "#0D1113",
+    "brand": "#D4AF37",
+    "onBrand": "#0D1113",
+    "brandPrimary": "#C5A030",
+    "onBrandPrimary": "#0D1113",
+    "brandSecondary": "#8C7123",
+    "onBrandSecondary": "#F3EFE7",
+    "brandTertiary": "#3D351B",
+    "onBrandTertiary": "#D4AF37",
+    "success": "#3E6950",
+    "onSuccess": "#DDF3E4",
+    "warning": "#8C5A20",
+    "onWarning": "#FDEBD3",
+    "error": "#7A2828",
+    "onError": "#FAD7D7",
+    "info": "#2B4C5E",
+    "onInfo": "#D4E8F5",
+    "border": "#32383C",
+    "borderStrong": "#575E63",
+    "divider": "#20262A",
+    "muted": "#8E989E"
+  },
+  "typography": {
+    "displayFontFamily": "Cormorant Garamond",
+    "textFontFamily": "Switzer",
+    "scale": {
+      "sm": 12,
+      "base": 16,
+      "lg": 20,
+      "xl": 24,
+      "2xl": 32,
+      "3xl": 48
+    }
+  },
+  "spacing": {
+    "rule": "Generous vertical rhythm to accommodate older players. Large padding on buttons and list items.",
+    "xs": 4,
+    "sm": 8,
+    "md": 16,
+    "lg": 24,
+    "xl": 32,
+    "2xl": 48,
+    "3xl": 64
+  },
+  "radius_tokens": {
+    "sm": 4,
+    "md": 8,
+    "lg": 16,
+    "pill": 999
+  },
+  "shadow_tier": "0",
+  "navigation": "stack_only",
+  "icon_set": "Phosphor",
+  "glassmorphism": {
+    "enabled": true,
+    "do's": [
+      "Use blur on modal scrims, sticky bottom CTAs, and overlay panels over background imagery.",
+      "Pair blur with a dark tint (e.g., surface color at 75% opacity) to ensure foreground text is highly readable."
+    ],
+    "dont's": [
+      "Do not blur dense lists or form fields.",
+      "Do not rely solely on blur without a tint behind text."
+    ]
+  },
+  "platform_libraries": {
+    "glass": {
+      "ios": "expo-glass-effect",
+      "android": "expo-blur",
+      "low_end_android_fallback": "solid surfaceSecondary"
+    },
+    "image": "expo-image",
+    "blur": "expo-blur",
+    "bottom_sheet": "@gorhom/bottom-sheet",
+    "animation": "react-native-reanimated",
+    "gesture": "react-native-gesture-handler"
+  },
+  "screens": [
+    {
+      "name": "Welcome / Setup",
+      "purpose": "Configure the 10-15 players, set 4-digit PINs, and start the 12-day game.",
+      "states": {
+        "loading": "Centered gold spinner",
+        "empty": "N/A",
+        "error": "Error creating game"
+      },
+      "layout": "Full-bleed background image of a dark castle with a heavy gradient scrim. A single 'Start Game' or 'Continue Game' button anchored at the bottom."
+    },
+    {
+      "name": "Day Dashboard (Public Hub)",
+      "purpose": "The safe, public screen shown when passing the phone. Displays the current Day, alive players, and remaining lives.",
+      "states": {
+        "loading": "Spinner",
+        "empty": "N/A",
+        "error": "Failed to load state"
+      },
+      "layout": "Header shows 'Day X / 12'. Grid or list of players. Tapping a player initiates the PIN entry modal to enter their private view. Buttons must be large and accessible."
+    },
+    {
+      "name": "PIN Entry Modal",
+      "purpose": "A gatekeeper screen to prevent players from seeing others' roles or actions.",
+      "states": {
+        "loading": "Verifying...",
+        "empty": "N/A",
+        "error": "Incorrect PIN. Try again."
+      },
+      "layout": "Dark glass overlay with a large, legible numeric keypad. 'Hand the phone to [Player]' prominently displayed."
+    },
+    {
+      "name": "Private Action (Role / Murder / Vote)",
+      "purpose": "Contextual private screen: reveals role on Day 1, allows Traitors to select a victim + secret physical action, or allows voting at the Round Table.",
+      "states": {
+        "loading": "Loading action...",
+        "empty": "N/A",
+        "error": "Action failed to save."
+      },
+      "layout": "Centered, single-focus layout. If Traitor, show a form to pick a victim and type/select the 'in plain sight' action (e.g., 'Hand them a napkin'). Dark, moody background with candle imagery."
+    },
+    {
+      "name": "Resolution Reveal",
+      "purpose": "The cinematic morning reveal of who was murdered and who was banished.",
+      "states": {
+        "loading": "Loading results...",
+        "empty": "N/A",
+        "error": "N/A"
+      },
+      "layout": "Dramatic typography, slow fade-in animations, wax seal envelope imagery. Focus heavily on storytelling."
+    }
+  ],
+  "images": {
+    "hero_castle_bg": {
+      "url": "https://images.unsplash.com/photo-1665516870021-4de1bb8e02aa?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjAzMzN8MHwxfHNlYXJjaHwyfHxzY290dGlzaCUyMGNhc3RsZSUyMG5pZ2h0JTIwZm9nfGVufDB8fHx8MTc5MzU2NzQ0Mnww&ixlib=rb-4.1.0&q=85",
+      "alt": "Scottish castle at night in the fog"
+    },
+    "private_candle_bg": {
+      "url": "https://images.unsplash.com/photo-1640085461451-e3dc47415dd1?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjAzNzl8MHwxfHNlYXJjaHwxfHxsaXQlMjBjYW5kbGUlMjBkYXJrJTIwbW9vZHl8ZW58MHx8fHwxNzkzNTY3NDQyfDA&ixlib=rb-4.1.0&q=85",
+      "alt": "Single lit candle in the dark"
+    },
+    "traitor_hood_bg": {
+      "url": "https://images.unsplash.com/photo-1646633632840-1c95d61c909e?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjA2ODl8MHwxfHNlYXJjaHwyfHxob29kZWQlMjBmaWd1cmUlMjBkYXJrJTIwZHJhbWF0aWN8ZW58MHx8fHwxNzkzNTY3NDQyfDA&ixlib=rb-4.1.0&q=85",
+      "alt": "Hooded figure in the dark"
+    },
+    "resolution_seal_bg": {
+      "url": "https://images.unsplash.com/photo-1641477176034-1a3e10c343a8?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjA1Mjh8MHwxfHNlYXJjaHwyfHx3YXglMjBzZWFsJTIwZW52ZWxvcGUlMjB2aW50YWdlfGVufDB8fHx8MTc5MzU2NzQ0Mnww&ixlib=rb-4.1.0&q=85",
+      "alt": "Vintage envelope with a wax seal"
+    }
+  },
+  "instructions_to_main_agent": [
+    "This is a shared-phone pass-and-play app. Navigation must be strictly Stack-based. There is no personal tab bar.",
+    "The primary demographic includes 60-year-olds. Touch targets MUST be large (minimum 56px, preferably 64px for primary actions). Typography must be highly legible; bump the base font size if necessary.",
+    "Implement the 'gradient-to-dark scrim' pattern strictly on all screens with background images. The scrim must fade from transparent to at least 80% opacity at the bottom so the overlaid white/gold text is perfectly readable.",
+    "The 'Day Dashboard' is the safe hub. From there, tapping a player triggers a PIN Entry modal before revealing any private information. Maintain this strict separation.",
+    "For the Traitor's 'in plain sight' murder feature, provide a clear text input or dropdown on their private screen to record the physical action (e.g., 'Offer a drink') they must perform to complete the murder.",
+    "Use the Cormorant Garamond display font generously for screen titles and dramatic reveals to nail the BBC 'The Traitors' aesthetic."
+  ]
+}
