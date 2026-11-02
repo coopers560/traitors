@@ -25,7 +25,7 @@ const STEPS: { icon: React.ComponentProps<typeof Ionicons>["name"]; title: strin
   {
     icon: "mail-open",
     title: "4. The Reveal",
-    body: "The app reveals who was murdered (and the secret action used), then who the table banished. Each costs one life. Lose both lives and you are out — and your role is revealed.",
+    body: "The app reveals who was murdered (but never the secret action, so keep guessing who did it), then who the table banished. Each costs one life. Lose both lives and you are out — and your role is revealed.",
   },
   {
     icon: "trophy",

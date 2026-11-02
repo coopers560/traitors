@@ -7,7 +7,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { api, DayResult } from "@/src/api";
 import { ScreenHeader } from "@/src/components/screen-header";
 import { Body, Eyebrow, Title } from "@/src/components/ui";
-import { fonts, makeStyles, radius, spacing, useTheme } from "@/src/theme";
+import { makeStyles, radius, spacing, useTheme } from "@/src/theme";
 
 export default function History() {
   const styles = useStyles();
@@ -49,12 +49,9 @@ function DayCard({ h, index }: { h: DayResult; index: number }) {
           <Text style={styles.label}>Murder</Text>
         </View>
         {m.success ? (
-          <>
-            <Text style={styles.main} testID={`history-murder-${h.day}`}>
-              {m.victim_name} {m.eliminated ? `was killed — ${roleText(m.role)}` : "lost a life"}
-            </Text>
-            <Text style={styles.action}>&ldquo;{m.action}&rdquo;</Text>
-          </>
+          <Text style={styles.main} testID={`history-murder-${h.day}`}>
+            {m.victim_name} {m.eliminated ? `was killed — ${roleText(m.role)}` : "lost a life"}
+          </Text>
         ) : (
           <Text style={styles.main}>No murder — the Traitors failed</Text>
         )}
@@ -98,7 +95,6 @@ const useStyles = makeStyles((c) => ({
   sectionHead: { flexDirection: "row", alignItems: "center", gap: spacing.sm },
   label: { color: c.muted, fontSize: 13, letterSpacing: 2, textTransform: "uppercase", fontWeight: "600" },
   main: { color: c.onSurface, fontSize: 18, lineHeight: 25, fontWeight: "600" },
-  action: { fontFamily: fonts.displaySemi, fontSize: 22, lineHeight: 27, color: c.brand },
   divider: { height: 1, backgroundColor: c.divider },
   tally: { gap: 2, marginTop: spacing.xs },
   tallyRow: { flexDirection: "row", justifyContent: "space-between" },

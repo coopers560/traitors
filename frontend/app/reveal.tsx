@@ -99,9 +99,8 @@ function Murder({ r }: { r: DayResult }) {
       <Eyebrow style={{ color: colors.traitor }}>Murdered in plain sight</Eyebrow>
       <Text style={styles.bigName} testID="reveal-murder-victim">{m.victim_name}</Text>
       <View style={styles.card}>
-        <Text style={styles.cardLabel}>The secret action was</Text>
-        <Text style={styles.action} testID="reveal-murder-action">{m.action}</Text>
-        <Body style={{ fontSize: 15 }}>Who did that to {m.victim_name} today? Think hard…</Body>
+        <Text style={styles.cardLabel}>The secret action stays secret</Text>
+        <Body style={{ fontSize: 15 }}>Somebody did something to {m.victim_name} today. Who was it? Think hard…</Body>
       </View>
       <Consequence eliminated={!!m.eliminated} lives={m.lives_left ?? 0} role={m.role} />
     </Animated.View>
@@ -185,7 +184,6 @@ const useStyles = makeStyles((c) => ({
   bigName: { fontFamily: fonts.display, fontSize: 56, lineHeight: 60, color: c.onSurface },
   card: { backgroundColor: c.surfaceSecondary, borderRadius: radius.lg, padding: spacing.lg, gap: spacing.sm, borderWidth: 1, borderColor: c.border },
   cardLabel: { color: c.muted, fontSize: 13, letterSpacing: 2, textTransform: "uppercase", fontWeight: "600" },
-  action: { fontFamily: fonts.displaySemi, fontSize: 30, lineHeight: 34, color: c.brand },
   lifeRow: { flexDirection: "row", alignItems: "center", gap: spacing.md },
   role: { fontFamily: fonts.display, fontSize: 48, lineHeight: 52 },
   tallyRow: { flexDirection: "row", justifyContent: "space-between", paddingVertical: 4 },

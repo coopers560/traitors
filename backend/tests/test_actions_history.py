@@ -66,8 +66,8 @@ class TestActions:
         assert v["next_action"] in CUSTOM and v["next_action"] != first_action
         r = S.post(f"{G()}/advance").json()
         h = r["history"][-1]
-        # history contains murder action + banishment tally
-        assert h["day"] == 1 and h["murder"]["success"] and h["murder"]["action"] == first_action
+        # history contains the murder (but never the secret action) + banishment tally
+        assert h["day"] == 1 and h["murder"]["success"] and "action" not in h["murder"]
         assert h["murder"]["victim_name"] == fa[0]["name"]
         assert h["banish"]["name"] == fa[1]["name"] and h["banish"]["tally"][0]["votes"] == 4
         r = S.post(f"{G()}/advance").json()

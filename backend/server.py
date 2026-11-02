@@ -213,7 +213,8 @@ def public_state(g: Game) -> dict:
         ],
         "turns_needed": len(g.players) if g.phase == "setup" else len(g.alive()),
         "turns_done": len(g.turns_done),
-        "history": g.history,
+        # never reveal which secret action was used (strip from older records too)
+        "history": [{**h, "murder": {k: v for k, v in h["murder"].items() if k != "action"}} for h in g.history],
     }
 
 
@@ -256,7 +257,6 @@ def resolve_day(g: Game) -> dict:
             "success": True,
             "victim_id": victim.id,
             "victim_name": victim.name,
-            "action": g.action,
             "lives_left": victim.lives,
             "eliminated": victim.lives == 0,
             "role": victim.role if victim.lives == 0 else None,

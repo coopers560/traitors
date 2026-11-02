@@ -43,3 +43,6 @@ Play The Traitors with 10–15 family players in one hotel in Egypt, ~12 days, 2
 - The dashboard header shows the code; tap it to share. The menu has "Leave game on this phone" and "End this game for everyone"; other phones in an ended game are told it has ended
 - Secret actions are now saved per game, not shared by all groups
 - Each game has its own lock, so different groups don't slow each other down
+
+## Iteration 5 (2026-06)
+- The secret action used is never revealed: removed from the reveal screen, Day history and the public API (also stripped from older records). Traitors still see it privately.
