@@ -1,61 +1,41 @@
-# Helper to drive game state via API for UI tests: python ui_seed.py <cmd>
+# Helper to drive a game via API for UI tests (join-code routes): python ui_seed.py <cmd> [code]
+#   create            -> prints new game code (5 TEST_P players, PINs 0001..0005)
+#   setup <code>      -> traitor picks a faithful victim, everyone sees role
+#   vote <code>       -> every alive player votes (traitors confirm murder, pick next victim)
+#   delete <code>     -> delete game
 import sys
-from test_traitors_game import API, S, setup_game, pin_of, private
+from test_traitors_game import API, S, G, mk_players, pin_of
 
 cmd = sys.argv[1]
+code = sys.argv[2] if len(sys.argv) > 2 else None
 
 
-def roles():
-    g = S.get(f"{API}/game").json()
-    r = {p["id"]: private(p["id"], pin_of(p["name"])).json()["role"] for p in g["players"]}
+def roles(code):
+    g = S.get(G(code)).json()
+    r = {p["id"]: S.post(f"{G(code)}/private", json={"player_id": p["id"], "pin": pin_of(p["name"])}).json()["role"] for p in g["players"]}
     return g, r
 
 
-def vote_all(g, r, target, next_target=None, murder=True):
+if cmd == "create":
+    print(S.post(f"{API}/games", json={"players": mk_players(5)}).json()["code"])
+elif cmd == "setup":
+    g, r = roles(code)
+    fa = [p for p in g["players"] if r[p["id"]] == "faithful"]
+    for p in g["players"]:
+        body = {"player_id": p["id"], "pin": pin_of(p["name"])}
+        if r[p["id"]] == "traitor":
+            body["target_id"] = fa[0]["id"]
+        print(p["name"], S.post(f"{G(code)}/turn", json=body).status_code)
+elif cmd == "vote":
+    g, r = roles(code)
     alive = [p for p in g["players"] if p["alive"]]
+    fa = [p for p in alive if r[p["id"]] == "faithful"]
+    target = fa[-1]
     for p in alive:
-        vt = target["id"] if p["id"] != target["id"] else next(x["id"] for x in alive if x["id"] != p["id"])
+        vt = target["id"] if p["id"] != target["id"] else fa[0]["id"]
         body = {"player_id": p["id"], "pin": pin_of(p["name"]), "vote_target_id": vt}
         if r[p["id"]] == "traitor":
-            body["murder_done"] = murder
-            if next_target:
-                body["target_id"] = next_target["id"]
-        print(S.post(f"{API}/game/turn", json=body).status_code, end=" ")
-    print()
-
-
-if cmd == "setup":  # 5 players, all roles seen, traitor picks victim -> still in setup
-    S.delete(f"{API}/game")
-    g, r = setup_game(5)
-    ps = g["players"]
-    tr = next(p for p in ps if r[p["id"]] == "traitor")
-    fa = [p for p in ps if r[p["id"]] == "faithful"]
-    S.post(f"{API}/game/turn", json={"player_id": tr["id"], "pin": pin_of(tr["name"]), "target_id": fa[0]["id"]})
-    for p in ps:
-        if p["id"] != tr["id"]:
-            S.post(f"{API}/game/turn", json={"player_id": p["id"], "pin": pin_of(p["name"])})
-    print("traitor", tr["name"], "victim", fa[0]["name"])
-elif cmd == "votes":  # in roundtable: everyone votes first alive faithful (not victim)
-    g, r = roles()
-    alive_f = [p for p in g["players"] if p["alive"] and r[p["id"]] == "faithful"]
-    vote_all(g, r, alive_f[-1], next_target=alive_f[0])
-    print("banish target", alive_f[-1]["name"])
-elif cmd == "to_end":  # loop rounds until game ended
-    for _ in range(12):
-        g = S.get(f"{API}/game").json()
-        if g["phase"] == "ended":
-            break
-        if g["phase"] in ("day", "reveal"):
-            S.post(f"{API}/game/advance"); continue
-        if g["phase"] == "roundtable":
-            g, r = roles()
-            alive_f = [p for p in g["players"] if p["alive"] and r[p["id"]] == "faithful"]
-            vote_all(g, r, alive_f[-1], next_target=alive_f[0])
-            S.post(f"{API}/game/advance")
-    g = S.get(f"{API}/game").json()
-    print(g["phase"], g["winner"], len(g["history"]))
-    for p in g["players"]:
-        print(p["name"], p["role"], p["lives"])
-elif cmd == "state":
-    g = S.get(f"{API}/game").json()
-    print(g.get("phase"), g.get("day"), g.get("turns_done"), "/", g.get("turns_needed"))
+            body.update(murder_done=True, target_id=fa[0]["id"])
+        print(p["name"], S.post(f"{G(code)}/turn", json=body).status_code)
+elif cmd == "delete":
+    print(S.delete(G(code)).json())

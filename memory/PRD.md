@@ -36,3 +36,10 @@ Play The Traitors with 10–15 family players in one hotel in Egypt, ~12 days, 2
 - `/game/advance?expected=<phase>&expected_day=<day>` only moves the game on once, even if two phones tap the same button
 - Game changes are handled one at a time (asyncio lock), so turns sent from different phones at the same moment are never lost
 - How to play: new "Playing on several phones" card
+
+## Iteration 4 (2026-06) - Game join codes
+- Every game gets its own 5-character code (no look-alike characters, upper or lower case both work). Routes: /api/games, /api/games/{code}/...
+- The phone remembers its code (storage key `game_code`). Welcome screen: Begin a new game / Join with a code (/join)
+- The dashboard header shows the code; tap it to share. The menu has "Leave game on this phone" and "End this game for everyone"; other phones in an ended game are told it has ended
+- Secret actions are now saved per game, not shared by all groups
+- Each game has its own lock, so different groups don't slow each other down

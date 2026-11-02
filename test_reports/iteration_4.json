@@ -1,0 +1,56 @@
+{
+  "summary": "Tested the Game Join Code feature on backend and frontend. Backend: 42/42 pytest pass (-n 0). I moved the 3 existing suites to the /api/games/{code} routes and added test_game_codes.py, which covers code format and uniqueness, case-insensitive lookup, the 404 'No game found with that code' detail, removal of the old /api/game and /api/actions routes, separation between games (players, turns, actions, and a player id from game A getting 404 in game B), custom actions used only in their own game's murders, and deleting one game leaving the other. Frontend (375x667, 3 separate browser contexts): the Welcome buttons, join validation (uppercase, 5 chars, disabled until 5, join-error for a wrong code), group isolation (C joined A and saw only A's players), the code surviving a reload (localStorage game_code), leave and rejoin, the actions editor saving only this game's actions, and a full day cycle (setup, day, roundtable, reveal, Day 2) with history and finale all work. One functional bug: 'End this game for everyone' does send the other phone back to Welcome in about 4s, but the welcome-game-gone message only flashes for an instant and is never visible to the user. No deprecated Expo packages or SafeAreaView misuse found.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "ALL write routes", "issue": "GAME_LOCK is one global asyncio.Lock, so writes from every family group run one after another. Correct, but a per-code lock (dict of locks) would scale better."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "Welcome (index.tsx:56-59, 73) + GameCodeProvider.setCode (game-code.tsx:26-33)", "issue": "The welcome-game-gone message is never readable. RCA: getGame returns {exists:false, gone:true}, Welcome renders and its useEffect calls setCode(null). setCode then calls queryClient.resetQueries(['game']), which refetches with currentCode=null and gets {exists:false} with no 'gone' flag, so the message unmounts within milliseconds. A MutationObserver confirmed it rendered and was gone well before the 3s check; no polling check ever saw it visible. Fix: keep a 'gone' flag outside the reset query (for example in GameCodeProvider state, or setQueryData(['game'], {exists:false, gone:true}) instead of resetQueries in this case) and clear it when the user starts or joins a game.", "testID": "welcome-game-gone", "priority": "HIGH"},
+      {"component": "Join input (join.tsx:44-50)", "issue": "maxLength={5} cuts the raw text before onChangeText strips separators, so pasting a code with a dash or space loses characters: 'ab-c d12345' became 'ABC', and '4PN-UY' would become '4PNU'. Fix: remove maxLength (slice(0,5) already limits length) or set maxLength to about 12.", "testID": "join-code-input", "priority": "LOW"},
+      {"component": "Join error (join.tsx:55)", "issue": "join-error stays on screen after the user edits the code. Call join.reset() inside onChangeText.", "testID": "join-error", "priority": "LOW"}
+    ],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Join", "issues": ["The text says 'The 5-letter code', but codes contain digits too (for example 4PNUY, M7MEM). Change it to '5-character code'."]},
+      {"screen": "Welcome", "issues": ["Buttons don't respond for about 1s while the FadeInDown entering animation runs. A tap straight after load did nothing, the same tap after about 1.8s navigated. Minor; consider a shorter delay."]}
+    ],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_game_codes.py",
+    "/app/backend/tests/test_traitors_game.py",
+    "/app/backend/tests/test_actions_history.py",
+    "/app/backend/tests/test_multi_device.py",
+    "/app/backend/tests/ui_seed.py",
+    "/app/test_reports/pytest/pytest_results.xml"
+  ],
+  "action_items": [
+    "HIGH: Make welcome-game-gone stay visible after a game is ended on another phone (see the RCA in ui_bugs). Today the phone goes back to Welcome correctly, but the message disappears instantly.",
+    "LOW: join.tsx: remove maxLength={5}, or raise it, so pasted codes containing '-' or spaces work.",
+    "LOW: join.tsx: clear join-error when the input changes (join.reset()).",
+    "LOW: Join copy: change '5-letter code' to '5-character code'.",
+    "OPTIONAL: Lock per game code instead of one global GAME_LOCK."
+  ],
+  "critical_code_review_comments": [
+    "Backend: require_game/load_game normalise with strip().upper(); CODE_CHARS leaves out the easily confused 0/O/1/I/L; there is a unique index on code; and startup removes games without a code. All good.",
+    "DELETE /api/games/{code} returns 200 {exists:false} even for unknown codes. That is idempotent and fine for the 'end game' race between phones.",
+    "Welcome useEffect plus setCode(null) plus resetQueries is the root cause of the lost 'gone' message.",
+    "api.ts uses process.env.EXPO_PUBLIC_BACKEND_URL, which is correct for Expo."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_traitors_game.py (moved to /api/games/{code}; added G()/CUR helpers; setup_game deletes the previous test game)",
+    "/app/backend/tests/test_actions_history.py (per-game actions)",
+    "/app/backend/tests/test_multi_device.py (new routes; cleanup expects 404)",
+    "/app/backend/tests/ui_seed.py (rewritten for code routes: create/setup/vote/delete <code>)",
+    "/app/backend/tests/test_game_codes.py (new)"
+  ],
+  "success_rate": {"backend": "100% (42/42)", "frontend": "~92% (all requested flows work; the welcome-game-gone message is not visible)"},
+  "seed_data_creation": "Test games used TEST_ prefixed players. All of them were deleted at the end; db.games is empty.",
+  "retest_needed": true,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Run pytest with -n 0. Helpers live in test_traitors_game.py: G(code) builds the game URL; setup_game() sets CUR['code']. ui_seed.py usage: python ui_seed.py create|setup|vote|delete <code>. In browser scripts, wait about 1.8s after welcome-screen appears before tapping (entering animation). Fetch from inside the page must use the public URL (localhost:3000 does not proxy /api). To set a phone's code: localStorage.setItem('game_code', JSON.stringify('CODE')) and reload.",
+  "rca_of_issue": "welcome-game-gone: reproduced by putting a phone on the dashboard of game X, deleting X via the API, and watching with a MutationObserver. The message rendered (4 observer hits) but was not visible at +3s. Welcome's effect calls setCode(null), and its resetQueries refetch returns {exists:false} without gone=true."
+}

@@ -37,9 +37,10 @@ export type DayResult = {
 };
 
 export type GameState =
-  | { exists: false }
+  | { exists: false; gone?: boolean }
   | {
       exists: true;
+      code: string;
       day: number;
       total_days: number;
       phase: Phase;
@@ -77,28 +78,54 @@ async function request<T>(path: string, method = "GET", body?: unknown): Promise
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
     const detail = typeof data?.detail === "string" ? data.detail : "Something went wrong";
-    throw new Error(detail);
+    throw new ApiError(detail, res.status);
   }
   return data as T;
 }
 
+export class ApiError extends Error {
+  constructor(
+    message: string,
+    public status: number,
+  ) {
+    super(message);
+  }
+}
+
+// The join code of the game this phone is playing. Set by GameCodeProvider.
+let currentCode: string | null = null;
+export function setApiCode(code: string | null) {
+  currentCode = code;
+}
+
 export const api = {
-  getGame: () => request<GameState>("/game"),
-  createGame: (players: { name: string; pin: string }[]) => request<GameState>("/game", "POST", { players }),
-  deleteGame: () => request<GameState>("/game", "DELETE"),
-  privateView: (player_id: string, pin: string) => request<PrivateView>("/game/private", "POST", { player_id, pin }),
+  getGame: async (): Promise<GameState> => {
+    if (!currentCode) return { exists: false };
+    try {
+      return await request<GameState>(`/games/${currentCode}`);
+    } catch (e) {
+      if (e instanceof ApiError && e.status === 404) return { exists: false, gone: true };
+      throw e;
+    }
+  },
+  /** Look up a game by code without switching to it (used by the Join screen). */
+  findGame: (code: string) => request<GameState>(`/games/${encodeURIComponent(code.trim().toUpperCase())}`),
+  createGame: (players: { name: string; pin: string }[]) => request<GameState>("/games", "POST", { players }),
+  deleteGame: () => request<GameState>(`/games/${currentCode}`, "DELETE"),
+  privateView: (player_id: string, pin: string) =>
+    request<PrivateView>(`/games/${currentCode}/private`, "POST", { player_id, pin }),
   takeTurn: (body: {
     player_id: string;
     pin: string;
     vote_target_id?: string;
     murder_done?: boolean;
     target_id?: string;
-  }) => request<PrivateView>("/game/turn", "POST", body),
+  }) => request<PrivateView>(`/games/${currentCode}/turn`, "POST", body),
   advance: (expected: Phase, day: number) =>
-    request<GameState>(`/game/advance?expected=${expected}&expected_day=${day}`, "POST"),
-  getActions: () => request<ActionList>("/actions"),
-  saveActions: (actions: string[]) => request<ActionList>("/actions", "PUT", { actions }),
-  resetActions: () => request<ActionList>("/actions", "DELETE"),
+    request<GameState>(`/games/${currentCode}/advance?expected=${expected}&expected_day=${day}`, "POST"),
+  getActions: () => request<ActionList>(`/games/${currentCode}/actions`),
+  saveActions: (actions: string[]) => request<ActionList>(`/games/${currentCode}/actions`, "PUT", { actions }),
+  resetActions: () => request<ActionList>(`/games/${currentCode}/actions`, "DELETE"),
 };
 
 export type ActionList = { actions: string[]; is_default: boolean };

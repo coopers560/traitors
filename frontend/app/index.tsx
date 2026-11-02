@@ -1,14 +1,15 @@
 import Ionicons from "@react-native-vector-icons/ionicons";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useRouter } from "expo-router";
-import { useState } from "react";
-import { ActivityIndicator, Pressable, RefreshControl, ScrollView, Text, View } from "react-native";
+import { useEffect, useState } from "react";
+import { ActivityIndicator, Pressable, RefreshControl, ScrollView, Share, Text, View } from "react-native";
 import Animated, { FadeInDown } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { api, GameState, PublicPlayer } from "@/src/api";
 import { ConfirmSheet } from "@/src/components/confirm-sheet";
 import { Backdrop, Body, Button, ErrorText, Eyebrow, Hearts, IMAGES, Title } from "@/src/components/ui";
+import { useGameCode } from "@/src/game-code";
 import { fonts, makeStyles, radius, spacing, useTheme } from "@/src/theme";
 
 type ActiveGame = Extract<GameState, { exists: true }>;
@@ -43,14 +44,20 @@ export default function Home() {
       </View>
     );
   }
-  if (!data.exists) return <Welcome />;
+  if (!data.exists) return <Welcome gone={!!data.gone} />;
   return <Dashboard game={data} refreshing={pulling} onRefresh={onRefresh} />;
 }
 
-function Welcome() {
+function Welcome({ gone }: { gone: boolean }) {
   const styles = useStyles();
   const router = useRouter();
   const insets = useSafeAreaInsets();
+  const { code, gone: goneFlag, setCode } = useGameCode();
+  // The game this phone was in has been ended on another phone: forget its code
+  useEffect(() => {
+    if (gone && code) setCode(null, { gone: true });
+  }, [gone, code, setCode]);
+  const showGone = gone || goneFlag;
   return (
     <View style={styles.root} testID="welcome-screen">
       <Backdrop image={IMAGES.castle} />
@@ -63,21 +70,16 @@ function Welcome() {
             before it&apos;s too late.
           </Body>
         </Animated.View>
-        <Animated.View entering={FadeInDown.delay(250).duration(700)} style={{ gap: spacing.md }}>
+        <Animated.View entering={FadeInDown.duration(400)} style={{ gap: spacing.md }}>
+          {showGone ? <ErrorText testID="welcome-game-gone" message="Your game was ended on another phone." /> : null}
           <Button testID="welcome-new-game-button" label="Begin a new game" icon="flame" onPress={() => router.push("/setup")} />
+          <Button testID="welcome-join-button" label="Join with a code" variant="secondary" icon="enter-outline" onPress={() => router.push("/join")} />
           <Button
             testID="welcome-how-to-play-button"
             label="How to play"
             variant="ghost"
             icon="book-outline"
             onPress={() => router.push("/how-to-play")}
-          />
-          <Button
-            testID="welcome-actions-button"
-            label="Edit secret actions"
-            variant="ghost"
-            icon="list-outline"
-            onPress={() => router.push("/actions")}
           />
         </Animated.View>
       </View>
@@ -89,7 +91,7 @@ const PHASE_COPY: Record<string, { eyebrow: string; title: string; body: string 
   setup: {
     eyebrow: "The Gathering",
     title: "Discover your role",
-    body: "Pass the phone around, or use several phones at once. Each player taps their own name, enters their PIN and secretly learns if they are Faithful or a Traitor.",
+    body: "Pass the phone around, or use several phones at once. Each player taps their own name, enters their PIN and secretly learns if they are Faithful or a Traitor. Tip: to use your own secret actions, edit them in the ⋯ menu before anyone takes a turn.",
   },
   day: {
     eyebrow: "During the day",
@@ -117,6 +119,8 @@ function Dashboard({ game, refreshing, onRefresh }: { game: ActiveGame; refreshi
   const [menu, setMenu] = useState(false);
   const [confirmEnd, setConfirmEnd] = useState(false);
   const [peekMode, setPeekMode] = useState(false);
+  const [confirmLeave, setConfirmLeave] = useState(false);
+  const { setCode } = useGameCode();
 
   const advance = useMutation({
     mutationFn: () => api.advance(game.phase, game.day),
@@ -127,11 +131,20 @@ function Dashboard({ game, refreshing, onRefresh }: { game: ActiveGame; refreshi
   });
   const endGame = useMutation({
     mutationFn: api.deleteGame,
-    onSuccess: (s) => {
+    onSuccess: async () => {
       setConfirmEnd(false);
-      qc.setQueryData(["game"], s);
+      await setCode(null);
     },
   });
+  const shareCode = async () => {
+    try {
+      await Share.share({
+        message: `Join our Traitors game! Open the app, tap "Join with a code" and enter: ${game.code}`,
+      });
+    } catch {
+      // sharing cancelled or not supported (web): the code is visible on screen anyway
+    }
+  };
 
   const { phase } = game;
   const allDone = game.turns_done >= game.turns_needed;
@@ -161,6 +174,10 @@ function Dashboard({ game, refreshing, onRefresh }: { game: ActiveGame; refreshi
             {phase === "ended" ? "The Final Verdict" : copy.eyebrow}
           </Text>
         </View>
+        <Pressable testID="dashboard-share-code-button" onPress={shareCode} style={styles.codeChip} hitSlop={6} accessibilityLabel={`Game code ${game.code}, tap to share`}>
+          <Text style={styles.codeLabel}>Code</Text>
+          <Text style={styles.codeText} testID="dashboard-game-code">{game.code}</Text>
+        </Pressable>
         <Pressable testID="dashboard-menu-button" onPress={() => setMenu((m) => !m)} style={styles.iconBtn} hitSlop={8}>
           <Ionicons name={menu ? "close" : "ellipsis-horizontal"} size={26} color={colors.onSurface} />
         </Pressable>
@@ -176,7 +193,9 @@ function Dashboard({ game, refreshing, onRefresh }: { game: ActiveGame; refreshi
           <Button testID="menu-how-to-play-button" label="How to play" variant="secondary" icon="book-outline" onPress={() => { setMenu(false); router.push("/how-to-play"); }} />
           <Button testID="menu-history-button" label="Day history" variant="secondary" icon="time-outline" onPress={() => { setMenu(false); router.push("/history"); }} />
           <Button testID="menu-actions-button" label="Secret actions" variant="secondary" icon="list-outline" onPress={() => { setMenu(false); router.push("/actions"); }} />
-          <Button testID="menu-end-game-button" label="End this game" variant="danger" icon="trash-outline" onPress={() => { setMenu(false); setConfirmEnd(true); }} />
+          <Button testID="menu-share-code-button" label={`Share join code ${game.code}`} variant="secondary" icon="share-social-outline" onPress={() => { setMenu(false); shareCode(); }} />
+          <Button testID="menu-leave-game-button" label="Leave game on this phone" variant="secondary" icon="exit-outline" onPress={() => { setMenu(false); setConfirmLeave(true); }} />
+          <Button testID="menu-end-game-button" label="End this game for everyone" variant="danger" icon="trash-outline" onPress={() => { setMenu(false); setConfirmEnd(true); }} />
         </View>
       ) : null}
 
@@ -244,12 +263,20 @@ function Dashboard({ game, refreshing, onRefresh }: { game: ActiveGame; refreshi
       <ConfirmSheet
         visible={confirmEnd}
         title="End this game?"
-        message="All roles, lives and votes will be lost. This cannot be undone."
+        message="All roles, lives and votes will be lost on every phone. This cannot be undone."
         confirmLabel="Yes, end the game"
         danger
         loading={endGame.isPending}
         onConfirm={() => endGame.mutate()}
         onCancel={() => setConfirmEnd(false)}
+      />
+      <ConfirmSheet
+        visible={confirmLeave}
+        title="Leave on this phone?"
+        message={`The game carries on for everyone else. You can come back any time with the code ${game.code}.`}
+        confirmLabel="Leave this game"
+        onConfirm={() => { setConfirmLeave(false); setCode(null); }}
+        onCancel={() => setConfirmLeave(false)}
       />
     </View>
   );
@@ -296,10 +323,10 @@ function PlayerRow({ p, index, showTurn, onPress, disabled }: { p: PublicPlayer;
 
 function EndedCard({ game }: { game: ActiveGame }) {
   const styles = useStyles();
-  const qc = useQueryClient();
+  const { setCode } = useGameCode();
   const router = useRouter();
   const [confirmNew, setConfirmNew] = useState(false);
-  const del = useMutation({ mutationFn: api.deleteGame, onSuccess: (s) => { setConfirmNew(false); qc.setQueryData(["game"], s); } });
+  const del = useMutation({ mutationFn: api.deleteGame, onSuccess: async () => { setConfirmNew(false); await setCode(null); } });
   const traitorsWin = game.winner === "traitors";
   return (
     <Animated.View entering={FadeInDown.duration(600)} style={styles.phaseCard} testID="ended-card">
@@ -339,6 +366,19 @@ const useStyles = makeStyles((c) => ({
     borderBottomColor: c.divider,
   },
   headerTitle: { fontFamily: fonts.display, fontSize: 32, lineHeight: 38, color: c.onSurface },
+  codeChip: {
+    alignItems: "center",
+    justifyContent: "center",
+    minHeight: 48,
+    paddingHorizontal: spacing.sm,
+    marginRight: spacing.sm,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: c.brandSecondary,
+    backgroundColor: c.brandTertiary,
+  },
+  codeLabel: { color: c.onSurfaceTertiary, fontSize: 10, letterSpacing: 1.5, textTransform: "uppercase", fontWeight: "600" },
+  codeText: { color: c.brand, fontSize: 17, fontWeight: "800", letterSpacing: 2 },
   iconBtn: {
     width: 48,
     height: 48,

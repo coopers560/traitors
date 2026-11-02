@@ -1,0 +1,33 @@
+{
+  "summary": "Retest of the iteration 4 fixes only. All pass. HIGH fix: two 375x667 browser contexts. B joined A's game with the code. A ended it with 'End this game for everyone'. B was back on Welcome about 3.5s later, and 'welcome-game-gone' stayed visible at +0.5s, +4.5s and +9.5s. B's localStorage game_code was cleared. A second check deleted the game through the API: the message appeared after about 4.3s and was still there 3s later. After B joined another game and then left it, the message was gone. Join input: 'ab-c d12345' becomes 'ABCD1' for both paste/fill and per-key typing, and there is no maxlength attribute. join-error disappears on edit (typing a character, re-filling, or typing an extra character when the code is already full). The copy says '5-character code' and '5-letter' no longer appears. Welcome: tapping welcome-join-button straight away, with no pre-wait, opened the join screen in under 1s. Backend: all 42 existing tests pass (-n 0). The new test_per_game_lock.py passes 2/2: 24 parallel turns across 2 games (mixed upper/lower-case codes) finished in 1.8s with none lost (12/12 each), and 6 games created in parallel got unique codes. Deprecated packages detected: none checked or changed in this retest scope.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "locked() / GAME_LOCKS (server.py:148-158)", "issue": "GAME_LOCKS is never pruned. A lock is created for every code that reaches a @locked endpoint, including deleted games and made-up codes that return 404, so memory grows without limit over time. Low impact for a family app. Fix: pop the lock in DELETE /games/{code}, or only add one after the game is found."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_per_game_lock.py",
+    "/app/test_reports/pytest/pytest_results_iter5.xml"
+  ],
+  "action_items": [
+    "OPTIONAL/LOW: Prune GAME_LOCKS when a game is deleted, and don't create locks for codes that don't exist (server.py:156)."
+  ],
+  "critical_code_review_comments": [
+    "game-code.tsx: the 'gone' flag is kept in memory only, so it is cleared by a new setCode(code) (join or create) and by an app restart. This is acceptable. It also stays visible if the user opens Setup and then backs out, which is also acceptable.",
+    "join.tsx: input is cleaned with replace(/[^a-zA-Z0-9]/g,'').toUpperCase().slice(0,5) and join.reset() runs on every change. Correct."
+  ],
+  "updated_files": ["/app/backend/tests/test_per_game_lock.py (new)"],
+  "success_rate": {"backend": "100% (44/44)", "frontend": "100% (all requested retest checks)"},
+  "seed_data_creation": "Created games MSUEY, 8RQU6 and T4EVH, plus the games made by test_per_game_lock.py. All deleted, and GET returns 404.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Run pytest with -n 0. A deleted game's GET returns 404 {'detail':'No game found with that code'}. In Playwright, a Backspace press after clicking the submit button lands with the caret at position 0, so it is a no-op. Use fill() or type a character to test editing. Use .jpg paths when passing quality to screenshots. A second phone can be made with page.context.browser.new_context().",
+  "rca_of_issue": "Fix verified: the gone flag now lives in GameCodeProvider state (setGone in setCode(null,{gone:true})), so it survives the game query reset that used to remount Welcome without data.gone."
+}

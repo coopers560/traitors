@@ -36,7 +36,8 @@ api_router = APIRouter(prefix="/api")
 
 TOTAL_DAYS = 12
 START_LIVES = 2
-GAME_KEY = "current"
+CODE_CHARS = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"  # no 0/O, 1/I/L mix-ups
+CODE_LEN = 5
 
 # Simple, family friendly "murders in plain sight"
 ACTIONS = [
@@ -83,7 +84,8 @@ class Player(BaseModel):
 
 
 class Game(BaseModel):
-    key: str = GAME_KEY
+    code: str
+    actions: List[str] = Field(default_factory=lambda: list(ACTIONS))
     day: int = 1
     phase: str = "setup"  # setup | day | roundtable | reveal | ended
     players: List[Player]
@@ -142,20 +144,23 @@ class TurnIn(AuthIn):
 
 
 # ---------------- Helpers ----------------
-GAME_LOCK = asyncio.Lock()
+CREATE_LOCK = asyncio.Lock()
+GAME_LOCKS: Dict[str, asyncio.Lock] = {}
 
 
 def locked(fn):
-    """Serialise game writes so turns sent from several phones at once are never lost."""
+    """Serialise writes per game so turns sent from several phones at once are never lost."""
     @functools.wraps(fn)
     async def wrapper(*args, **kwargs):
-        async with GAME_LOCK:
+        code = kwargs.get("code")
+        lock = GAME_LOCKS.setdefault(code.strip().upper(), asyncio.Lock()) if code else CREATE_LOCK
+        async with lock:
             return await fn(*args, **kwargs)
     return wrapper
 
 
-async def load_game() -> Optional[Game]:
-    doc = await db.games.find_one({"key": GAME_KEY}, {"_id": 0})
+async def load_game(code: str) -> Optional[Game]:
+    doc = await db.games.find_one({"code": code.strip().upper()}, {"_id": 0})
     return Game.from_mongo(doc) if doc else None
 
 
@@ -163,20 +168,22 @@ class ActionsIn(BaseModel):
     actions: List[str]
 
 
-async def get_actions() -> List[str]:
-    doc = await db.settings.find_one({"key": "actions"}, {"_id": 0})
-    return doc["actions"] if doc and doc.get("actions") else ACTIONS
-
-
-async def require_game() -> Game:
-    g = await load_game()
+async def require_game(code: str) -> Game:
+    g = await load_game(code)
     if not g:
-        raise HTTPException(404, "No game in progress")
+        raise HTTPException(404, "No game found with that code")
     return g
 
 
 async def save(g: Game):
-    await db.games.replace_one({"key": GAME_KEY}, g.to_mongo(), upsert=True)
+    await db.games.replace_one({"code": g.code}, g.to_mongo(), upsert=True)
+
+
+async def new_code() -> str:
+    while True:
+        code = "".join(random.choice(CODE_CHARS) for _ in range(CODE_LEN))
+        if not await db.games.find_one({"code": code}, {"_id": 1}):
+            return code
 
 
 def name_of(g: Game, pid: Optional[str]) -> Optional[str]:
@@ -188,6 +195,7 @@ def public_state(g: Game) -> dict:
     ended = g.phase == "ended"
     return {
         "exists": True,
+        "code": g.code,
         "day": g.day,
         "total_days": TOTAL_DAYS,
         "phase": g.phase,
@@ -287,14 +295,19 @@ async def root():
     return {"message": "The Traitors"}
 
 
-@api_router.get("/actions")
-async def list_actions():
-    actions = await get_actions()
-    return {"actions": actions, "is_default": actions == ACTIONS}
+def actions_out(g: Game) -> dict:
+    return {"actions": g.actions, "is_default": g.actions == ACTIONS}
 
 
-@api_router.put("/actions")
-async def save_actions(data: ActionsIn):
+@api_router.get("/games/{code}/actions")
+async def list_actions(code: str):
+    return actions_out(await require_game(code))
+
+
+@api_router.put("/games/{code}/actions")
+@locked
+async def save_actions(code: str, data: ActionsIn):
+    g = await require_game(code)
     cleaned, seen = [], set()
     for a in data.actions:
         a = a.strip()
@@ -303,25 +316,26 @@ async def save_actions(data: ActionsIn):
             seen.add(a.lower())
     if len(cleaned) < 3:
         raise HTTPException(400, "Keep at least 3 actions so the Traitors have choices")
-    await db.settings.replace_one({"key": "actions"}, {"key": "actions", "actions": cleaned}, upsert=True)
-    return {"actions": cleaned, "is_default": cleaned == ACTIONS}
+    g.actions = cleaned
+    await save(g)
+    return actions_out(g)
 
 
-@api_router.delete("/actions")
-async def reset_actions():
-    await db.settings.delete_many({"key": "actions"})
-    return {"actions": ACTIONS, "is_default": True}
+@api_router.delete("/games/{code}/actions")
+@locked
+async def reset_actions(code: str):
+    g = await require_game(code)
+    g.actions = list(ACTIONS)
+    await save(g)
+    return actions_out(g)
 
 
-@api_router.get("/game")
-async def get_game():
-    g = await load_game()
-    if not g:
-        return {"exists": False}
-    return public_state(g)
+@api_router.get("/games/{code}")
+async def get_game(code: str):
+    return public_state(await require_game(code))
 
 
-@api_router.post("/game")
+@api_router.post("/games")
 @locked
 async def create_game(data: CreateGameIn):
     names = [p.name.strip() for p in data.players]
@@ -340,21 +354,22 @@ async def create_game(data: CreateGameIn):
         Player(name=names[i], pin_hash=hash_pin(p.pin), role="traitor" if i in traitor_idx else "faithful")
         for i, p in enumerate(data.players)
     ]
-    g = Game(players=players)
+    g = Game(code=await new_code(), players=players)
     await save(g)
     return public_state(g)
 
 
-@api_router.delete("/game")
+@api_router.delete("/games/{code}")
 @locked
-async def delete_game():
-    await db.games.delete_many({"key": GAME_KEY})
+async def delete_game(code: str):
+    GAME_LOCKS.pop(code.strip().upper(), None)
+    await db.games.delete_many({"code": code.strip().upper()})
     return {"exists": False}
 
 
-@api_router.post("/game/private")
-async def private_view(data: AuthIn):
-    g = await require_game()
+@api_router.post("/games/{code}/private")
+async def private_view(code: str, data: AuthIn):
+    g = await require_game(code)
     p = auth(g, data)
     out = {
         "player_id": p.id,
@@ -377,10 +392,10 @@ async def private_view(data: AuthIn):
     return out
 
 
-@api_router.post("/game/turn")
+@api_router.post("/games/{code}/turn")
 @locked
-async def take_turn(data: TurnIn):
-    g = await require_game()
+async def take_turn(code: str, data: TurnIn):
+    g = await require_game(code)
     p = auth(g, data)
     is_traitor = p.role == "traitor"
 
@@ -390,7 +405,7 @@ async def take_turn(data: TurnIn):
                 valid_victim(g, data.target_id)
                 g.target_id = data.target_id
                 if not g.action:
-                    g.action = g.pick_action(await get_actions())
+                    g.action = g.pick_action(g.actions)
             elif not g.target_id:
                 raise HTTPException(400, "Choose who to murder on Day 1")
     elif g.phase == "roundtable":
@@ -407,29 +422,29 @@ async def take_turn(data: TurnIn):
                 valid_victim(g, data.target_id)
                 g.next_target_id = data.target_id
                 if not g.next_action:
-                    g.next_action = g.pick_action(await get_actions())
+                    g.next_action = g.pick_action(g.actions)
     elif g.phase == "day" and is_traitor and p.lives > 0 and data.target_id:
         # Traitors re-pick if their planned victim was eliminated overnight
         if g.target_id and g.player(g.target_id).lives > 0:
             raise HTTPException(400, "Today's victim is already chosen")
         valid_victim(g, data.target_id)
         g.target_id = data.target_id
-        g.action = g.pick_action(await get_actions())
+        g.action = g.pick_action(g.actions)
         await save(g)
-        return await private_view(AuthIn(player_id=data.player_id, pin=data.pin))
+        return await private_view(code, AuthIn(player_id=data.player_id, pin=data.pin))
     else:
         raise HTTPException(400, "It is not time to take a turn")
 
     if p.id not in g.turns_done:
         g.turns_done.append(p.id)
     await save(g)
-    return await private_view(AuthIn(player_id=data.player_id, pin=data.pin))
+    return await private_view(code, AuthIn(player_id=data.player_id, pin=data.pin))
 
 
-@api_router.post("/game/advance")
+@api_router.post("/games/{code}/advance")
 @locked
-async def advance(expected: Optional[str] = None, expected_day: Optional[int] = None):
-    g = await require_game()
+async def advance(code: str, expected: Optional[str] = None, expected_day: Optional[int] = None):
+    g = await require_game(code)
     # Several phones may tap the same button: only the first one moves the game on
     if (expected and expected != g.phase) or (expected_day and expected_day != g.day):
         return public_state(g)
@@ -483,6 +498,12 @@ app.add_middleware(
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
+
+
+@app.on_event("startup")
+async def startup():
+    await db.games.delete_many({"code": {"$exists": False}})  # games from before join codes
+    await db.games.create_index("code", unique=True)
 
 
 @app.on_event("shutdown")

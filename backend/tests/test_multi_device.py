@@ -1,26 +1,26 @@
 # Multi-phone sync: /game/advance?expected=<phase> idempotency tests (single global game, run with -n 0)
-from test_traitors_game import API, S, setup_game, pin_of, private
+from test_traitors_game import API, S, G, setup_game, pin_of, private
 
 
 def adv(expected=None):
-    url = f"{API}/game/advance" + (f"?expected={expected}" if expected else "")
+    url = f"{G()}/advance" + (f"?expected={expected}" if expected else "")
     return S.post(url)
 
 
 def state():
-    return S.get(f"{API}/game").json()
+    return S.get(f"{G()}").json()
 
 
 def seed_setup_done():
-    S.delete(f"{API}/game")
+    S.delete(f"{G()}")
     g, r = setup_game(5)
     ps = g["players"]
     tr = next(p for p in ps if r[p["id"]] == "traitor")
     fa = [p for p in ps if r[p["id"]] == "faithful"]
-    S.post(f"{API}/game/turn", json={"player_id": tr["id"], "pin": pin_of(tr["name"]), "target_id": fa[0]["id"]})
+    S.post(f"{G()}/turn", json={"player_id": tr["id"], "pin": pin_of(tr["name"]), "target_id": fa[0]["id"]})
     for p in ps:
         if p["id"] != tr["id"]:
-            S.post(f"{API}/game/turn", json={"player_id": p["id"], "pin": pin_of(p["name"])})
+            S.post(f"{G()}/turn", json={"player_id": p["id"], "pin": pin_of(p["name"])})
     return g, r
 
 
@@ -36,7 +36,7 @@ def vote_all():
         if r[p["id"]] == "traitor":
             body["murder_done"] = True
             body["target_id"] = nxt["id"]
-        assert S.post(f"{API}/game/turn", json=body).status_code == 200
+        assert S.post(f"{G()}/turn", json=body).status_code == 200
 
 
 class TestAdvanceExpected:
@@ -86,12 +86,12 @@ class TestAdvanceExpected:
 
     def test_empty_expected_treated_as_none(self):
         # ?expected= (empty) behaves like no param -> roundtable without votes must 400
-        r = S.post(f"{API}/game/advance?expected=")
+        r = S.post(f"{G()}/advance?expected=")
         assert r.status_code == 400
 
     def test_cleanup(self):
-        S.delete(f"{API}/game")
-        assert state()["exists"] is False
+        S.delete(f"{G()}")
+        assert S.get(f"{G()}").status_code == 404
 
 
 # Several phones taking turns at the same moment must not lose turns (read-modify-write race on the game doc)
@@ -101,16 +101,16 @@ class TestConcurrentTurns:
         import requests
         lost = []
         for _ in range(3):
-            S.delete(f"{API}/game")
+            S.delete(f"{G()}")
             g, r = setup_game(12)
             fa = [p for p in g["players"] if r[p["id"]] == "faithful"]
 
             def turn(p):
-                return requests.post(f"{API}/game/turn", json={"player_id": p["id"], "pin": pin_of(p["name"])}).status_code
+                return requests.post(f"{G()}/turn", json={"player_id": p["id"], "pin": pin_of(p["name"])}).status_code
 
             with ThreadPoolExecutor(len(fa)) as ex:
                 codes = list(ex.map(turn, fa))
             assert codes == [200] * len(fa)
             lost.append(len(fa) - state()["turns_done"])
-        S.delete(f"{API}/game")
+        S.delete(f"{G()}")
         assert lost == [0, 0, 0], f"turns lost per trial (all returned 200): {lost}"

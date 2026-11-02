@@ -7,6 +7,7 @@ import { KeyboardAwareScrollView } from "react-native-keyboard-controller";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { api } from "@/src/api";
+import { useGameCode } from "@/src/game-code";
 import { Body, Button, ErrorText, Eyebrow, Title } from "@/src/components/ui";
 import { makeStyles, radius, spacing, useTheme } from "@/src/theme";
 
@@ -20,12 +21,14 @@ export default function Setup() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const qc = useQueryClient();
+  const { setCode } = useGameCode();
   const [rows, setRows] = useState<Row[]>(() => Array.from({ length: 10 }, blank));
   const [localError, setLocalError] = useState<string | null>(null);
 
   const create = useMutation({
     mutationFn: api.createGame,
-    onSuccess: (s) => {
+    onSuccess: async (s) => {
+      if (s.exists) await setCode(s.code);
       qc.setQueryData(["game"], s);
       router.dismissTo("/");
     },

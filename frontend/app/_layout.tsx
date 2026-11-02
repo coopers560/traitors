@@ -7,6 +7,7 @@ import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { KeyboardProvider } from "react-native-keyboard-controller";
 
 import { ErrorBoundary } from "@/src/components/error-boundary";
+import { GameCodeProvider } from "@/src/game-code";
 import { queryClient } from "@/src/query-client";
 import { colors } from "@/src/theme";
 
@@ -24,6 +25,7 @@ export default function RootLayout() {
     <GestureHandlerRootView style={styles.root}>
       <ErrorBoundary>
         <QueryClientProvider client={queryClient}>
+          <GameCodeProvider>
           <KeyboardProvider>
             <StatusBar style="light" />
             {loaded || error ? (
@@ -40,6 +42,7 @@ export default function RootLayout() {
               </View>
             )}
           </KeyboardProvider>
+          </GameCodeProvider>
         </QueryClientProvider>
       </ErrorBoundary>
     </GestureHandlerRootView>
