@@ -91,6 +91,7 @@ class Game(BaseModel):
     players: List[Player]
     turns_done: List[str] = []
     skipped: List[str] = []  # players whose Round Table vote is skipped today
+    skipped_by: Dict[str, str] = {}  # skipped player id -> id of the player who skipped them
     votes: Dict[str, str] = {}
     murder_confirmed: bool = False
     target_id: Optional[str] = None
@@ -141,6 +142,8 @@ class AuthIn(BaseModel):
 class SkipIn(BaseModel):
     player_id: str
     undo: bool = False
+    by_id: Optional[str] = None  # who is doing the skipping (needs their PIN)
+    pin: Optional[str] = None
 
 
 class TurnIn(AuthIn):
@@ -215,6 +218,7 @@ def public_state(g: Game) -> dict:
                 "role": p.role if (p.lives == 0 or ended) else None,
                 "turn_done": p.id in g.turns_done,
                 "skipped": p.id in g.skipped,
+                "skipped_by": name_of(g, g.skipped_by.get(p.id)) if p.id in g.skipped else None,
             }
             for p in g.players
         ],
@@ -254,7 +258,8 @@ def check_winner(g: Game) -> Optional[str]:
 
 
 def resolve_day(g: Game) -> dict:
-    result = {"day": g.day, "murder": None, "banish": None, "skipped": [name_of(g, pid) for pid in g.skipped]}
+    result = {"day": g.day, "murder": None, "banish": None, "skipped": [name_of(g, pid) for pid in g.skipped],
+              "skipped_by": {name_of(g, pid): name_of(g, g.skipped_by.get(pid)) for pid in g.skipped}}
 
     # 1. Murder in plain sight
     victim = g.player(g.target_id)
@@ -424,6 +429,7 @@ async def take_turn(code: str, data: TurnIn):
         g.votes[p.id] = tgt.id
         if p.id in g.skipped:  # they turned up after all
             g.skipped.remove(p.id)
+            g.skipped_by.pop(p.id, None)
         if is_traitor:
             if g.target_id and data.murder_done is not None and data.murder_done:
                 g.murder_confirmed = True
@@ -463,10 +469,18 @@ async def skip_vote(code: str, data: SkipIn):
     if data.undo:
         if p.id in g.skipped:
             g.skipped.remove(p.id)
+            g.skipped_by.pop(p.id, None)
             g.turns_done.remove(p.id)
-    elif p.id not in g.turns_done:
-        g.skipped.append(p.id)
-        g.turns_done.append(p.id)
+    else:
+        if not data.by_id or not data.pin:
+            raise HTTPException(400, "Choose your name and enter your PIN to skip a vote")
+        by = auth(g, AuthIn(player_id=data.by_id, pin=data.pin))
+        if by.lives <= 0:
+            raise HTTPException(400, "Only players still in the game can skip a vote")
+        if p.id not in g.turns_done:
+            g.skipped.append(p.id)
+            g.skipped_by[p.id] = by.id
+            g.turns_done.append(p.id)
     await save(g)
     return public_state(g)
 
@@ -487,7 +501,7 @@ async def advance(code: str, expected: Optional[str] = None, expected_day: Optio
         g.turns_done = []
     elif g.phase == "day":
         g.phase = "roundtable"
-        g.turns_done, g.votes, g.murder_confirmed, g.skipped = [], {}, False, []
+        g.turns_done, g.votes, g.murder_confirmed, g.skipped, g.skipped_by = [], {}, False, [], {}
     elif g.phase == "roundtable":
         alive_ids = {p.id for p in g.alive()}
         if not alive_ids.issubset(set(g.turns_done)):
@@ -508,7 +522,7 @@ async def advance(code: str, expected: Optional[str] = None, expected_day: Optio
             else:
                 g.target_id, g.action = None, None
             g.next_target_id, g.next_action = None, None
-            g.turns_done, g.votes, g.murder_confirmed, g.skipped = [], {}, False, []
+            g.turns_done, g.votes, g.murder_confirmed, g.skipped, g.skipped_by = [], {}, False, [], {}
             g.phase = "day"
     else:
         raise HTTPException(400, "The game is over")

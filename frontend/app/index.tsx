@@ -8,6 +8,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { api, GameState, PublicPlayer } from "@/src/api";
 import { ConfirmSheet } from "@/src/components/confirm-sheet";
+import { SkipSheet } from "@/src/components/skip-sheet";
 import { Backdrop, Body, Button, ErrorText, Eyebrow, Hearts, IMAGES, Title } from "@/src/components/ui";
 import { useGameCode } from "@/src/game-code";
 import { fonts, makeStyles, radius, spacing, useTheme } from "@/src/theme";
@@ -121,12 +122,10 @@ function Dashboard({ game, refreshing, onRefresh }: { game: ActiveGame; refreshi
   const [peekMode, setPeekMode] = useState(false);
   const [confirmLeave, setConfirmLeave] = useState(false);
   const [skipping, setSkipping] = useState<PublicPlayer | null>(null);
-  const skip = useMutation({
-    mutationFn: ({ id, undo }: { id: string; undo: boolean }) => api.skipVote(id, undo),
-    onSuccess: (s) => {
-      setSkipping(null);
-      qc.setQueryData(["game"], s);
-    },
+  // Undo needs no PIN; skipping itself goes through SkipSheet (name + PIN)
+  const unskip = useMutation({
+    mutationFn: (id: string) => api.skipVote(id, { undo: true }),
+    onSuccess: (s) => qc.setQueryData(["game"], s),
     // e.g. another phone already moved on to the reveal: show the latest state
     onError: () => qc.invalidateQueries({ queryKey: ["game"] }),
   });
@@ -228,7 +227,7 @@ function Dashboard({ game, refreshing, onRefresh }: { game: ActiveGame; refreshi
               </View>
             ) : null}
             <ErrorText testID="advance-error" message={advance.error?.message} />
-            {!skipping ? <ErrorText testID="skip-error" message={skip.error?.message} /> : null}
+            <ErrorText testID="skip-error" message={unskip.error?.message} />
             {phase === "setup" ? (
               <Button testID="advance-start-day-button" label="Begin Day 1" icon="sunny" disabled={!allDone} loading={advance.isPending} onPress={() => advance.mutate()} />
             ) : phase === "day" ? (
@@ -263,7 +262,7 @@ function Dashboard({ game, refreshing, onRefresh }: { game: ActiveGame; refreshi
               onPress={() => onPlayer(p)}
               disabled={phase === "ended"}
               onSkip={phase === "roundtable" ? () => setSkipping(p) : undefined}
-              onUnskip={() => skip.mutate({ id: p.id, undo: true })}
+              onUnskip={() => unskip.mutate(p.id)}
             />
           ))}
         </View>
@@ -290,15 +289,15 @@ function Dashboard({ game, refreshing, onRefresh }: { game: ActiveGame; refreshi
         onConfirm={() => endGame.mutate()}
         onCancel={() => setConfirmEnd(false)}
       />
-      <ConfirmSheet
-        visible={!!skipping}
-        title={`Skip ${skipping?.name ?? ""}'s vote?`}
-        message={`${skipping?.name ?? "They"} won't vote at tonight's Round Table. If they turn up later, they can still tap their name to vote. Tomorrow they vote as normal.`}
-        confirmLabel="Skip their vote today"
-        loading={skip.isPending}
-        error={skip.error?.message}
-        onConfirm={() => skipping && skip.mutate({ id: skipping.id, undo: false })}
-        onCancel={() => { setSkipping(null); skip.reset(); }}
+      <SkipSheet
+        target={skipping}
+        players={game.players}
+        onDone={(s) => {
+          setSkipping(null);
+          qc.setQueryData(["game"], s);
+        }}
+        onError={() => qc.invalidateQueries({ queryKey: ["game"] })}
+        onCancel={() => setSkipping(null)}
       />
       <ConfirmSheet
         visible={confirmLeave}
@@ -352,7 +351,9 @@ function PlayerRow({
             </Text>
           ) : null}
           {showTurn && p.skipped ? (
-            <Text style={styles.skippedText} testID={`player-skipped-label-${p.id}`}>Not voting today</Text>
+            <Text style={styles.skippedText} testID={`player-skipped-label-${p.id}`}>
+              Not voting today{p.skipped_by ? ` · skipped by ${p.skipped_by}` : ""}
+            </Text>
           ) : null}
         </View>
         {showTurn && onSkip && !p.turn_done ? (

@@ -85,7 +85,10 @@ function DayCard({ h, index }: { h: DayResult; index: number }) {
         </View>
         {h.skipped?.length ? (
           <Text style={styles.tallyName} testID={`history-skipped-${h.day}`}>
-            Didn&apos;t vote: {h.skipped.join(", ")}
+            Didn&apos;t vote:{" "}
+            {h.skipped
+              .map((n) => (h.skipped_by?.[n] ? `${n} (skipped by ${h.skipped_by[n]})` : n))
+              .join(", ")}
           </Text>
         ) : null}
       </View>

@@ -1,0 +1,31 @@
+{
+  "summary": "Tested the change that makes skipping a vote need the skipper's name and PIN and shows who did the skip. Backend: updated test_skip_vote.py so skip calls send by_id and pin, and added the TestSkipPin class with 5 tests. That file has 14/14 passing. The full regression suite has 58/58 passing with -n 0, after one stale assertion in test_traitors_game.py was updated for the new skipped_by key. Frontend at 390x844, all flows checked passed: the skip sheet lists all 5 players; after a name is picked the PIN pad shows; a wrong PIN shows 'Incorrect PIN. Try again.' and clears the dots; 'Not you? Choose another name' goes back to the list and clears the error; the right PIN closes the sheet and the row shows 'Not voting today · skipped by TEST_P1'; pressing Skip for another player starts fresh at name selection; Cancel closes the sheet and reopening it starts fresh; tapping the background closes it; Undo works with no PIN. A second phone showed the skipped-by label about 2.8s after the skip. Day history shows 'Didn't vote: TEST_P3 (skipped by TEST_P4), TEST_P5 (skipped by TEST_P2)'. No deprecated Expo packages or SafeAreaView issues found.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "POST /api/games/{code}/skip", "issue": "The skipper's lives are not checked: an eliminated player can skip someone else's vote through the API. The UI only lists players still in the game, so this is minor. Reference: server.py:477"},
+      {"endpoint": "POST /api/games/{code}/skip", "issue": "Skipping a player who is already skipped, or who has already voted, returns 200 and changes nothing. The original skipped_by stays. If that player voted on another phone while the sheet was open, the sheet closes as if the skip worked. Reference: server.py:478"}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": ["/app/backend/tests/test_skip_vote.py", "/app/backend/tests/test_traitors_game.py", "/app/test_reports/pytest/pytest_results.xml", "/app/test_reports/pytest/pytest_skip_pin.xml"],
+  "action_items": [
+    "Optional: in /skip, reject skippers who are out of the game (lives <= 0).",
+    "Optional: the older test files (test_traitors_game, test_multi_device, test_actions_history) leave TEST_ games in the DB. I deleted 8 of them by hand. Add module teardown cleanup like test_skip_vote.py has."
+  ],
+  "critical_code_review_comments": [
+    "skip-sheet.tsx resets by, pin and the error when target?.id changes, so opening the sheet again always starts fresh. This is correct.",
+    "Undo stays PIN-free, as the spec asks, so anyone can undo anyone's skip. This is by design."
+  ],
+  "updated_files": ["/app/backend/tests/test_skip_vote.py", "/app/backend/tests/test_traitors_game.py"],
+  "success_rate": {"backend": "100%", "frontend": "100%"},
+  "seed_data_creation": "Made game 73GJT with ui_seed.py for the UI tests, then deleted it. Also deleted 8 leftover TEST_ games from earlier regression runs.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Run pytest with -n 0. In test_skip_vote.py, skip(code, pid, by=None, pin=None) defaults the skipper to the skipped player and uses their correct PIN. Undo sends no PIN. PINs are 000N for TEST_PN. Join the UI through /join with the code. Playwright screenshots need a .jpeg path when quality is set."
+}
