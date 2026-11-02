@@ -1,0 +1,31 @@
+{
+  "summary": "Tested the Skip-a-vote feature on backend and frontend. Backend: a new test file, test_skip_vote.py, has 9 tests and all pass. The full regression suite passes too (53/53, run with -n 0). Checked: skip is only allowed at the roundtable (400 in setup and day phases), unknown player gives 400, unknown game gives 404, skip and undo are idempotent, skipping someone who already voted does nothing, a skipped player can still vote and the vote counts, the reveal is blocked until everyone has voted or been skipped, history[].skipped lists the right names, skipped is reset the next day, a skipped lone Traitor makes the murder fail and the Traitor can re-pick next day, and an empty tally banishes nobody. Frontend at 390x844 worked end to end: no Skip buttons in setup or day; 5 at the Round Table; Skip opens the confirm sheet and Cancel works; the row shows 'Not voting today' with an Undo button and the count goes 0->1->0; a skipped player tapped their name, entered their PIN and voted, and the skipped label cleared; the reveal button stayed disabled until the last player was handled; the reveal showed the banished player and later 'Nobody voted tonight.'; the history showed 'Didn't vote: ...' for both days; the Traitor re-pick worked via Check my secret; the How to play card is there. Multi-phone (two separate browser contexts): a skip on A appeared on B in 3.3s, and an Undo on B appeared on A in 0.8s. No page errors. No deprecated Expo packages found.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [
+      {"flow": "Skip confirm sheet error handling", "issue": "skip.error is never shown. ConfirmSheet has no error prop and the dashboard shows no ErrorText for the skip mutation. If the skip fails (for example, another phone already moved to the reveal, which returns 400, or the network drops), the sheet stays open and nothing tells the user. Undo errors are also silent.", "affected_testIDs": ["confirm-sheet-confirm-button", "player-unskip-button-{id}"]}
+    ],
+    "design_issues": [
+      {"screen": "Reveal (Round Table) with empty tally", "issues": ["When nobody voted, an empty 'THE VOTES' card (reveal-tally) still shows with no rows. Hide it when b.tally.length === 0 (reveal.tsx:137)."]}
+    ],
+    "react_native_issues": []
+  },
+  "test_report_links": ["/app/backend/tests/test_skip_vote.py", "/app/test_reports/pytest/pytest_results.xml"],
+  "action_items": [
+    "(Minor) Show skip and undo mutation errors, either via an ErrorText in the dashboard or an error prop on ConfirmSheet (index.tsx:124-130, 290-298).",
+    "(Minor) Hide the empty reveal-tally card when nobody voted (reveal.tsx:137).",
+    "(Optional) Add a testID to the 'No murder — the Traitors failed' text in history.tsx:56 (history-murder-{day} only exists on success)."
+  ],
+  "critical_code_review_comments": [
+    "The skip endpoint logic is correct. It runs under the per-game lock, undo only removes from turns_done when the player is in skipped (so a real voter's turn is safe), and a vote clears skipped.",
+    "Murder voiding works because murder_confirmed is only set by a Traitor's vote. next_target_id is never set, so target_id becomes None next day and the existing day re-pick path handles it."
+  ],
+  "updated_files": ["/app/backend/tests/test_skip_vote.py (new)", "/app/backend/tests/test_traitors_game.py (line 98: added 'skipped' to the expected public player keys)"],
+  "success_rate": {"backend": "100% (53/53)", "frontend": "100% of requested flows"},
+  "seed_data_creation": "UI game YUJMQ was created via ui_seed.py and deleted afterwards. The pytest games are deleted by a module fixture.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Run pytest with -n 0. test_skip_vote.py is self-contained (each test makes its own game). ui_seed.py create/setup/delete seeds UI games. In a 5-player game, START_LIVES is not 3, so don't hardcode lives. Multi-phone was tested with page.context.browser.new_context().",
+  "rca_of_issue": ""
+}

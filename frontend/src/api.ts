@@ -10,6 +10,7 @@ export type PublicPlayer = {
   alive: boolean;
   role: Role | null;
   turn_done: boolean;
+  skipped: boolean;
 };
 
 export type DayResult = {
@@ -34,6 +35,7 @@ export type DayResult = {
     role?: Role | null;
   };
   winner: "faithful" | "traitors" | null;
+  skipped?: string[];
 };
 
 export type GameState =
@@ -124,6 +126,8 @@ export const api = {
   advance: (expected: Phase, day: number) =>
     request<GameState>(`/games/${currentCode}/advance?expected=${expected}&expected_day=${day}`, "POST"),
   getActions: () => request<ActionList>(`/games/${currentCode}/actions`),
+  skipVote: (player_id: string, undo = false) =>
+    request<GameState>(`/games/${currentCode}/skip`, "POST", { player_id, undo }),
   saveActions: (actions: string[]) => request<ActionList>(`/games/${currentCode}/actions`, "PUT", { actions }),
   resetActions: () => request<ActionList>(`/games/${currentCode}/actions`, "DELETE"),
 };

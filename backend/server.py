@@ -90,6 +90,7 @@ class Game(BaseModel):
     phase: str = "setup"  # setup | day | roundtable | reveal | ended
     players: List[Player]
     turns_done: List[str] = []
+    skipped: List[str] = []  # players whose Round Table vote is skipped today
     votes: Dict[str, str] = {}
     murder_confirmed: bool = False
     target_id: Optional[str] = None
@@ -135,6 +136,11 @@ class CreateGameIn(BaseModel):
 class AuthIn(BaseModel):
     player_id: str
     pin: str
+
+
+class SkipIn(BaseModel):
+    player_id: str
+    undo: bool = False
 
 
 class TurnIn(AuthIn):
@@ -208,6 +214,7 @@ def public_state(g: Game) -> dict:
                 "alive": p.lives > 0,
                 "role": p.role if (p.lives == 0 or ended) else None,
                 "turn_done": p.id in g.turns_done,
+                "skipped": p.id in g.skipped,
             }
             for p in g.players
         ],
@@ -247,7 +254,7 @@ def check_winner(g: Game) -> Optional[str]:
 
 
 def resolve_day(g: Game) -> dict:
-    result = {"day": g.day, "murder": None, "banish": None}
+    result = {"day": g.day, "murder": None, "banish": None, "skipped": [name_of(g, pid) for pid in g.skipped]}
 
     # 1. Murder in plain sight
     victim = g.player(g.target_id)
@@ -415,6 +422,8 @@ async def take_turn(code: str, data: TurnIn):
         if not tgt or tgt.lives <= 0 or tgt.id == p.id:
             raise HTTPException(400, "Choose someone to banish")
         g.votes[p.id] = tgt.id
+        if p.id in g.skipped:  # they turned up after all
+            g.skipped.remove(p.id)
         if is_traitor:
             if g.target_id and data.murder_done is not None and data.murder_done:
                 g.murder_confirmed = True
@@ -441,6 +450,27 @@ async def take_turn(code: str, data: TurnIn):
     return await private_view(code, AuthIn(player_id=data.player_id, pin=data.pin))
 
 
+@api_router.post("/games/{code}/skip")
+@locked
+async def skip_vote(code: str, data: SkipIn):
+    """Skip (or un-skip) a player's Round Table vote for today, e.g. if they are away."""
+    g = await require_game(code)
+    if g.phase != "roundtable":
+        raise HTTPException(400, "Votes can only be skipped at the Round Table")
+    p = g.player(data.player_id)
+    if not p or p.lives <= 0:
+        raise HTTPException(400, "Choose a player who is still in the game")
+    if data.undo:
+        if p.id in g.skipped:
+            g.skipped.remove(p.id)
+            g.turns_done.remove(p.id)
+    elif p.id not in g.turns_done:
+        g.skipped.append(p.id)
+        g.turns_done.append(p.id)
+    await save(g)
+    return public_state(g)
+
+
 @api_router.post("/games/{code}/advance")
 @locked
 async def advance(code: str, expected: Optional[str] = None, expected_day: Optional[int] = None):
@@ -457,7 +487,7 @@ async def advance(code: str, expected: Optional[str] = None, expected_day: Optio
         g.turns_done = []
     elif g.phase == "day":
         g.phase = "roundtable"
-        g.turns_done, g.votes, g.murder_confirmed = [], {}, False
+        g.turns_done, g.votes, g.murder_confirmed, g.skipped = [], {}, False, []
     elif g.phase == "roundtable":
         alive_ids = {p.id for p in g.alive()}
         if not alive_ids.issubset(set(g.turns_done)):
@@ -478,7 +508,7 @@ async def advance(code: str, expected: Optional[str] = None, expected_day: Optio
             else:
                 g.target_id, g.action = None, None
             g.next_target_id, g.next_action = None, None
-            g.turns_done, g.votes, g.murder_confirmed = [], {}, False
+            g.turns_done, g.votes, g.murder_confirmed, g.skipped = [], {}, False, []
             g.phase = "day"
     else:
         raise HTTPException(400, "The game is over")

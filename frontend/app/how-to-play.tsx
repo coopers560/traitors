@@ -38,6 +38,11 @@ const STEPS: { icon: React.ComponentProps<typeof Ionicons>["name"]; title: strin
     body: "Open the app on as many phones as you like, for example one per couple. The phone that starts the game shows a 5-character join code at the top. On the other phones tap \"Join with a code\" and enter it. Every phone then shows the same game and updates by itself. Anyone can take their turn on any phone: tap your own name and enter your PIN, then tap \"Hide\" before handing it back. Other families can run their own game with their own code. You need an internet connection.",
   },
   {
+    icon: "remove-circle-outline",
+    title: "Someone can't vote?",
+    body: "At the Round Table, tap \"Skip\" next to anyone who is away. Their vote is skipped for that evening only, and if they turn up later they can still vote. If a Traitor is skipped and no other Traitor confirms the murder, that day's murder doesn't count.",
+  },
+  {
     icon: "eye-off",
     title: "Forgot your secret?",
     body: "Tap \"Check my secret\" on the main screen, then your name, to see your role (and, for Traitors, today's victim and action).",

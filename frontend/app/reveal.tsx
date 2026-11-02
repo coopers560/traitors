@@ -113,7 +113,12 @@ function Banish({ r }: { r: DayResult }) {
   return (
     <Animated.View entering={FadeInDown.duration(900)} style={{ gap: spacing.md }} testID="reveal-banish">
       <Eyebrow>The Round Table</Eyebrow>
-      {b.tie || !b.target_id ? (
+      {b.tally.length === 0 ? (
+        <>
+          <Title testID="reveal-banish-none">Nobody voted tonight.</Title>
+          <Body>With no votes cast, nobody is banished.</Body>
+        </>
+      ) : b.tie || !b.target_id ? (
         <>
           <Title testID="reveal-banish-tie">The table is divided.</Title>
           <Body>The votes were tied, so nobody is banished tonight.</Body>
@@ -129,15 +134,17 @@ function Banish({ r }: { r: DayResult }) {
           )}
         </>
       )}
-      <View style={styles.card} testID="reveal-tally">
-        <Text style={styles.cardLabel}>The votes</Text>
-        {b.tally.map((t) => (
-          <View key={t.player_id} style={styles.tallyRow}>
-            <Text style={styles.tallyName}>{t.name}</Text>
-            <Text style={styles.tallyVotes}>{t.votes}</Text>
-          </View>
-        ))}
-      </View>
+      {b.tally.length > 0 ? (
+        <View style={styles.card} testID="reveal-tally">
+          <Text style={styles.cardLabel}>The votes</Text>
+          {b.tally.map((t) => (
+            <View key={t.player_id} style={styles.tallyRow}>
+              <Text style={styles.tallyName}>{t.name}</Text>
+              <Text style={styles.tallyVotes}>{t.votes}</Text>
+            </View>
+          ))}
+        </View>
+      ) : null}
     </Animated.View>
   );
 }

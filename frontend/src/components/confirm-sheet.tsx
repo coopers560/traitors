@@ -1,7 +1,7 @@
 import { Modal, Pressable, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-import { Body, Button, Title } from "@/src/components/ui";
+import { Body, Button, ErrorText, Title } from "@/src/components/ui";
 import { makeStyles, radius, spacing } from "@/src/theme";
 
 type Props = {
@@ -13,9 +13,10 @@ type Props = {
   loading?: boolean;
   onConfirm: () => void;
   onCancel: () => void;
+  error?: string | null;
 };
 
-export function ConfirmSheet({ visible, title, message, confirmLabel, danger, loading, onConfirm, onCancel }: Props) {
+export function ConfirmSheet({ visible, title, message, confirmLabel, danger, loading, onConfirm, onCancel, error }: Props) {
   const styles = useStyles();
   const insets = useSafeAreaInsets();
   return (
@@ -24,6 +25,7 @@ export function ConfirmSheet({ visible, title, message, confirmLabel, danger, lo
       <View style={[styles.sheet, { paddingBottom: insets.bottom + spacing.lg }]} testID="confirm-sheet">
         <Title style={{ fontSize: 32, lineHeight: 38 }}>{title}</Title>
         <Body>{message}</Body>
+        <ErrorText testID="confirm-sheet-error" message={error} />
         <Button
           testID="confirm-sheet-confirm-button"
           label={confirmLabel}

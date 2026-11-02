@@ -53,7 +53,7 @@ function DayCard({ h, index }: { h: DayResult; index: number }) {
             {m.victim_name} {m.eliminated ? `was killed — ${roleText(m.role)}` : "lost a life"}
           </Text>
         ) : (
-          <Text style={styles.main}>No murder — the Traitors failed</Text>
+          <Text style={styles.main} testID={`history-murder-${h.day}`}>No murder — the Traitors failed</Text>
         )}
       </View>
 
@@ -65,7 +65,9 @@ function DayCard({ h, index }: { h: DayResult; index: number }) {
           <Text style={styles.label}>Round Table</Text>
         </View>
         <Text style={styles.main} testID={`history-banish-${h.day}`}>
-          {b.tie || !b.target_id
+          {b.tally.length === 0
+            ? "Nobody voted — nobody banished"
+            : b.tie || !b.target_id
             ? "Tied vote — nobody banished"
             : b.already_dead
               ? `${b.name} got the most votes (already murdered)`
@@ -81,6 +83,11 @@ function DayCard({ h, index }: { h: DayResult; index: number }) {
             </View>
           ))}
         </View>
+        {h.skipped?.length ? (
+          <Text style={styles.tallyName} testID={`history-skipped-${h.day}`}>
+            Didn&apos;t vote: {h.skipped.join(", ")}
+          </Text>
+        ) : null}
       </View>
     </Animated.View>
   );

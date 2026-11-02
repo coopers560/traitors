@@ -46,3 +46,8 @@ Play The Traitors with 10–15 family players in one hotel in Egypt, ~12 days, 2
 
 ## Iteration 5 (2026-06)
 - The secret action used is never revealed: removed from the reveal screen, Day history and the public API (also stripped from older records). Traitors still see it privately.
+
+## Iteration 6 (2026-06) - Skip a vote
+- POST /api/games/{code}/skip {player_id, undo}: only at the Round Table. Counts the player's turn as done, they can still vote later, and it resets each day. history[].skipped lists who didn't vote
+- Dashboard: Skip / Undo buttons on rows of players who haven't voted, with a confirm sheet that shows any error. The reveal says "Nobody voted tonight" when there are no votes. History shows "Didn't vote"
+- If the only Traitor is skipped, that day's murder doesn't count, and the next day the Traitors pick a new victim through "Check my secret"

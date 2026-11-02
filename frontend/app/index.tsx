@@ -120,6 +120,16 @@ function Dashboard({ game, refreshing, onRefresh }: { game: ActiveGame; refreshi
   const [confirmEnd, setConfirmEnd] = useState(false);
   const [peekMode, setPeekMode] = useState(false);
   const [confirmLeave, setConfirmLeave] = useState(false);
+  const [skipping, setSkipping] = useState<PublicPlayer | null>(null);
+  const skip = useMutation({
+    mutationFn: ({ id, undo }: { id: string; undo: boolean }) => api.skipVote(id, undo),
+    onSuccess: (s) => {
+      setSkipping(null);
+      qc.setQueryData(["game"], s);
+    },
+    // e.g. another phone already moved on to the reveal: show the latest state
+    onError: () => qc.invalidateQueries({ queryKey: ["game"] }),
+  });
   const { setCode } = useGameCode();
 
   const advance = useMutation({
@@ -218,6 +228,7 @@ function Dashboard({ game, refreshing, onRefresh }: { game: ActiveGame; refreshi
               </View>
             ) : null}
             <ErrorText testID="advance-error" message={advance.error?.message} />
+            {!skipping ? <ErrorText testID="skip-error" message={skip.error?.message} /> : null}
             {phase === "setup" ? (
               <Button testID="advance-start-day-button" label="Begin Day 1" icon="sunny" disabled={!allDone} loading={advance.isPending} onPress={() => advance.mutate()} />
             ) : phase === "day" ? (
@@ -244,7 +255,16 @@ function Dashboard({ game, refreshing, onRefresh }: { game: ActiveGame; refreshi
 
         <View style={{ gap: spacing.sm }}>
           {alive.map((p, i) => (
-            <PlayerRow key={p.id} p={p} index={i} showTurn={takingTurns && !peekMode} onPress={() => onPlayer(p)} disabled={phase === "ended"} />
+            <PlayerRow
+              key={p.id}
+              p={p}
+              index={i}
+              showTurn={takingTurns && !peekMode}
+              onPress={() => onPlayer(p)}
+              disabled={phase === "ended"}
+              onSkip={phase === "roundtable" ? () => setSkipping(p) : undefined}
+              onUnskip={() => skip.mutate({ id: p.id, undo: true })}
+            />
           ))}
         </View>
 
@@ -271,6 +291,16 @@ function Dashboard({ game, refreshing, onRefresh }: { game: ActiveGame; refreshi
         onCancel={() => setConfirmEnd(false)}
       />
       <ConfirmSheet
+        visible={!!skipping}
+        title={`Skip ${skipping?.name ?? ""}'s vote?`}
+        message={`${skipping?.name ?? "They"} won't vote at tonight's Round Table. If they turn up later, they can still tap their name to vote. Tomorrow they vote as normal.`}
+        confirmLabel="Skip their vote today"
+        loading={skip.isPending}
+        error={skip.error?.message}
+        onConfirm={() => skipping && skip.mutate({ id: skipping.id, undo: false })}
+        onCancel={() => { setSkipping(null); skip.reset(); }}
+      />
+      <ConfirmSheet
         visible={confirmLeave}
         title="Leave on this phone?"
         message={`The game carries on for everyone else. You can come back any time with the code ${game.code}.`}
@@ -282,7 +312,23 @@ function Dashboard({ game, refreshing, onRefresh }: { game: ActiveGame; refreshi
   );
 }
 
-function PlayerRow({ p, index, showTurn, onPress, disabled }: { p: PublicPlayer; index: number; showTurn: boolean; onPress: () => void; disabled?: boolean }) {
+function PlayerRow({
+  p,
+  index,
+  showTurn,
+  onPress,
+  disabled,
+  onSkip,
+  onUnskip,
+}: {
+  p: PublicPlayer;
+  index: number;
+  showTurn: boolean;
+  onPress: () => void;
+  disabled?: boolean;
+  onSkip?: () => void;
+  onUnskip?: () => void;
+}) {
   const styles = useStyles();
   const { colors } = useTheme();
   return (
@@ -305,13 +351,26 @@ function PlayerRow({ p, index, showTurn, onPress, disabled }: { p: PublicPlayer;
               {p.role === "traitor" ? "Traitor" : "Faithful"}
             </Text>
           ) : null}
+          {showTurn && p.skipped ? (
+            <Text style={styles.skippedText} testID={`player-skipped-label-${p.id}`}>Not voting today</Text>
+          ) : null}
         </View>
+        {showTurn && onSkip && !p.turn_done ? (
+          <Pressable testID={`player-skip-button-${p.id}`} onPress={onSkip} style={styles.skipBtn} hitSlop={6}>
+            <Text style={styles.skipText}>Skip</Text>
+          </Pressable>
+        ) : null}
+        {showTurn && p.skipped ? (
+          <Pressable testID={`player-unskip-button-${p.id}`} onPress={onUnskip} style={styles.skipBtn} hitSlop={6}>
+            <Text style={styles.skipText}>Undo</Text>
+          </Pressable>
+        ) : null}
         {showTurn ? (
           <Ionicons
             testID={`player-turn-status-${p.id}`}
-            name={p.turn_done ? "checkmark-circle" : "ellipse-outline"}
+            name={p.skipped ? "remove-circle-outline" : p.turn_done ? "checkmark-circle" : "ellipse-outline"}
             size={26}
-            color={p.turn_done ? colors.brand : colors.borderStrong}
+            color={p.skipped ? colors.muted : p.turn_done ? colors.brand : colors.borderStrong}
           />
         ) : (
           <Hearts lives={p.lives} />
@@ -442,4 +501,15 @@ const useStyles = makeStyles((c) => ({
   avatarText: { fontFamily: fonts.display, fontSize: 24, color: c.brand },
   rowName: { fontSize: 19, fontWeight: "600", color: c.onSurface },
   rowRole: { fontSize: 13, fontWeight: "700", letterSpacing: 1.5, textTransform: "uppercase" },
+  skippedText: { fontSize: 13, color: c.muted, fontWeight: "600" },
+  skipBtn: {
+    minHeight: 40,
+    paddingHorizontal: spacing.md,
+    borderRadius: radius.pill,
+    borderWidth: 1,
+    borderColor: c.borderStrong,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  skipText: { color: c.onSurfaceSecondary, fontSize: 14, fontWeight: "700" },
 }));
