@@ -53,3 +53,4 @@ Play The Traitors with 10–15 family players in one hotel in Egypt, ~12 days, 2
 - If the only Traitor is skipped, that day's murder doesn't count, and the next day the Traitors pick a new victim through "Check my secret"
 - Skipping a vote needs the skipper's name + PIN (by_id, pin). players[].skipped_by and history[].skipped_by show who skipped whom. Undo needs no PIN. Only players still in the game can skip.
 - Only player 1 (organiser, players[0], public host_id) can skip or undo a skip, with their PIN. The setup screen marks row 1 as "Organiser's name" with a note above the list
+- Player 1 can enter an absent player's banishment vote: POST /api/games/{code}/proxy-vote (player 1's PIN). The "Away?" sheet offers Enter their vote / Skip their vote; Undo removes either. players[].proxy_by and history[].proxied record it. Murder confirmation and next-victim picks can't be entered for someone (keeps roles secret)

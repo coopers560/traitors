@@ -75,7 +75,7 @@ export default function Setup() {
           </Text>
         </View>
         <Text style={styles.note} testID="setup-host-note">
-          Player 1 is the organiser: only they can skip someone&apos;s vote if that person is away.
+          Player 1 is the organiser: only they can enter or skip the vote of someone who is away.
         </Text>
 
         {rows.map((r, i) => (

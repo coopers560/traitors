@@ -8,7 +8,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { api, GameState, PublicPlayer } from "@/src/api";
 import { ConfirmSheet } from "@/src/components/confirm-sheet";
-import { SkipRequest, SkipSheet } from "@/src/components/skip-sheet";
+import { AwayRequest, AwaySheet } from "@/src/components/away-sheet";
 import { Backdrop, Body, Button, ErrorText, Eyebrow, Hearts, IMAGES, Title } from "@/src/components/ui";
 import { useGameCode } from "@/src/game-code";
 import { fonts, makeStyles, radius, spacing, useTheme } from "@/src/theme";
@@ -121,8 +121,8 @@ function Dashboard({ game, refreshing, onRefresh }: { game: ActiveGame; refreshi
   const [confirmEnd, setConfirmEnd] = useState(false);
   const [peekMode, setPeekMode] = useState(false);
   const [confirmLeave, setConfirmLeave] = useState(false);
-  // Skip and Undo both go through SkipSheet: only player 1 can do them, with their PIN
-  const [skipping, setSkipping] = useState<SkipRequest | null>(null);
+  // Away players (enter vote / skip / undo) go through AwaySheet: player 1 only, with their PIN
+  const [skipping, setSkipping] = useState<AwayRequest | null>(null);
   const host = game.players.find((p) => p.id === game.host_id);
   const { setCode } = useGameCode();
 
@@ -283,9 +283,10 @@ function Dashboard({ game, refreshing, onRefresh }: { game: ActiveGame; refreshi
         onConfirm={() => endGame.mutate()}
         onCancel={() => setConfirmEnd(false)}
       />
-      <SkipSheet
+      <AwaySheet
         request={skipping}
         host={host}
+        players={game.players}
         onDone={(s) => {
           setSkipping(null);
           qc.setQueryData(["game"], s);
@@ -349,13 +350,18 @@ function PlayerRow({
               Not voting today{p.skipped_by ? ` · skipped by ${p.skipped_by}` : ""}
             </Text>
           ) : null}
+          {showTurn && p.proxy_by ? (
+            <Text style={styles.skippedText} testID={`player-proxy-label-${p.id}`}>
+              Vote entered by {p.proxy_by}
+            </Text>
+          ) : null}
         </View>
         {showTurn && onSkip && !p.turn_done ? (
           <Pressable testID={`player-skip-button-${p.id}`} onPress={onSkip} style={styles.skipBtn} hitSlop={6}>
-            <Text style={styles.skipText}>Skip</Text>
+            <Text style={styles.skipText}>Away?</Text>
           </Pressable>
         ) : null}
-        {showTurn && p.skipped ? (
+        {showTurn && (p.skipped || p.proxy_by) ? (
           <Pressable testID={`player-unskip-button-${p.id}`} onPress={onUnskip} style={styles.skipBtn} hitSlop={6}>
             <Text style={styles.skipText}>Undo</Text>
           </Pressable>
@@ -498,7 +504,7 @@ const useStyles = makeStyles((c) => ({
   rowRole: { fontSize: 13, fontWeight: "700", letterSpacing: 1.5, textTransform: "uppercase" },
   skippedText: { fontSize: 13, color: c.muted, fontWeight: "600" },
   skipBtn: {
-    minHeight: 40,
+    minHeight: 44,
     paddingHorizontal: spacing.md,
     borderRadius: radius.pill,
     borderWidth: 1,

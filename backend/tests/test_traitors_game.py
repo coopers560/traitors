@@ -95,7 +95,7 @@ class TestPrivacy:
         assert "pin" not in txt.lower() or "pin_hash" not in txt
         for p in r["players"]:
             assert p["role"] is None
-            assert set(p.keys()) == {"id", "name", "lives", "alive", "role", "turn_done", "skipped", "skipped_by"}
+            assert set(p.keys()) == {"id", "name", "lives", "alive", "role", "turn_done", "skipped", "skipped_by", "proxy_by"}
         assert "target_id" not in r and "action" not in r
         # host_id = player 1 (first name entered at setup)
         assert r["host_id"] == r["players"][0]["id"] and r["players"][0]["name"] == "TEST_P1"

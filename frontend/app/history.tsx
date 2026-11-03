@@ -91,6 +91,14 @@ function DayCard({ h, index }: { h: DayResult; index: number }) {
               .join(", ")}
           </Text>
         ) : null}
+        {h.proxied && Object.keys(h.proxied).length ? (
+          <Text style={styles.tallyName} testID={`history-proxied-${h.day}`}>
+            Vote entered for:{" "}
+            {Object.entries(h.proxied)
+              .map(([n, by]) => `${n} (by ${by})`)
+              .join(", ")}
+          </Text>
+        ) : null}
       </View>
     </Animated.View>
   );

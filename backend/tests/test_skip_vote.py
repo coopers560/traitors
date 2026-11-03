@@ -200,7 +200,7 @@ class TestSkipHostOnly:
         host, other, target = ps[0], ps[1], ps[2]
         res = skip(code, target["id"], by=other["id"])
         assert res.status_code == 403, res.text
-        assert res.json()["detail"] == f"Only {host['name']} (player 1) can skip votes"
+        assert res.json()["detail"] == f"Only {host['name']} (player 1) can skip a vote for someone"
         # non-host skipping themself is also refused
         assert skip(code, other["id"], by=other["id"]).status_code == 403
         s = state(code)

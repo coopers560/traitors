@@ -12,6 +12,7 @@ export type PublicPlayer = {
   turn_done: boolean;
   skipped: boolean;
   skipped_by: string | null;
+  proxy_by: string | null;
 };
 
 export type DayResult = {
@@ -38,6 +39,7 @@ export type DayResult = {
   winner: "faithful" | "traitors" | null;
   skipped?: string[];
   skipped_by?: Record<string, string | null>;
+  proxied?: Record<string, string | null>;
 };
 
 export type GameState =
@@ -129,6 +131,13 @@ export const api = {
   advance: (expected: Phase, day: number) =>
     request<GameState>(`/games/${currentCode}/advance?expected=${expected}&expected_day=${day}`, "POST"),
   getActions: () => request<ActionList>(`/games/${currentCode}/actions`),
+  proxyVote: (player_id: string, vote_target_id: string, auth: { byId: string; pin: string }) =>
+    request<GameState>(`/games/${currentCode}/proxy-vote`, "POST", {
+      player_id,
+      vote_target_id,
+      by_id: auth.byId,
+      pin: auth.pin,
+    }),
   skipVote: (player_id: string, opts: { undo?: boolean; byId?: string; pin?: string }) =>
     request<GameState>(`/games/${currentCode}/skip`, "POST", {
       player_id,
