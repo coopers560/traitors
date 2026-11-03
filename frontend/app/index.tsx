@@ -8,7 +8,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { api, GameState, PublicPlayer } from "@/src/api";
 import { ConfirmSheet } from "@/src/components/confirm-sheet";
-import { SkipSheet } from "@/src/components/skip-sheet";
+import { SkipRequest, SkipSheet } from "@/src/components/skip-sheet";
 import { Backdrop, Body, Button, ErrorText, Eyebrow, Hearts, IMAGES, Title } from "@/src/components/ui";
 import { useGameCode } from "@/src/game-code";
 import { fonts, makeStyles, radius, spacing, useTheme } from "@/src/theme";
@@ -121,14 +121,9 @@ function Dashboard({ game, refreshing, onRefresh }: { game: ActiveGame; refreshi
   const [confirmEnd, setConfirmEnd] = useState(false);
   const [peekMode, setPeekMode] = useState(false);
   const [confirmLeave, setConfirmLeave] = useState(false);
-  const [skipping, setSkipping] = useState<PublicPlayer | null>(null);
-  // Undo needs no PIN; skipping itself goes through SkipSheet (name + PIN)
-  const unskip = useMutation({
-    mutationFn: (id: string) => api.skipVote(id, { undo: true }),
-    onSuccess: (s) => qc.setQueryData(["game"], s),
-    // e.g. another phone already moved on to the reveal: show the latest state
-    onError: () => qc.invalidateQueries({ queryKey: ["game"] }),
-  });
+  // Skip and Undo both go through SkipSheet: only player 1 can do them, with their PIN
+  const [skipping, setSkipping] = useState<SkipRequest | null>(null);
+  const host = game.players.find((p) => p.id === game.host_id);
   const { setCode } = useGameCode();
 
   const advance = useMutation({
@@ -227,7 +222,6 @@ function Dashboard({ game, refreshing, onRefresh }: { game: ActiveGame; refreshi
               </View>
             ) : null}
             <ErrorText testID="advance-error" message={advance.error?.message} />
-            <ErrorText testID="skip-error" message={unskip.error?.message} />
             {phase === "setup" ? (
               <Button testID="advance-start-day-button" label="Begin Day 1" icon="sunny" disabled={!allDone} loading={advance.isPending} onPress={() => advance.mutate()} />
             ) : phase === "day" ? (
@@ -261,8 +255,8 @@ function Dashboard({ game, refreshing, onRefresh }: { game: ActiveGame; refreshi
               showTurn={takingTurns && !peekMode}
               onPress={() => onPlayer(p)}
               disabled={phase === "ended"}
-              onSkip={phase === "roundtable" ? () => setSkipping(p) : undefined}
-              onUnskip={() => unskip.mutate(p.id)}
+              onSkip={phase === "roundtable" ? () => setSkipping({ player: p, undo: false }) : undefined}
+              onUnskip={() => setSkipping({ player: p, undo: true })}
             />
           ))}
         </View>
@@ -290,8 +284,8 @@ function Dashboard({ game, refreshing, onRefresh }: { game: ActiveGame; refreshi
         onCancel={() => setConfirmEnd(false)}
       />
       <SkipSheet
-        target={skipping}
-        players={game.players}
+        request={skipping}
+        host={host}
         onDone={(s) => {
           setSkipping(null);
           qc.setQueryData(["game"], s);

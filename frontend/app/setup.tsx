@@ -74,6 +74,9 @@ export default function Setup() {
             {filled.length} players · {filled.length >= 4 ? traitors : "–"} Traitors · 2 lives each · 12 days
           </Text>
         </View>
+        <Text style={styles.note} testID="setup-host-note">
+          Player 1 is the organiser: only they can skip someone&apos;s vote if that person is away.
+        </Text>
 
         {rows.map((r, i) => (
           <View key={r.key} style={styles.row}>
@@ -82,7 +85,7 @@ export default function Setup() {
               testID={`setup-name-input-${i}`}
               value={r.name}
               onChangeText={(t) => update(r.key, { name: t })}
-              placeholder="Name"
+              placeholder={i === 0 ? "Organiser's name" : "Name"}
               placeholderTextColor={colors.muted}
               style={[styles.input, { flex: 1, minWidth: 0 }]}
               autoCapitalize="words"

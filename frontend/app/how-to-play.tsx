@@ -40,7 +40,7 @@ const STEPS: { icon: React.ComponentProps<typeof Ionicons>["name"]; title: strin
   {
     icon: "remove-circle-outline",
     title: "Someone can't vote?",
-    body: "At the Round Table, tap \"Skip\" next to anyone who is away. Whoever skips them picks their own name and enters their PIN, and everyone can see who skipped whom. Their vote is skipped for that evening only, and if they turn up later they can still vote. If a Traitor is skipped and no other Traitor confirms the murder, that day's murder doesn't count.",
+    body: "At the Round Table, player 1 (the first name entered at setup) can tap \"Skip\" next to anyone who is away and confirm with their PIN. Only player 1 can skip votes or undo a skip. The vote is skipped for that evening only, and if the player turns up later they can still vote. If a Traitor is skipped and no other Traitor confirms the murder, that day's murder doesn't count.",
   },
   {
     icon: "eye-off",

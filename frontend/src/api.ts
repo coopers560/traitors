@@ -45,6 +45,7 @@ export type GameState =
   | {
       exists: true;
       code: string;
+      host_id: string;
       day: number;
       total_days: number;
       phase: Phase;

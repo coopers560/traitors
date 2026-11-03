@@ -204,6 +204,7 @@ def public_state(g: Game) -> dict:
     ended = g.phase == "ended"
     return {
         "exists": True,
+        "host_id": g.players[0].id,
         "code": g.code,
         "day": g.day,
         "total_days": TOTAL_DAYS,
@@ -466,21 +467,22 @@ async def skip_vote(code: str, data: SkipIn):
     p = g.player(data.player_id)
     if not p or p.lives <= 0:
         raise HTTPException(400, "Choose a player who is still in the game")
+    # Only player 1 (the organiser, first name entered at setup) may skip or un-skip votes
+    host = g.players[0]
+    if not data.by_id or not data.pin:
+        raise HTTPException(400, f"{host.name} (player 1) must enter their PIN to skip a vote")
+    by = auth(g, AuthIn(player_id=data.by_id, pin=data.pin))
+    if by.id != host.id:
+        raise HTTPException(403, f"Only {host.name} (player 1) can skip votes")
     if data.undo:
         if p.id in g.skipped:
             g.skipped.remove(p.id)
             g.skipped_by.pop(p.id, None)
             g.turns_done.remove(p.id)
-    else:
-        if not data.by_id or not data.pin:
-            raise HTTPException(400, "Choose your name and enter your PIN to skip a vote")
-        by = auth(g, AuthIn(player_id=data.by_id, pin=data.pin))
-        if by.lives <= 0:
-            raise HTTPException(400, "Only players still in the game can skip a vote")
-        if p.id not in g.turns_done:
-            g.skipped.append(p.id)
-            g.skipped_by[p.id] = by.id
-            g.turns_done.append(p.id)
+    elif p.id not in g.turns_done:
+        g.skipped.append(p.id)
+        g.skipped_by[p.id] = by.id
+        g.turns_done.append(p.id)
     await save(g)
     return public_state(g)
 
