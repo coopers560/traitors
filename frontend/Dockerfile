@@ -13,9 +13,14 @@ ARG EXPO_PUBLIC_BACKEND_URL
 ENV EXPO_PUBLIC_BACKEND_URL=$EXPO_PUBLIC_BACKEND_URL
 
 COPY package.json ./
-# No lockfile is committed, so install fresh. --ignore-scripts skips the
-# repo's preinstall command guard, which is not needed for a deploy build.
-RUN yarn install --ignore-scripts
+# No lockfile is committed, so install fresh.
+#   --production      skip devDependencies (eslint, typescript, expo-doctor).
+#                     They're not needed to export the web bundle, and the
+#                     package.json "resolutions" pin on @eslint/plugin-kit
+#                     conflicts with the eslint packages and breaks the install.
+#   --ignore-scripts  skip the repo's preinstall command guard (deploy-only build).
+#   --network-timeout  survive slow/flaky registry fetches.
+RUN yarn install --production --ignore-scripts --network-timeout 600000
 
 COPY . .
 
