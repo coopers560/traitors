@@ -20,25 +20,32 @@ def roles_of(code, g):
 
 
 def run_setup_and_day1(code, g):
-    """Traitor picks victim, everyone sees role, advance to roundtable, everyone votes, reveal."""
+    """Everyone sees their role; Day 1 banishment; then the night murder. Returns
+    (secret action used, the murder-reveal state)."""
     roles = roles_of(code, g)
     ps = g["players"]
     tr = [p for p in ps if roles[p["id"]] == "traitor"]
     fa = [p for p in ps if roles[p["id"]] == "faithful"]
-    r = S.post(f"{G(code)}/turn", json={"player_id": tr[0]["id"], "pin": pin_of(tr[0]["name"]), "target_id": fa[0]["id"]})
-    assert r.status_code == 200, r.text
-    action = r.json()["action"]
     for p in ps:
         S.post(f"{G(code)}/turn", json={"player_id": p["id"], "pin": pin_of(p["name"])})
     assert S.post(f"{G(code)}/advance?expected=setup&expected_day=1").json()["phase"] == "day"
     assert S.post(f"{G(code)}/advance?expected=day&expected_day=1").json()["phase"] == "roundtable"
     for p in ps:
         tgt = fa[1] if p["id"] != fa[1]["id"] else fa[2]
-        body = {"player_id": p["id"], "pin": pin_of(p["name"]), "vote_target_id": tgt["id"]}
-        if roles[p["id"]] == "traitor":
-            body["murder_done"] = True
-        assert S.post(f"{G(code)}/turn", json=body).status_code == 200
-    res = S.post(f"{G(code)}/advance?expected=roundtable&expected_day=1").json()
+        assert S.post(f"{G(code)}/turn", json={"player_id": p["id"], "pin": pin_of(p["name"]), "vote_target_id": tgt["id"]}).status_code == 200
+    assert S.post(f"{G(code)}/advance?expected=roundtable&expected_day=1").json()["phase"] == "banished"
+    assert S.post(f"{G(code)}/advance?expected=banished&expected_day=1").json()["phase"] == "night"
+    # the murder is chosen now, after the Round Table
+    action = None
+    for p in ps:
+        body = {"player_id": p["id"], "pin": pin_of(p["name"])}
+        if roles[p["id"]] == "traitor" and action is None:
+            body["target_id"] = fa[0]["id"]
+        r = S.post(f"{G(code)}/turn", json=body)
+        assert r.status_code == 200, r.text
+        if roles[p["id"]] == "traitor" and r.json().get("action"):
+            action = r.json()["action"]
+    res = S.post(f"{G(code)}/advance?expected=night&expected_day=1").json()
     assert res["phase"] == "reveal"
     return action, res
 

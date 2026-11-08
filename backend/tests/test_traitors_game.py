@@ -67,6 +67,28 @@ def setup_game(n=10):
     return g, roles
 
 
+def cast_votes(votes):
+    """Each alive voter in `votes` casts its banish vote. votes: {voter_id: target_id}."""
+    g = S.get(f"{G()}").json()
+    for p in g["players"]:
+        if p["alive"] and p["id"] in votes:
+            r = S.post(f"{G()}/turn", json={"player_id": p["id"], "pin": pin_of(p["name"]), "vote_target_id": votes[p["id"]]})
+            assert r.status_code == 200, r.text
+
+
+def do_night(roles, murder_target=None):
+    """Every alive player takes the night turn; alive Traitors name `murder_target` (or lie low)."""
+    g = S.get(f"{G()}").json()
+    for p in g["players"]:
+        if not p["alive"]:
+            continue
+        body = {"player_id": p["id"], "pin": pin_of(p["name"])}
+        if murder_target and roles.get(p["id"]) == "traitor":
+            body["target_id"] = murder_target
+        r = S.post(f"{G()}/turn", json=body)
+        assert r.status_code == 200, r.text
+
+
 # ---- Create validation ----
 class TestCreate:
     def test_too_few(self):
@@ -127,7 +149,7 @@ class TestPrivacy:
                 assert len(v["fellow_traitors"]) == 1
 
 
-# ---- Full round flow ----
+# ---- Full round flow: banish first, murder after, each in its own reveal ----
 class TestFlow:
     def test_full_round(self):
         g, roles = setup_game(10)
@@ -137,125 +159,138 @@ class TestFlow:
         t0 = traitors[0]
         # cannot advance before all saw roles
         assert S.post(f"{G()}/advance").status_code == 400
-        # cannot vote in setup... roundtable turn not allowed in day
-        # traitor targeting traitor rejected
-        r = S.post(f"{G()}/turn", json={"player_id": t0["id"], "pin": pin_of(t0["name"]), "target_id": traitors[1]["id"]})
-        assert r.status_code == 400
-        # traitor without target -> 400
-        r = S.post(f"{G()}/turn", json={"player_id": t0["id"], "pin": pin_of(t0["name"])})
-        assert r.status_code == 400
+        # setup just acknowledges the role; no victim is chosen up front
+        assert S.post(f"{G()}/turn", json={"player_id": t0["id"], "pin": pin_of(t0["name"])}).status_code == 200
+        # wrong pin on turn
+        assert S.post(f"{G()}/turn", json={"player_id": ps[0]["id"], "pin": "9998"}).status_code == 401
+        for p in ps:
+            assert S.post(f"{G()}/turn", json={"player_id": p["id"], "pin": pin_of(p["name"])}).status_code == 200, p["name"]
+        assert S.post(f"{G()}/advance").json()["phase"] == "day"
+        # no turns in the day phase
+        assert S.post(f"{G()}/turn", json={"player_id": ps[0]["id"], "pin": pin_of(ps[0]["name"]), "vote_target_id": ps[1]["id"]}).status_code == 400
+        assert S.post(f"{G()}/advance").json()["phase"] == "roundtable"
+        # self-vote rejected
+        assert S.post(f"{G()}/turn", json={"player_id": ps[0]["id"], "pin": pin_of(ps[0]["name"]), "vote_target_id": ps[0]["id"]}).status_code == 400
+        # cannot banish before all voted
+        assert S.post(f"{G()}/advance").status_code == 400
+        banished = faithful[1]
+        cast_votes({p["id"]: (banished["id"] if p["id"] != banished["id"] else faithful[2]["id"]) for p in ps})
+        rb = S.post(f"{G()}/advance").json()
+        assert rb["phase"] == "banished"
+        h = rb["history"][-1]
+        assert h["murder"] is None  # the murder has not happened yet
+        assert h["banish"]["target_id"] == banished["id"] and h["banish"]["lives_left"] == 1 and not h["banish"]["tie"]
+        assert h["winner"] is None
+        # banished -> night: the murder is chosen now, after the Round Table
+        assert S.post(f"{G()}/advance").json()["phase"] == "night"
+        # a traitor cannot murder a fellow traitor
+        assert S.post(f"{G()}/turn", json={"player_id": t0["id"], "pin": pin_of(t0["name"]), "target_id": traitors[1]["id"]}).status_code == 400
         victim = faithful[0]
         r = S.post(f"{G()}/turn", json={"player_id": t0["id"], "pin": pin_of(t0["name"]), "target_id": victim["id"]})
         assert r.status_code == 200 and r.json()["target"]["id"] == victim["id"] and r.json()["action"]
         for p in ps:
             if p["id"] != t0["id"]:
-                r = S.post(f"{G()}/turn", json={"player_id": p["id"], "pin": pin_of(p["name"])})
-                assert r.status_code == 200, r.text
-        # wrong pin on turn
-        assert S.post(f"{G()}/turn", json={"player_id": ps[0]["id"], "pin": "9998"}).status_code == 401
-        r = S.post(f"{G()}/advance"); assert r.json()["phase"] == "day"
-        # no turns in day phase
-        assert S.post(f"{G()}/turn", json={"player_id": ps[0]["id"], "pin": pin_of(ps[0]["name"]), "vote_target_id": ps[1]["id"]}).status_code == 400
-        r = S.post(f"{G()}/advance"); assert r.json()["phase"] == "roundtable"
-        # self-vote rejected
-        assert S.post(f"{G()}/turn", json={"player_id": ps[0]["id"], "pin": pin_of(ps[0]["name"]), "vote_target_id": ps[0]["id"]}).status_code == 400
-        # cannot reveal before all voted
-        assert S.post(f"{G()}/advance").status_code == 400
-        # everyone votes faithful[1] (except faithful[1] votes faithful[2])
-        banished = faithful[1]
-        nxt = faithful[3]
-        for p in ps:
-            body = {"player_id": p["id"], "pin": pin_of(p["name"]),
-                    "vote_target_id": banished["id"] if p["id"] != banished["id"] else faithful[2]["id"]}
-            if roles[p["id"]] == "traitor":
-                body.update({"murder_done": True, "target_id": nxt["id"]})
-            r = S.post(f"{G()}/turn", json=body)
-            assert r.status_code == 200, r.text
-        r = S.post(f"{G()}/advance").json()
-        assert r["phase"] == "reveal"
-        h = r["history"][-1]
+                assert S.post(f"{G()}/turn", json={"player_id": p["id"], "pin": pin_of(p["name"])}).status_code == 200
+        rv = S.post(f"{G()}/advance").json()
+        assert rv["phase"] == "reveal"
+        h = rv["history"][-1]
         assert h["murder"]["success"] and h["murder"]["victim_id"] == victim["id"] and h["murder"]["lives_left"] == 1
-        assert h["banish"]["target_id"] == banished["id"] and h["banish"]["lives_left"] == 1 and not h["banish"]["tie"]
+        assert "action" not in h["murder"] and h["banish"]["target_id"] == banished["id"]
         assert h["winner"] is None
         r = S.post(f"{G()}/advance").json()
         assert r["phase"] == "day" and r["day"] == 2
         t = private(t0["id"], pin_of(t0["name"])).json()
-        assert t["target"]["id"] == nxt["id"] and t["next_target"] is None and t["murder_confirmed"] is False
+        assert t["target"] is None and t["murder_confirmed"] is False and "next_target" not in t
         STATE.update(roles=roles, ps=ps, banished=banished, victim=victim)
 
     def test_elimination_and_eliminated_cannot_vote(self):
         roles, ps, banished = STATE["roles"], STATE["ps"], STATE["banished"]
         traitors = [p for p in ps if roles[p["id"]] == "traitor"]
-        S.post(f"{G()}/advance")  # -> roundtable day 2
-        for p in ps:
-            body = {"player_id": p["id"], "pin": pin_of(p["name"]),
-                    "vote_target_id": banished["id"] if p["id"] != banished["id"] else STATE["victim"]["id"]}
-            if roles[p["id"]] == "traitor":
-                body.update({"murder_done": False})
-            r = S.post(f"{G()}/turn", json=body); assert r.status_code == 200, r.text
-        r = S.post(f"{G()}/advance").json()
-        h = r["history"][-1]
-        assert h["murder"]["success"] is False
+        # day 2: banish the same faithful again -> eliminated (one life left)
+        assert S.post(f"{G()}/advance").json()["phase"] == "roundtable"
+        cast_votes({p["id"]: (banished["id"] if p["id"] != banished["id"] else STATE["victim"]["id"]) for p in ps})
+        rb = S.post(f"{G()}/advance").json()
+        assert rb["phase"] == "banished"
+        h = rb["history"][-1]
         assert h["banish"]["eliminated"] and h["banish"]["role"] == "faithful"
-        bp = next(p for p in r["players"] if p["id"] == banished["id"])
+        bp = next(p for p in rb["players"] if p["id"] == banished["id"])
         assert bp["alive"] is False and bp["role"] == "faithful"
-        S.post(f"{G()}/advance"); S.post(f"{G()}/advance")  # day3 roundtable
+        # night: the traitors lie low
+        assert S.post(f"{G()}/advance").json()["phase"] == "night"
+        do_night(roles, murder_target=None)
+        rv = S.post(f"{G()}/advance").json()
+        assert rv["phase"] == "reveal" and rv["history"][-1]["murder"]["success"] is False
+        # reveal -> day 3 -> roundtable
+        assert S.post(f"{G()}/advance").json()["phase"] == "day"
+        assert S.post(f"{G()}/advance").json()["phase"] == "roundtable"
+        # an eliminated player cannot vote
         r = S.post(f"{G()}/turn", json={"player_id": banished["id"], "pin": pin_of(banished["name"]), "vote_target_id": ps[0]["id"] if ps[0]["id"] != banished["id"] else ps[1]["id"]})
         assert r.status_code == 400
-        # can't vote for eliminated player
+        # cannot vote for an eliminated player
         voter = traitors[0]
-        r = S.post(f"{G()}/turn", json={"player_id": voter["id"], "pin": pin_of(voter["name"]), "vote_target_id": banished["id"]})
-        assert r.status_code == 400
-        g = S.get(f"{G()}").json()
-        assert g["turns_needed"] == 9
+        assert S.post(f"{G()}/turn", json={"player_id": voter["id"], "pin": pin_of(voter["name"]), "vote_target_id": banished["id"]}).status_code == 400
+        assert S.get(f"{G()}").json()["turns_needed"] == 9
 
     def test_tie_and_faithful_win(self):
         g, roles = setup_game(4)
         ps = g["players"]
         tr = next(p for p in ps if roles[p["id"]] == "traitor")
         fa = [p for p in ps if roles[p["id"]] == "faithful"]
-        S.post(f"{G()}/turn", json={"player_id": tr["id"], "pin": pin_of(tr["name"]), "target_id": fa[0]["id"]})
-        finish_setup(ps); S.post(f"{G()}/advance")
-        # tie: 2 votes vs 2 votes
-        votes = {fa[0]["id"]: fa[1]["id"], fa[1]["id"]: fa[0]["id"], fa[2]["id"]: fa[0]["id"], tr["id"]: fa[1]["id"]}
-        for p in ps:
-            S.post(f"{G()}/turn", json={"player_id": p["id"], "pin": pin_of(p["name"]), "vote_target_id": votes[p["id"]], "murder_done": False, "target_id": fa[2]["id"]})
-        h = S.post(f"{G()}/advance").json()["history"][-1]
-        assert h["banish"]["tie"] is True and h["banish"]["target_id"] is None
-        # two rounds voting the traitor -> faithful win
-        for _ in range(2):
-            S.post(f"{G()}/advance"); S.post(f"{G()}/advance")
-            for p in ps:
-                vt = tr["id"] if p["id"] != tr["id"] else fa[0]["id"]
-                S.post(f"{G()}/turn", json={"player_id": p["id"], "pin": pin_of(p["name"]), "vote_target_id": vt, "murder_done": False, "target_id": fa[2]["id"]})
-            r = S.post(f"{G()}/advance").json()
-        assert r["winner"] == "faithful"
-        r = S.post(f"{G()}/advance").json()
-        assert r["phase"] == "ended" and all(p["role"] for p in r["players"])
+        finish_setup(ps)  # -> day 1
+        # Day 1 round table: a 2-2 tie, nobody banished
+        assert S.post(f"{G()}/advance").json()["phase"] == "roundtable"
+        cast_votes({fa[0]["id"]: fa[1]["id"], fa[1]["id"]: fa[0]["id"], fa[2]["id"]: fa[0]["id"], tr["id"]: fa[1]["id"]})
+        rb = S.post(f"{G()}/advance").json()
+        assert rb["phase"] == "banished" and rb["history"][-1]["banish"]["tie"] is True
+        # night: lie low; -> reveal -> day 2
+        assert S.post(f"{G()}/advance").json()["phase"] == "night"
+        do_night(roles, murder_target=None)
+        assert S.post(f"{G()}/advance").json()["phase"] == "reveal"
+        assert S.post(f"{G()}/advance").json()["phase"] == "day"
+        # vote the traitor out (2 lives -> 2 banishments) with no murders
+        winner = None
+        for _ in range(3):
+            assert S.post(f"{G()}/advance").json()["phase"] == "roundtable"
+            alive = [p for p in S.get(f"{G()}").json()["players"] if p["alive"]]
+            cast_votes({p["id"]: (tr["id"] if p["id"] != tr["id"] else fa[0]["id"]) for p in alive})
+            rb = S.post(f"{G()}/advance").json()  # -> banished (or ended)
+            winner = rb.get("winner")
+            if winner:
+                break
+            assert S.post(f"{G()}/advance").json()["phase"] == "night"
+            do_night(roles, murder_target=None)
+            rv = S.post(f"{G()}/advance").json()  # -> reveal
+            winner = rv.get("winner")
+            if winner:
+                break
+            S.post(f"{G()}/advance")  # -> day
+        assert winner == "faithful"
+        r2 = S.post(f"{G()}/advance").json()  # banished/reveal (winner) -> ended
+        assert r2["phase"] == "ended" and all(p["role"] for p in r2["players"])
         assert S.post(f"{G()}/advance").status_code == 400
 
     def test_traitor_win_by_numbers(self):
         g, roles = setup_game(4)
         ps = g["players"]
         tr = next(p for p in ps if roles[p["id"]] == "traitor")
-        fa = [p for p in ps if roles[p["id"]] == "faithful"]
-        S.post(f"{G()}/turn", json={"player_id": tr["id"], "pin": pin_of(tr["name"]), "target_id": fa[0]["id"]})
-        finish_setup(ps)
+        finish_setup(ps)  # -> day 1
         winner = None
-        for _ in range(4):
-            S.post(f"{G()}/advance")
-            g = S.get(f"{G()}").json()
-            alive = [p for p in g["players"] if p["alive"]]
-            alive_f = [p for p in alive if p["id"] != tr["id"]]
-            target = alive_f[0]
-            for p in alive:
-                vt = target["id"] if p["id"] != target["id"] else tr["id"]
-                S.post(f"{G()}/turn", json={"player_id": p["id"], "pin": pin_of(p["name"]), "vote_target_id": vt, "murder_done": True, "target_id": alive_f[-1]["id"]})
-            r = S.post(f"{G()}/advance").json()
-            winner = r["winner"]
-            if winner:
-                break
-            S.post(f"{G()}/advance")
+        for _ in range(6):
+            assert S.post(f"{G()}/advance").json()["phase"] == "roundtable"
+            alive = [p for p in S.get(f"{G()}").json()["players"] if p["alive"]]
+            alive_f = [p for p in alive if roles[p["id"]] == "faithful"]
+            bt = alive_f[0]
+            cast_votes({p["id"]: (bt["id"] if p["id"] != bt["id"] else next(x["id"] for x in alive if x["id"] != p["id"])) for p in alive})
+            rb = S.post(f"{G()}/advance").json()  # -> banished (or ended)
+            if rb.get("winner"):
+                winner = rb["winner"]; break
+            assert S.post(f"{G()}/advance").json()["phase"] == "night"
+            af = [p for p in S.get(f"{G()}").json()["players"] if p["alive"] and roles[p["id"]] == "faithful"]
+            do_night(roles, murder_target=af[-1]["id"] if af else None)
+            rv = S.post(f"{G()}/advance").json()  # -> reveal
+            if rv.get("winner"):
+                winner = rv["winner"]; break
+            S.post(f"{G()}/advance")  # -> day
         assert winner == "traitors"
 
 

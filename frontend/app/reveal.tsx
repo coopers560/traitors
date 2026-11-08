@@ -19,7 +19,7 @@ export default function Reveal() {
   const [step, setStep] = useState(0);
 
   const advance = useMutation({
-    mutationFn: () => api.advance("reveal", data?.exists ? data.day : 0),
+    mutationFn: () => api.advance(data?.exists ? data.phase : "reveal", data?.exists ? data.day : 0),
     onSuccess: (s) => {
       qc.setQueryData(["game"], s);
       router.dismissTo("/");
@@ -34,18 +34,34 @@ export default function Reveal() {
     );
   }
   const result: DayResult | undefined = data.history[data.history.length - 1];
-  const inReveal = data.phase === "reveal";
   if (!result) return null;
 
-  const steps = ["intro", "murder", "banish", ...(result.winner ? ["winner"] : [])];
+  // The banishment and the murder are now revealed in two separate visits:
+  // "banished" after the Round Table, "reveal" after the night.
+  const isBanish = data.phase === "banished";
+  const isMurder = data.phase === "reveal";
+  const inFlow = isBanish || isMurder;
+  const steps = isBanish
+    ? ["intro", "banish", ...(result.winner ? ["winner"] : [])]
+    : isMurder
+      ? ["intro", "murder", ...(result.winner ? ["winner"] : [])]
+      : ["banish", ...(result.murder ? ["murder"] : []), ...(result.winner ? ["winner"] : [])];
   const last = step >= steps.length - 1;
+
+  const finishLabel = isBanish
+    ? result.winner
+      ? "See all the roles"
+      : "Continue — night falls"
+    : result.winner
+      ? "See all the roles"
+      : `Begin Day ${result.day + 1}`;
 
   return (
     <View style={styles.root} testID="reveal-screen">
       <Backdrop image={IMAGES.seal} strong={step > 0} />
       <ScrollView contentContainerStyle={[styles.scroll, { paddingTop: insets.top + spacing.xl, paddingBottom: insets.bottom + spacing.lg }]}>
         <View style={{ flex: 1, justifyContent: "center", gap: spacing.lg }}>
-          {steps[step] === "intro" ? <Intro day={result.day} /> : null}
+          {steps[step] === "intro" ? <Intro day={result.day} kind={isBanish ? "banish" : "murder"} /> : null}
           {steps[step] === "murder" ? <Murder r={result} /> : null}
           {steps[step] === "banish" ? <Banish r={result} /> : null}
           {steps[step] === "winner" ? <Winner winner={result.winner!} /> : null}
@@ -54,11 +70,11 @@ export default function Reveal() {
           <ErrorText testID="reveal-error" message={advance.error?.message} />
           {!last ? (
             <Button testID="reveal-next-button" label="Continue" icon="arrow-forward" onPress={() => setStep((s) => s + 1)} />
-          ) : inReveal ? (
+          ) : inFlow ? (
             <Button
               testID="reveal-finish-button"
-              label={result.winner ? "See all the roles" : `Begin Day ${result.day + 1}`}
-              icon={result.winner ? "trophy" : "sunny"}
+              label={finishLabel}
+              icon={result.winner ? "trophy" : isBanish ? "moon" : "sunny"}
               loading={advance.isPending}
               onPress={() => advance.mutate()}
             />
@@ -71,12 +87,22 @@ export default function Reveal() {
   );
 }
 
-function Intro({ day }: { day: number }) {
+function Intro({ day, kind }: { day: number; kind: "banish" | "murder" }) {
   return (
     <Animated.View entering={FadeIn.duration(1200)} style={{ gap: spacing.md }} testID="reveal-intro">
-      <Eyebrow>The end of Day {day}</Eyebrow>
-      <Title style={{ fontSize: 52, lineHeight: 56 }}>The candles flicker…</Title>
-      <Body>Gather everyone round. First, we learn whether the Traitors struck today.</Body>
+      {kind === "banish" ? (
+        <>
+          <Eyebrow>The end of Day {day}</Eyebrow>
+          <Title style={{ fontSize: 52, lineHeight: 56 }}>The Round Table has spoken…</Title>
+          <Body>Gather everyone round. First, we learn who the table has banished.</Body>
+        </>
+      ) : (
+        <>
+          <Eyebrow>Night falls on Day {day}</Eyebrow>
+          <Title style={{ fontSize: 52, lineHeight: 56 }}>The candles flicker…</Title>
+          <Body>While the castle slept, did the Traitors strike?</Body>
+        </>
+      )}
     </Animated.View>
   );
 }

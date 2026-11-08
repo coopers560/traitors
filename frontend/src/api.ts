@@ -1,7 +1,7 @@
 const BASE = `${process.env.EXPO_PUBLIC_BACKEND_URL}/api`;
 
 export type Role = "traitor" | "faithful";
-export type Phase = "setup" | "day" | "roundtable" | "reveal" | "ended";
+export type Phase = "setup" | "day" | "roundtable" | "banished" | "night" | "reveal" | "ended";
 
 export type PublicPlayer = {
   id: string;
@@ -66,8 +66,6 @@ export type PrivateView = {
   fellow_traitors?: string[];
   target?: { id: string; name: string } | null;
   action?: string | null;
-  next_target?: { id: string; name: string } | null;
-  next_action?: string | null;
   murder_confirmed?: boolean;
 };
 

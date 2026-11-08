@@ -98,17 +98,27 @@ const PHASE_COPY: Record<string, { eyebrow: string; title: string; body: string 
   },
   day: {
     eyebrow: "During the day",
-    title: "Murder in plain sight",
-    body: "The Traitors know their victim and a secret action to perform on them today. Enjoy the holiday — but watch who hands what to whom.",
+    title: "Enjoy the holiday",
+    body: "Mingle, relax and watch everyone closely. The Traitors strike tonight — after the Round Table — so there is nothing to do yet but gather clues.",
   },
   roundtable: {
     eyebrow: "This evening",
     title: "The Round Table",
     body: "Argue, accuse, defend. Then everyone casts a secret vote to banish someone — on any phone, all at the same time if you like.",
   },
-  reveal: {
+  banished: {
     eyebrow: "The verdict",
-    title: "The results are in",
+    title: "The banishment",
+    body: "Gather everyone together to see who the table has banished — before the night falls.",
+  },
+  night: {
+    eyebrow: "After dark",
+    title: "The Traitors move",
+    body: "Everyone taps their name in private. The Traitors secretly choose who to murder; everyone else simply passes the phone on — so no one can tell who acted.",
+  },
+  reveal: {
+    eyebrow: "The morning after",
+    title: "Who did the Traitors take?",
     body: "Gather everyone together before you open the envelope.",
   },
 };
@@ -131,7 +141,7 @@ function Dashboard({ game, refreshing, onRefresh }: { game: ActiveGame; refreshi
     mutationFn: () => api.advance(game.phase, game.day),
     onSuccess: (s) => {
       qc.setQueryData(["game"], s);
-      if (s.exists && s.phase === "reveal") router.push("/reveal");
+      if (s.exists && (s.phase === "banished" || s.phase === "reveal")) router.push("/reveal");
     },
   });
   const endGame = useMutation({
@@ -154,7 +164,7 @@ function Dashboard({ game, refreshing, onRefresh }: { game: ActiveGame; refreshi
   const { phase } = game;
   const allDone = game.turns_done >= game.turns_needed;
   const copy = PHASE_COPY[phase];
-  const takingTurns = phase === "setup" || phase === "roundtable";
+  const takingTurns = phase === "setup" || phase === "roundtable" || phase === "night";
   const alive = game.players.filter((p) => p.alive);
   const out = game.players.filter((p) => !p.alive);
 
@@ -228,7 +238,11 @@ function Dashboard({ game, refreshing, onRefresh }: { game: ActiveGame; refreshi
             ) : phase === "day" ? (
               <Button testID="advance-round-table-button" label="Gather at the Round Table" icon="flame" loading={advance.isPending} onPress={() => advance.mutate()} />
             ) : phase === "roundtable" ? (
-              <Button testID="advance-reveal-button" label={allDone ? "Reveal the results" : "Waiting for votes…"} icon="mail-open" disabled={!allDone} loading={advance.isPending} onPress={() => advance.mutate()} />
+              <Button testID="advance-reveal-button" label={allDone ? "Reveal the banishment" : "Waiting for votes…"} icon="mail-open" disabled={!allDone} loading={advance.isPending} onPress={() => advance.mutate()} />
+            ) : phase === "night" ? (
+              <Button testID="advance-murder-button" label={allDone ? "Reveal the murder" : "Waiting for the night…"} icon="moon" disabled={!allDone} loading={advance.isPending} onPress={() => advance.mutate()} />
+            ) : phase === "banished" ? (
+              <Button testID="open-banishment-button" label="Open the banishment" icon="mail" onPress={() => router.push("/reveal")} />
             ) : (
               <Button testID="open-reveal-button" label="Open the envelope" icon="mail" onPress={() => router.push("/reveal")} />
             )}
