@@ -3,7 +3,7 @@
 # `frontend` so the build context is this folder.
 
 # ---- build stage ----
-FROM node:20-slim AS build
+FROM node:22-slim AS build
 WORKDIR /app
 
 # The backend URL is baked into the bundle at BUILD time (Metro inlines
@@ -30,7 +30,7 @@ RUN test -n "$EXPO_PUBLIC_BACKEND_URL" || (echo "ERROR: set EXPO_PUBLIC_BACKEND_
 RUN yarn expo export --platform web
 
 # ---- serve stage ----
-FROM node:20-slim AS serve
+FROM node:22-slim AS serve
 WORKDIR /app
 RUN npm install -g serve@14
 COPY --from=build /app/dist ./dist
