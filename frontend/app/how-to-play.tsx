@@ -15,7 +15,7 @@ const STEPS: { icon: React.ComponentProps<typeof Ionicons>["name"]; title: strin
   {
     icon: "sunny",
     title: "2. During the day",
-    body: "Each victim comes with a simple secret action, like \"Hand them a bottle of water\" or \"Ask them what time it is\". Any Traitor does it to the victim, naturally, in front of everyone. That is the murder!",
+    body: "Each victim comes with a simple secret action, like \"Offer them some sun cream\" or \"Ask if they've been in the pool yet\". Any Traitor does it to the victim, naturally, in front of everyone. That is the murder!",
   },
   {
     icon: "flame",
