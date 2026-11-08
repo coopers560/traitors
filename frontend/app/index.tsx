@@ -2,12 +2,13 @@ import Ionicons from "@react-native-vector-icons/ionicons";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useRouter } from "expo-router";
 import { useEffect, useState } from "react";
-import { ActivityIndicator, Pressable, RefreshControl, ScrollView, Share, Text, View } from "react-native";
+import { ActivityIndicator, Modal, Pressable, RefreshControl, ScrollView, Share, Text, View } from "react-native";
 import Animated, { FadeInDown } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { api, GameState, PublicPlayer } from "@/src/api";
 import { ConfirmSheet } from "@/src/components/confirm-sheet";
+import { PinPad } from "@/src/components/pin-pad";
 import { Backdrop, Body, Button, ErrorText, Eyebrow, Hearts, IMAGES, Title } from "@/src/components/ui";
 import { useGameCode } from "@/src/game-code";
 import { fonts, makeStyles, radius, spacing, useTheme } from "@/src/theme";
@@ -118,6 +119,7 @@ function Dashboard({ game, refreshing, onRefresh }: { game: ActiveGame; refreshi
   const qc = useQueryClient();
   const [menu, setMenu] = useState(false);
   const [confirmEnd, setConfirmEnd] = useState(false);
+  const [endPin, setEndPin] = useState("");
   const [peekMode, setPeekMode] = useState(false);
   const [confirmLeave, setConfirmLeave] = useState(false);
   const { setCode } = useGameCode();
@@ -130,12 +132,20 @@ function Dashboard({ game, refreshing, onRefresh }: { game: ActiveGame; refreshi
     },
   });
   const endGame = useMutation({
-    mutationFn: api.deleteGame,
+    mutationFn: (pin: string) => api.deleteGame({ player_id: game.host_id ?? "", pin }),
     onSuccess: async () => {
       setConfirmEnd(false);
+      setEndPin("");
       await setCode(null);
     },
+    onError: () => setEndPin(""), // wrong PIN: clear so they can try again
   });
+
+  // Auto-submit once the host's 4-digit PIN is entered in the end-game sheet.
+  useEffect(() => {
+    if (confirmEnd && endPin.length === 4 && !endGame.isPending) endGame.mutate(endPin);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [endPin, confirmEnd]);
   const shareCode = async () => {
     try {
       await Share.share({
@@ -195,7 +205,7 @@ function Dashboard({ game, refreshing, onRefresh }: { game: ActiveGame; refreshi
           <Button testID="menu-actions-button" label="Secret actions" variant="secondary" icon="list-outline" onPress={() => { setMenu(false); router.push("/actions"); }} />
           <Button testID="menu-share-code-button" label={`Share join code ${game.code}`} variant="secondary" icon="share-social-outline" onPress={() => { setMenu(false); shareCode(); }} />
           <Button testID="menu-leave-game-button" label="Leave game on this phone" variant="secondary" icon="exit-outline" onPress={() => { setMenu(false); setConfirmLeave(true); }} />
-          <Button testID="menu-end-game-button" label="End this game for everyone" variant="danger" icon="trash-outline" onPress={() => { setMenu(false); setConfirmEnd(true); }} />
+          <Button testID="menu-end-game-button" label="End this game for everyone" variant="danger" icon="trash-outline" onPress={() => { setMenu(false); setEndPin(""); endGame.reset(); setConfirmEnd(true); }} />
         </View>
       ) : null}
 
@@ -260,15 +270,14 @@ function Dashboard({ game, refreshing, onRefresh }: { game: ActiveGame; refreshi
         ) : null}
       </ScrollView>
 
-      <ConfirmSheet
+      <EndGameSheet
         visible={confirmEnd}
-        title="End this game?"
-        message="All roles, lives and votes will be lost on every phone. This cannot be undone."
-        confirmLabel="Yes, end the game"
-        danger
+        hostName={game.host_name ?? "the host"}
+        value={endPin}
+        onChange={setEndPin}
         loading={endGame.isPending}
-        onConfirm={() => endGame.mutate()}
-        onCancel={() => setConfirmEnd(false)}
+        error={endGame.error?.message}
+        onCancel={() => { setConfirmEnd(false); setEndPin(""); endGame.reset(); }}
       />
       <ConfirmSheet
         visible={confirmLeave}
@@ -351,9 +360,55 @@ function EndedCard({ game }: { game: ActiveGame }) {
   );
 }
 
+function EndGameSheet({
+  visible,
+  hostName,
+  value,
+  onChange,
+  loading,
+  error,
+  onCancel,
+}: {
+  visible: boolean;
+  hostName: string;
+  value: string;
+  onChange: (v: string) => void;
+  loading?: boolean;
+  error?: string;
+  onCancel: () => void;
+}) {
+  const styles = useStyles();
+  const insets = useSafeAreaInsets();
+  return (
+    <Modal visible={visible} transparent animationType="fade" onRequestClose={onCancel}>
+      <Pressable style={styles.scrim} onPress={onCancel} testID="end-game-scrim" />
+      <View style={[styles.endSheet, { paddingBottom: insets.bottom + spacing.lg }]} testID="end-game-sheet">
+        <Title style={{ fontSize: 28, lineHeight: 34 }}>End this game?</Title>
+        <Body>
+          Only {hostName} can end the game for everyone. Enter {hostName}&apos;s PIN to confirm — all roles, lives
+          and votes will be lost on every phone.
+        </Body>
+        <ErrorText testID="end-game-error" message={error} />
+        <PinPad value={value} onChange={onChange} disabled={loading} />
+        <Button testID="end-game-cancel-button" label="Cancel" variant="secondary" onPress={onCancel} />
+      </View>
+    </Modal>
+  );
+}
+
 const useStyles = makeStyles((c) => ({
   root: { flex: 1, backgroundColor: c.surface },
   center: { flex: 1, backgroundColor: c.surface, alignItems: "center", justifyContent: "center" },
+  scrim: { flex: 1, backgroundColor: c.scrim },
+  endSheet: {
+    backgroundColor: c.surfaceSecondary,
+    borderTopLeftRadius: radius.lg * 1.5,
+    borderTopRightRadius: radius.lg * 1.5,
+    padding: spacing.lg,
+    gap: spacing.md,
+    borderTopWidth: 1,
+    borderColor: c.brandSecondary,
+  },
   welcome: { flex: 1, paddingHorizontal: spacing.lg, justifyContent: "space-between" },
   heroTitle: { fontSize: 64, lineHeight: 68, color: c.onSurface },
   header: {

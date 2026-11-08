@@ -43,7 +43,9 @@ export default function PlayerTurn() {
     router.back();
   };
 
-  const bg = view?.role === "traitor" ? IMAGES.hood : IMAGES.candle;
+  // Always the same backdrop, whatever the role: a glance from across the room
+  // must not reveal who is a Traitor. The role is shown only in text, up close.
+  const bg = IMAGES.candle;
 
   return (
     <View style={styles.root} testID="player-screen">

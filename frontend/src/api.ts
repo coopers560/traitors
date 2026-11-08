@@ -45,6 +45,8 @@ export type GameState =
       total_days: number;
       phase: Phase;
       winner: "faithful" | "traitors" | null;
+      host_id: string | null;
+      host_name: string | null;
       players: PublicPlayer[];
       turns_needed: number;
       turns_done: number;
@@ -111,7 +113,8 @@ export const api = {
   /** Look up a game by code without switching to it (used by the Join screen). */
   findGame: (code: string) => request<GameState>(`/games/${encodeURIComponent(code.trim().toUpperCase())}`),
   createGame: (players: { name: string; pin: string }[]) => request<GameState>("/games", "POST", { players }),
-  deleteGame: () => request<GameState>(`/games/${currentCode}`, "DELETE"),
+  deleteGame: (auth?: { player_id: string; pin: string }) =>
+    request<GameState>(`/games/${currentCode}`, "DELETE", auth),
   privateView: (player_id: string, pin: string) =>
     request<PrivateView>(`/games/${currentCode}/private`, "POST", { player_id, pin }),
   takeTurn: (body: {
