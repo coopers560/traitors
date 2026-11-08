@@ -42,9 +42,20 @@ def finish_setup(ps):
     assert r.status_code == 200 and r.json()["phase"] == "day", r.text
 
 
+def del_game(code=None):
+    """Delete a game. Supplies host auth so an in-progress game can be removed —
+    only the host may end a game that has not finished."""
+    code = code or CUR["code"]
+    st = S.get(G(code)).json()
+    body = None
+    if st.get("exists") and st.get("host_id"):
+        body = {"player_id": st["host_id"], "pin": pin_of(st["host_name"])}
+    return S.delete(G(code), json=body)
+
+
 def setup_game(n=10):
     if CUR["code"]:
-        S.delete(G())  # clean up previous test game
+        del_game()  # clean up previous test game
     r = S.post(f"{API}/games", json={"players": mk_players(n)})
     assert r.status_code == 200, r.text
     g = r.json()
@@ -248,9 +259,26 @@ class TestFlow:
         assert winner == "traitors"
 
 
+class TestHostEndGame:
+    def test_only_host_can_end_in_progress_game(self):
+        g, _ = setup_game(6)
+        host, other = g["players"][0], g["players"][1]
+        # No credentials: blocked.
+        assert S.delete(G()).status_code == 403
+        # A non-host player: blocked.
+        assert S.delete(G(), json={"player_id": other["id"], "pin": pin_of(other["name"])}).status_code == 403
+        # Host id but wrong PIN: blocked.
+        assert S.delete(G(), json={"player_id": host["id"], "pin": "9999"}).status_code == 401
+        # Still there after all the blocked attempts.
+        assert S.get(G()).status_code == 200
+        # The host can end it.
+        assert S.delete(G(), json={"player_id": host["id"], "pin": pin_of(host["name"])}).json() == {"exists": False}
+        assert S.get(G()).status_code == 404
+
+
 class TestDelete:
     def test_delete(self):
-        assert S.delete(f"{G()}").json() == {"exists": False}
+        assert del_game().json() == {"exists": False}
         r = S.get(f"{G()}")
         assert r.status_code == 404 and r.json()["detail"] == "No game found with that code"
         assert S.post(f"{G()}/advance").status_code == 404

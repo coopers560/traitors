@@ -1,7 +1,7 @@
 # Game join codes: unique 5-char codes, case-insensitive lookup, per-game isolation, removed legacy routes
 import re
 import pytest
-from test_traitors_game import API, S, G, mk_players, pin_of
+from test_traitors_game import API, S, G, mk_players, pin_of, del_game
 
 CODE_RE = re.compile(r"^[ABCDEFGHJKMNPQRSTUVWXYZ23456789]{5}$")
 CREATED = []
@@ -47,7 +47,7 @@ def run_setup_and_day1(code, g):
 def cleanup():
     yield
     for c in CREATED:
-        S.delete(G(c))
+        del_game(c)
 
 
 class TestCodes:
@@ -115,6 +115,6 @@ class TestIsolation:
 
     def test_delete_one_game_keeps_other(self):
         a, b = create(), create()
-        assert S.delete(G(a["code"].lower())).json() == {"exists": False}
+        assert del_game(a["code"].lower()).json() == {"exists": False}
         assert S.get(G(a["code"])).status_code == 404
         assert S.get(G(b["code"])).status_code == 200

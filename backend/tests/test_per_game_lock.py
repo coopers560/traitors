@@ -5,7 +5,7 @@ from concurrent.futures import ThreadPoolExecutor
 import pytest
 import requests
 
-from test_traitors_game import API, G, mk_players, pin_of
+from test_traitors_game import API, G, mk_players, pin_of, del_game
 
 CREATED = []
 
@@ -26,7 +26,7 @@ def _roles(code, g):
 def cleanup():
     yield
     for c in CREATED:
-        requests.delete(f"{API}/games/{c}")
+        del_game(c)
         r = requests.get(f"{API}/games/{c}")
         assert r.status_code == 404 or r.json().get("exists") is False
 

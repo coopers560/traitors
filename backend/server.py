@@ -85,6 +85,7 @@ class Player(BaseModel):
 
 class Game(BaseModel):
     code: str
+    host_id: Optional[str] = None  # the creator; only they may end a game in progress
     actions: List[str] = Field(default_factory=lambda: list(ACTIONS))
     day: int = 1
     phase: str = "setup"  # setup | day | roundtable | reveal | ended
@@ -200,6 +201,8 @@ def public_state(g: Game) -> dict:
         "total_days": TOTAL_DAYS,
         "phase": g.phase,
         "winner": g.winner,
+        "host_id": g.host_id,
+        "host_name": name_of(g, g.host_id),
         "players": [
             {
                 "id": p.id,
@@ -355,13 +358,28 @@ async def create_game(data: CreateGameIn):
         for i, p in enumerate(data.players)
     ]
     g = Game(code=await new_code(), players=players)
+    g.host_id = players[0].id  # the first player entered is the host/creator
     await save(g)
     return public_state(g)
 
 
+class EndGameIn(BaseModel):
+    player_id: Optional[str] = None
+    pin: Optional[str] = None
+
+
 @api_router.delete("/games/{code}")
 @locked
-async def delete_game(code: str):
+async def delete_game(code: str, data: Optional[EndGameIn] = None):
+    g = await load_game(code)
+    # Ending a game that is still in progress is restricted to the host, so one
+    # player can't wipe everyone's game. A finished game can be cleared by anyone.
+    if g and g.host_id and g.phase != "ended":
+        if not data or data.player_id != g.host_id:
+            raise HTTPException(403, "Only the host can end the game")
+        host = g.player(g.host_id)
+        if not host or not data.pin or host.pin_hash != hash_pin(data.pin):
+            raise HTTPException(401, "Incorrect host PIN. Try again.")
     GAME_LOCKS.pop(code.strip().upper(), None)
     await db.games.delete_many({"code": code.strip().upper()})
     return {"exists": False}

@@ -1,5 +1,5 @@
 # Multi-phone sync: /game/advance?expected=<phase> idempotency tests (single global game, run with -n 0)
-from test_traitors_game import API, S, G, setup_game, pin_of, private
+from test_traitors_game import API, S, G, setup_game, pin_of, private, del_game
 
 
 def adv(expected=None):
@@ -12,7 +12,7 @@ def state():
 
 
 def seed_setup_done():
-    S.delete(f"{G()}")
+    del_game()
     g, r = setup_game(5)
     ps = g["players"]
     tr = next(p for p in ps if r[p["id"]] == "traitor")
@@ -90,7 +90,7 @@ class TestAdvanceExpected:
         assert r.status_code == 400
 
     def test_cleanup(self):
-        S.delete(f"{G()}")
+        del_game()
         assert S.get(f"{G()}").status_code == 404
 
 
@@ -101,7 +101,7 @@ class TestConcurrentTurns:
         import requests
         lost = []
         for _ in range(3):
-            S.delete(f"{G()}")
+            del_game()
             g, r = setup_game(12)
             fa = [p for p in g["players"] if r[p["id"]] == "faithful"]
 
@@ -112,5 +112,5 @@ class TestConcurrentTurns:
                 codes = list(ex.map(turn, fa))
             assert codes == [200] * len(fa)
             lost.append(len(fa) - state()["turns_done"])
-        S.delete(f"{G()}")
+        del_game()
         assert lost == [0, 0, 0], f"turns lost per trial (all returned 200): {lost}"

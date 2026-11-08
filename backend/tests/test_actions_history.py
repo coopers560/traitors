@@ -1,6 +1,6 @@
 # Custom murder actions (GET/PUT/DELETE /api/games/{code}/actions) + history usage tests
 import pytest
-from test_traitors_game import API, S, G, setup_game, pin_of, private
+from test_traitors_game import API, S, G, setup_game, pin_of, private, del_game
 
 CUSTOM = ["TEST_Act Alpha", "TEST_Act Beta", "TEST_Act Gamma"]
 
@@ -10,7 +10,7 @@ def reset_after():
     setup_game(5)
     yield
     S.delete(f"{G()}/actions")
-    S.delete(f"{G()}")
+    del_game()
 
 
 # ---- Actions CRUD ----
