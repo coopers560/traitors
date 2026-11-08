@@ -2,15 +2,17 @@ import Ionicons from "@react-native-vector-icons/ionicons";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useRouter } from "expo-router";
 import { useEffect, useState } from "react";
-import { ActivityIndicator, Modal, Pressable, RefreshControl, ScrollView, Share, Text, View } from "react-native";
+import { ActivityIndicator, Modal, Pressable, RefreshControl, ScrollView, Text, View } from "react-native";
 import Animated, { FadeInDown } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { api, GameState, PublicPlayer } from "@/src/api";
 import { ConfirmSheet } from "@/src/components/confirm-sheet";
 import { PinPad } from "@/src/components/pin-pad";
+import { QrCode } from "@/src/components/qr-code";
 import { Backdrop, Body, Button, ErrorText, Eyebrow, Hearts, IMAGES, Title } from "@/src/components/ui";
 import { useGameCode } from "@/src/game-code";
+import { inviteLink, shareInvite, shareToWhatsApp } from "@/src/utils/invite";
 import { fonts, makeStyles, radius, spacing, useTheme } from "@/src/theme";
 
 type ActiveGame = Extract<GameState, { exists: true }>;
@@ -118,6 +120,7 @@ function Dashboard({ game, refreshing, onRefresh }: { game: ActiveGame; refreshi
   const insets = useSafeAreaInsets();
   const qc = useQueryClient();
   const [menu, setMenu] = useState(false);
+  const [invite, setInvite] = useState(false);
   const [confirmEnd, setConfirmEnd] = useState(false);
   const [endPin, setEndPin] = useState("");
   const [peekMode, setPeekMode] = useState(false);
@@ -146,15 +149,7 @@ function Dashboard({ game, refreshing, onRefresh }: { game: ActiveGame; refreshi
     if (confirmEnd && endPin.length === 4 && !endGame.isPending) endGame.mutate(endPin);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [endPin, confirmEnd]);
-  const shareCode = async () => {
-    try {
-      await Share.share({
-        message: `Join our Traitors game! Open the app, tap "Join with a code" and enter: ${game.code}`,
-      });
-    } catch {
-      // sharing cancelled or not supported (web): the code is visible on screen anyway
-    }
-  };
+  const openInvite = () => { setMenu(false); setInvite(true); };
 
   const { phase } = game;
   const allDone = game.turns_done >= game.turns_needed;
@@ -184,7 +179,7 @@ function Dashboard({ game, refreshing, onRefresh }: { game: ActiveGame; refreshi
             {phase === "ended" ? "The Final Verdict" : copy.eyebrow}
           </Text>
         </View>
-        <Pressable testID="dashboard-share-code-button" onPress={shareCode} style={styles.codeChip} hitSlop={6} accessibilityLabel={`Game code ${game.code}, tap to share`}>
+        <Pressable testID="dashboard-share-code-button" onPress={openInvite} style={styles.codeChip} hitSlop={6} accessibilityLabel={`Game code ${game.code}, tap to invite players`}>
           <Text style={styles.codeLabel}>Code</Text>
           <Text style={styles.codeText} testID="dashboard-game-code">{game.code}</Text>
         </Pressable>
@@ -203,7 +198,7 @@ function Dashboard({ game, refreshing, onRefresh }: { game: ActiveGame; refreshi
           <Button testID="menu-how-to-play-button" label="How to play" variant="secondary" icon="book-outline" onPress={() => { setMenu(false); router.push("/how-to-play"); }} />
           <Button testID="menu-history-button" label="Day history" variant="secondary" icon="time-outline" onPress={() => { setMenu(false); router.push("/history"); }} />
           <Button testID="menu-actions-button" label="Secret actions" variant="secondary" icon="list-outline" onPress={() => { setMenu(false); router.push("/actions"); }} />
-          <Button testID="menu-share-code-button" label={`Share join code ${game.code}`} variant="secondary" icon="share-social-outline" onPress={() => { setMenu(false); shareCode(); }} />
+          <Button testID="menu-share-code-button" label="Invite players (QR & link)" variant="secondary" icon="qr-code-outline" onPress={openInvite} />
           <Button testID="menu-leave-game-button" label="Leave game on this phone" variant="secondary" icon="exit-outline" onPress={() => { setMenu(false); setConfirmLeave(true); }} />
           <Button testID="menu-end-game-button" label="End this game for everyone" variant="danger" icon="trash-outline" onPress={() => { setMenu(false); setEndPin(""); endGame.reset(); setConfirmEnd(true); }} />
         </View>
@@ -269,6 +264,8 @@ function Dashboard({ game, refreshing, onRefresh }: { game: ActiveGame; refreshi
           </>
         ) : null}
       </ScrollView>
+
+      <InviteSheet visible={invite} code={game.code} onClose={() => setInvite(false)} />
 
       <EndGameSheet
         visible={confirmEnd}
@@ -360,6 +357,30 @@ function EndedCard({ game }: { game: ActiveGame }) {
   );
 }
 
+function InviteSheet({ visible, code, onClose }: { visible: boolean; code: string; onClose: () => void }) {
+  const styles = useStyles();
+  const insets = useSafeAreaInsets();
+  return (
+    <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
+      <Pressable style={styles.scrim} onPress={onClose} testID="invite-scrim" />
+      <View style={[styles.inviteSheet, { paddingBottom: insets.bottom + spacing.lg }]} testID="invite-sheet">
+        <Eyebrow>Invite players</Eyebrow>
+        <Title style={{ fontSize: 28, lineHeight: 34, textAlign: "center" }}>Scan to join</Title>
+        {visible ? (
+          <View style={styles.qrWrap}>
+            <QrCode value={inviteLink(code)} size={224} />
+          </View>
+        ) : null}
+        <Text style={styles.inviteCode} testID="invite-code">{code}</Text>
+        <Body style={{ textAlign: "center" }}>Point a phone camera at the code, or open the app and enter the code above.</Body>
+        <Button testID="invite-whatsapp-button" label="Share on WhatsApp" icon="logo-whatsapp" onPress={() => shareToWhatsApp(code)} />
+        <Button testID="invite-share-button" label="Share another way" variant="secondary" icon="share-social-outline" onPress={() => shareInvite(code)} />
+        <Button testID="invite-close-button" label="Done" variant="ghost" onPress={onClose} />
+      </View>
+    </Modal>
+  );
+}
+
 function EndGameSheet({
   visible,
   hostName,
@@ -400,6 +421,30 @@ const useStyles = makeStyles((c) => ({
   root: { flex: 1, backgroundColor: c.surface },
   center: { flex: 1, backgroundColor: c.surface, alignItems: "center", justifyContent: "center" },
   scrim: { flex: 1, backgroundColor: c.scrim },
+  inviteSheet: {
+    backgroundColor: c.surfaceSecondary,
+    borderTopLeftRadius: radius.lg * 1.5,
+    borderTopRightRadius: radius.lg * 1.5,
+    padding: spacing.lg,
+    gap: spacing.sm,
+    alignItems: "stretch",
+    borderTopWidth: 1,
+    borderColor: c.brandSecondary,
+  },
+  qrWrap: {
+    alignSelf: "center",
+    padding: spacing.sm,
+    backgroundColor: "#ffffff",
+    borderRadius: radius.md,
+    marginVertical: spacing.xs,
+  },
+  inviteCode: {
+    textAlign: "center",
+    color: c.brand,
+    fontSize: 34,
+    fontWeight: "800",
+    letterSpacing: 6,
+  },
   endSheet: {
     backgroundColor: c.surfaceSecondary,
     borderTopLeftRadius: radius.lg * 1.5,
