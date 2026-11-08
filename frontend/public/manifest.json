@@ -1,0 +1,25 @@
+{
+  "name": "The Traitors",
+  "short_name": "Traitors",
+  "description": "A real-world party game of murder, deception and the Round Table.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#0D1113",
+  "theme_color": "#0D1113",
+  "icons": [
+    {
+      "src": "/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}

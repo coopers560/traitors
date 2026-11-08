@@ -10,8 +10,21 @@ export default function Root({ children }: PropsWithChildren) {
         <meta httpEquiv="X-UA-Compatible" content="IE=edge" />
         <meta
           name="viewport"
-          content="width=device-width, initial-scale=1, shrink-to-fit=no"
+          content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover, shrink-to-fit=no"
         />
+
+        {/* Installable web app (PWA) — Android / Chrome */}
+        <link rel="manifest" href="/manifest.json" />
+        <meta name="theme-color" content="#0D1113" />
+        <meta name="description" content="A real-world party game of murder, deception and the Round Table." />
+
+        {/* iOS home-screen app. Safari ignores manifest.json, so these drive
+            the full-screen, standalone install you get from Share → Add to Home Screen. */}
+        <meta name="apple-mobile-web-app-capable" content="yes" />
+        <meta name="mobile-web-app-capable" content="yes" />
+        <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+        <meta name="apple-mobile-web-app-title" content="Traitors" />
+        <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
         {/*
           Disable body scrolling on web to make ScrollView components work correctly.
           If you want to enable scrolling, remove `ScrollViewStyleReset` and
