@@ -20,7 +20,7 @@ class TestActions:
         assert r.status_code == 200
         d = r.json()
         assert d["is_default"] is True and len(d["actions"]) == 26
-        assert "Hand them a bottle of water" in d["actions"]
+        assert "Offer them some sun cream" in d["actions"]
 
     def test_put_trims_and_dedupes(self):
         r = S.put(f"{G()}/actions", json={"actions": ["  TEST_Act Alpha ", "test_act alpha", "TEST_Act Beta", "", "   ", "TEST_Act Gamma", "TEST_ACT BETA"]})
