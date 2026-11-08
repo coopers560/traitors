@@ -74,18 +74,14 @@ export default function PlayerTurn() {
         <ScrollView contentContainerStyle={[styles.scroll, { paddingBottom: insets.bottom + spacing.lg }]}>
           <RoleCard view={view} />
           {mode === "turn" && view.phase === "setup" ? (
-            <SetupTurn view={view} pin={pin} players={players} onSealed={() => setSealed(true)} />
+            <SetupTurn view={view} pin={pin} onSealed={() => setSealed(true)} />
           ) : mode === "turn" && view.phase === "roundtable" && view.alive ? (
             <RoundTableTurn view={view} pin={pin} players={players} onSealed={() => setSealed(true)} />
+          ) : mode === "turn" && view.phase === "night" && view.alive ? (
+            <NightTurn view={view} pin={pin} players={players} onSealed={() => setSealed(true)} />
           ) : (
             <>
-              {view.role === "traitor" && view.phase === "day" && view.alive && !view.target ? (
-                <DayRepick view={view} pin={pin} players={players} onPicked={setView} />
-              ) : view.role === "traitor" ? (
-                <TraitorBrief view={view} />
-              ) : (
-                <FaithfulBrief view={view} />
-              )}
+              {view.role === "traitor" ? <TraitorBrief view={view} /> : <FaithfulBrief view={view} />}
               <Button testID="player-hide-button" label="Hide & pass the phone back" icon="eye-off" onPress={leave} />
             </>
           )}
@@ -181,41 +177,28 @@ function VictimPicker({
   );
 }
 
-function DayRepick({ view, pin, players, onPicked }: { view: PrivateView; pin: string; players: PublicPlayer[]; onPicked: (v: PrivateView) => void }) {
-  const [target, setTarget] = useState<string | null>(null);
-  const submit = useMutation({
-    mutationFn: () => api.takeTurn({ player_id: view.player_id, pin, target_id: target ?? undefined }),
-    onSuccess: onPicked,
-  });
-  const traitorIds = new Set<string>();
-  players.forEach((p) => (view.fellow_traitors?.includes(p.name) || p.id === view.player_id) && traitorIds.add(p.id));
-  return (
-    <>
-      <Body testID="day-repick-info">Your planned victim is gone. Choose someone new for today — you will get a fresh secret action.</Body>
-      <VictimPicker label={`Day ${view.day} victim`} prefix="day-victim" players={players.filter((p) => !traitorIds.has(p.id))} selected={target} onSelect={setTarget} />
-      <ErrorText testID="turn-error" message={submit.error?.message} />
-      <Button testID="day-repick-submit-button" label="Seal the victim" icon="skull" disabled={!target} loading={submit.isPending} onPress={() => submit.mutate()} />
-    </>
-  );
-}
-
-function SetupTurn({ view, pin, players, onSealed }: { view: PrivateView; pin: string; players: PublicPlayer[]; onSealed: () => void }) {
+function NightTurn({ view, pin, players, onSealed }: { view: PrivateView; pin: string; players: PublicPlayer[]; onSealed: () => void }) {
+  const traitor = view.role === "traitor";
   const [target, setTarget] = useState<string | null>(view.target?.id ?? null);
   const [result, setResult] = useState<PrivateView | null>(null);
   const submit = useMutation({
-    mutationFn: () => api.takeTurn({ player_id: view.player_id, pin, target_id: target ?? undefined }),
-    onSuccess: (v) => (view.role === "traitor" ? setResult(v) : onSealed()),
+    mutationFn: (tid: string | null) => api.takeTurn({ player_id: view.player_id, pin, target_id: tid ?? undefined }),
+    onSuccess: (v) => (traitor ? setResult(v) : onSealed()),
   });
   const traitorIds = new Set<string>();
-  // Traitors cannot target each other; we only know fellow names, so filter by name
+  // Traitors cannot murder each other; we only know fellow names, so filter by name.
   players.forEach((p) => (view.fellow_traitors?.includes(p.name) || p.id === view.player_id) && traitorIds.add(p.id));
 
-  if (view.role !== "traitor") {
+  // Everyone takes a night turn so watching who taps never reveals the Traitors.
+  if (!traitor) {
     return (
       <>
-        <FaithfulBrief view={view} />
+        <Body testID="night-faithful-note">
+          The castle sleeps. There is nothing for you to do tonight — just pass the phone on, so no one can tell who the
+          Traitors are.
+        </Body>
         <ErrorText testID="turn-error" message={submit.error?.message} />
-        <Button testID="setup-turn-confirm-button" label="I understand — hide it" icon="eye-off" loading={submit.isPending} onPress={() => submit.mutate()} />
+        <Button testID="night-pass-button" label="Pass the phone on" icon="eye-off" loading={submit.isPending} onPress={() => submit.mutate(null)} />
       </>
     );
   }
@@ -223,91 +206,56 @@ function SetupTurn({ view, pin, players, onSealed }: { view: PrivateView; pin: s
     return (
       <>
         <TraitorBrief view={result} />
-        <Button testID="setup-turn-done-button" label="Hide & pass the phone" icon="eye-off" onPress={onSealed} />
+        <Button testID="night-done-button" label="Hide & pass the phone" icon="eye-off" onPress={onSealed} />
       </>
     );
   }
   return (
     <>
       <Body>
-        {view.target ? `Victim chosen so far: ${view.target.name}. You can keep it or change it.` : "Choose who you will murder on Day 1. You will then get a secret action to perform on them."}
+        {view.target
+          ? `Victim chosen so far: ${view.target.name}. You can keep it, change it, or lie low.`
+          : "Now the Round Table is done, choose who the Traitors murder tonight — you'll get a secret action to perform on them. Or lie low and spare everyone."}
       </Body>
-      <VictimPicker
-        label="Day 1 victim"
-        prefix="setup-victim"
-        players={players.filter((p) => !traitorIds.has(p.id))}
-        selected={target}
-        onSelect={setTarget}
-      />
+      <VictimPicker label={`Tonight's victim · Day ${view.day}`} prefix="night-victim" players={players.filter((p) => !traitorIds.has(p.id))} selected={target} onSelect={setTarget} />
       <ErrorText testID="turn-error" message={submit.error?.message} />
-      <Button testID="setup-turn-submit-button" label="Seal the victim" icon="skull" disabled={!target} loading={submit.isPending} onPress={() => submit.mutate()} />
+      <Button testID="night-submit-button" label="Seal the victim" icon="skull" disabled={!target} loading={submit.isPending && !!target} onPress={() => submit.mutate(target)} />
+      <Button testID="night-skip-button" label="Lie low — no murder tonight" variant="ghost" loading={submit.isPending && !target} onPress={() => submit.mutate(null)} />
+    </>
+  );
+}
+
+function SetupTurn({ view, pin, onSealed }: { view: PrivateView; pin: string; onSealed: () => void }) {
+  const submit = useMutation({
+    mutationFn: () => api.takeTurn({ player_id: view.player_id, pin }),
+    onSuccess: () => onSealed(),
+  });
+  return (
+    <>
+      {view.role === "traitor" ? (
+        <Body testID="setup-traitor-note">
+          Remember your fellow Traitors. You&apos;ll choose who to murder after the first Round Table — not before.
+        </Body>
+      ) : (
+        <FaithfulBrief view={view} />
+      )}
+      <ErrorText testID="turn-error" message={submit.error?.message} />
+      <Button testID="setup-turn-confirm-button" label="I understand — hide it" icon="eye-off" loading={submit.isPending} onPress={() => submit.mutate()} />
     </>
   );
 }
 
 function RoundTableTurn({ view, pin, players, onSealed }: { view: PrivateView; pin: string; players: PublicPlayer[]; onSealed: () => void }) {
-  const styles = useStyles();
-  const { colors } = useTheme();
-  const traitor = view.role === "traitor";
-  const lastDay = view.day >= 12;
   const [vote, setVote] = useState<string | null>(view.my_vote_id);
-  const [done, setDone] = useState<boolean | null>(view.murder_confirmed ? true : null);
-  const [next, setNext] = useState<string | null>(view.next_target?.id ?? null);
-
-  const traitorIds = new Set<string>();
-  players.forEach((p) => (view.fellow_traitors?.includes(p.name) || p.id === view.player_id) && traitorIds.add(p.id));
-  const needsMurder = traitor && !!view.target;
-  const needsNext = traitor && !lastDay;
-  const ready = !!vote && (!needsMurder || done !== null) && (!needsNext || !!next);
-
   const submit = useMutation({
-    mutationFn: () =>
-      api.takeTurn({
-        player_id: view.player_id,
-        pin,
-        vote_target_id: vote ?? undefined,
-        murder_done: needsMurder ? !!done : undefined,
-        target_id: needsNext ? next ?? undefined : undefined,
-      }),
+    mutationFn: () => api.takeTurn({ player_id: view.player_id, pin, vote_target_id: vote ?? undefined }),
     onSuccess: onSealed,
   });
-
   return (
     <>
-      {needsMurder ? (
-        <View style={styles.brief} testID="murder-confirm">
-          <Eyebrow>Today&apos;s murder</Eyebrow>
-          <Text style={styles.briefLabel}>
-            Did a Traitor &quot;{view.action}&quot; to {view.target?.name} today?
-          </Text>
-          <View style={{ flexDirection: "row", gap: spacing.sm }}>
-            <Pressable testID="murder-done-yes" onPress={() => setDone(true)} style={[styles.pick, { flex: 1 }, done === true && styles.pickOn]}>
-              <Text style={[styles.pickText, done === true && { color: colors.onBrandPrimary }]}>Yes, done</Text>
-            </Pressable>
-            <Pressable testID="murder-done-no" onPress={() => setDone(false)} style={[styles.pick, { flex: 1 }, done === false && styles.pickOn]}>
-              <Text style={[styles.pickText, done === false && { color: colors.onBrandPrimary }]}>No</Text>
-            </Pressable>
-          </View>
-          {view.murder_confirmed ? <Body style={{ fontSize: 15 }}>A fellow Traitor already confirmed it.</Body> : null}
-        </View>
-      ) : null}
-
       <VictimPicker label="Who do you vote to banish?" prefix="vote-option" players={players} selected={vote} onSelect={setVote} excludeId={view.player_id} />
-
-      {needsNext ? (
-        <View style={{ marginTop: spacing.md }}>
-          <VictimPicker
-            label={`Traitors only: tomorrow's victim (Day ${view.day + 1})`}
-            prefix="next-victim"
-            players={players.filter((p) => !traitorIds.has(p.id))}
-            selected={next}
-            onSelect={setNext}
-          />
-        </View>
-      ) : null}
-
       <ErrorText testID="turn-error" message={submit.error?.message} />
-      <Button testID="vote-submit-button" label="Seal my vote" icon="lock-closed" disabled={!ready} loading={submit.isPending} onPress={() => submit.mutate()} />
+      <Button testID="vote-submit-button" label="Seal my vote" icon="lock-closed" disabled={!vote} loading={submit.isPending} onPress={() => submit.mutate()} />
     </>
   );
 }

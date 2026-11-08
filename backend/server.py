@@ -217,9 +217,16 @@ def public_state(g: Game) -> dict:
         ],
         "turns_needed": len(g.players) if g.phase == "setup" else len(g.alive()),
         "turns_done": len(g.turns_done),
-        # never reveal which secret action was used (strip from older records too)
-        "history": [{**h, "murder": {k: v for k, v in h["murder"].items() if k != "action"}} for h in g.history],
+        # never reveal which secret action was used (strip from older records too);
+        # a day's murder is None until the night step has resolved it
+        "history": [_public_history(h) for h in g.history],
     }
+
+
+def _public_history(h: dict) -> dict:
+    m = h.get("murder")
+    pub = {k: v for k, v in m.items() if k != "action"} if m else None
+    return {**h, "murder": pub}
 
 
 def auth(g: Game, data: AuthIn) -> Player:
@@ -240,35 +247,19 @@ def valid_victim(g: Game, pid: Optional[str]) -> Player:
     return v
 
 
-def check_winner(g: Game) -> Optional[str]:
+def winner_by_roles(g: Game) -> Optional[str]:
+    """Winner decided purely by who is left alive (no day cap)."""
     traitors = [p for p in g.alive() if p.role == "traitor"]
     faithful = [p for p in g.alive() if p.role == "faithful"]
     if not traitors:
         return "faithful"
-    if len(traitors) >= len(faithful) or g.day >= TOTAL_DAYS:
+    if len(traitors) >= len(faithful):
         return "traitors"
     return None
 
 
-def resolve_day(g: Game) -> dict:
-    result = {"day": g.day, "murder": None, "banish": None}
-
-    # 1. Murder in plain sight
-    victim = g.player(g.target_id)
-    if victim and victim.lives > 0 and g.murder_confirmed:
-        victim.lives -= 1
-        result["murder"] = {
-            "success": True,
-            "victim_id": victim.id,
-            "victim_name": victim.name,
-            "lives_left": victim.lives,
-            "eliminated": victim.lives == 0,
-            "role": victim.role if victim.lives == 0 else None,
-        }
-    else:
-        result["murder"] = {"success": False}
-
-    # 2. Round Table banishment
+def resolve_banish(g: Game) -> dict:
+    """The Round Table vote — resolved first, before the Traitors murder."""
     tally = Counter(v for k, v in g.votes.items() if g.player(k))
     counts = [{"player_id": pid, "name": name_of(g, pid), "votes": n} for pid, n in tally.most_common()]
     banish = {"tally": counts, "tie": False, "target_id": None}
@@ -289,8 +280,23 @@ def resolve_day(g: Game) -> dict:
             banish["lives_left"] = t.lives
             banish["eliminated"] = t.lives == 0
             banish["role"] = t.role if t.lives == 0 else None
-    result["banish"] = banish
-    return result
+    return banish
+
+
+def resolve_murder(g: Game) -> dict:
+    """The Traitors' murder — chosen and resolved after the banishment, at night."""
+    victim = g.player(g.target_id)
+    if victim and victim.lives > 0 and g.murder_confirmed:
+        victim.lives -= 1
+        return {
+            "success": True,
+            "victim_id": victim.id,
+            "victim_name": victim.name,
+            "lives_left": victim.lives,
+            "eliminated": victim.lives == 0,
+            "role": victim.role if victim.lives == 0 else None,
+        }
+    return {"success": False}
 
 
 # ---------------- Routes ----------------
@@ -405,8 +411,6 @@ async def private_view(code: str, data: AuthIn):
         out["fellow_traitors"] = [x.name for x in g.players if x.role == "traitor" and x.id != p.id]
         out["target"] = {"id": g.target_id, "name": name_of(g, g.target_id)} if g.target_id else None
         out["action"] = g.action
-        out["next_target"] = {"id": g.next_target_id, "name": name_of(g, g.next_target_id)} if g.next_target_id else None
-        out["next_action"] = g.next_action
         out["murder_confirmed"] = g.murder_confirmed
     return out
 
@@ -419,14 +423,7 @@ async def take_turn(code: str, data: TurnIn):
     is_traitor = p.role == "traitor"
 
     if g.phase == "setup":
-        if is_traitor:
-            if data.target_id:
-                valid_victim(g, data.target_id)
-                g.target_id = data.target_id
-                if not g.action:
-                    g.action = g.pick_action(g.actions)
-            elif not g.target_id:
-                raise HTTPException(400, "Choose who to murder on Day 1")
+        pass  # everyone just sees their role in private; nothing to choose yet
     elif g.phase == "roundtable":
         if p.lives <= 0:
             raise HTTPException(400, "You have been eliminated and cannot vote")
@@ -434,23 +431,15 @@ async def take_turn(code: str, data: TurnIn):
         if not tgt or tgt.lives <= 0 or tgt.id == p.id:
             raise HTTPException(400, "Choose someone to banish")
         g.votes[p.id] = tgt.id
-        if is_traitor:
-            if g.target_id and data.murder_done is not None and data.murder_done:
-                g.murder_confirmed = True
-            if g.day < TOTAL_DAYS and data.target_id:
-                valid_victim(g, data.target_id)
-                g.next_target_id = data.target_id
-                if not g.next_action:
-                    g.next_action = g.pick_action(g.actions)
-    elif g.phase == "day" and is_traitor and p.lives > 0 and data.target_id:
-        # Traitors re-pick if their planned victim was eliminated overnight
-        if g.target_id and g.player(g.target_id).lives > 0:
-            raise HTTPException(400, "Today's victim is already chosen")
-        valid_victim(g, data.target_id)
-        g.target_id = data.target_id
-        g.action = g.pick_action(g.actions)
-        await save(g)
-        return await private_view(code, AuthIn(player_id=data.player_id, pin=data.pin))
+    elif g.phase == "night":
+        # The murder happens after the Round Table. A Traitor names tonight's
+        # victim (or takes their turn without one to lie low); everyone else just
+        # passes, so watching who taps never reveals who the Traitors are.
+        if is_traitor and p.lives > 0 and data.target_id:
+            valid_victim(g, data.target_id)
+            g.target_id = data.target_id
+            g.action = g.pick_action(g.actions)
+            g.murder_confirmed = True
     else:
         raise HTTPException(400, "It is not time to take a turn")
 
@@ -470,34 +459,45 @@ async def advance(code: str, expected: Optional[str] = None, expected_day: Optio
     if g.phase == "setup":
         if len(g.turns_done) < len(g.players):
             raise HTTPException(400, "Every player must see their role first")
-        if not g.target_id:
-            raise HTTPException(400, "The Traitors have not chosen a victim yet")
         g.phase = "day"
         g.turns_done = []
     elif g.phase == "day":
         g.phase = "roundtable"
-        g.turns_done, g.votes, g.murder_confirmed = [], {}, False
+        g.turns_done, g.votes = [], {}
     elif g.phase == "roundtable":
         alive_ids = {p.id for p in g.alive()}
         if not alive_ids.issubset(set(g.turns_done)):
-            raise HTTPException(400, "Everyone must vote before the reveal")
-        result = resolve_day(g)
-        g.winner = check_winner(g)
-        result["winner"] = g.winner
-        g.history.append(result)
+            raise HTTPException(400, "Everyone must vote before the banishment")
+        banish = resolve_banish(g)
+        g.winner = winner_by_roles(g)  # a Traitor banished can end it before nightfall
+        g.history.append({"day": g.day, "murder": None, "banish": banish, "winner": g.winner})
+        g.phase = "banished"
+    elif g.phase == "banished":
+        # Banishment shown; now the Traitors murder — unless the game is already won.
+        if g.winner:
+            g.phase = "ended"
+        else:
+            g.phase = "night"
+            g.turns_done, g.target_id, g.action, g.murder_confirmed = [], None, None, False
+    elif g.phase == "night":
+        alive_ids = {p.id for p in g.alive()}
+        if not alive_ids.issubset(set(g.turns_done)):
+            raise HTTPException(400, "Everyone must take their turn before the reveal")
+        murder = resolve_murder(g)
+        g.winner = winner_by_roles(g)
+        if not g.winner and g.day >= TOTAL_DAYS:
+            g.winner = "traitors"  # they survived to the final day
+        if g.history:
+            g.history[-1]["murder"] = murder
+            g.history[-1]["winner"] = g.winner
         g.phase = "reveal"
     elif g.phase == "reveal":
         if g.winner:
             g.phase = "ended"
         else:
             g.day += 1
-            nxt = g.player(g.next_target_id)
-            if nxt and nxt.lives > 0:
-                g.target_id, g.action = g.next_target_id, g.next_action
-            else:
-                g.target_id, g.action = None, None
-            g.next_target_id, g.next_action = None, None
-            g.turns_done, g.votes, g.murder_confirmed = [], {}, False
+            g.target_id, g.action, g.murder_confirmed = None, None, False
+            g.turns_done, g.votes = [], {}
             g.phase = "day"
     else:
         raise HTTPException(400, "The game is over")

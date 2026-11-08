@@ -48,22 +48,22 @@ class TestActions:
         ps = g["players"]
         tr = next(p for p in ps if roles[p["id"]] == "traitor")
         fa = [p for p in ps if roles[p["id"]] == "faithful"]
-        r = S.post(f"{G()}/turn", json={"player_id": tr["id"], "pin": pin_of(tr["name"]), "target_id": fa[0]["id"]})
-        assert r.status_code == 200 and r.json()["action"] in CUSTOM
-        first_action = r.json()["action"]
+        # see roles, advance to the round table
         for p in ps:
-            if p["id"] != tr["id"]:
-                S.post(f"{G()}/turn", json={"player_id": p["id"], "pin": pin_of(p["name"])})
+            S.post(f"{G()}/turn", json={"player_id": p["id"], "pin": pin_of(p["name"])})
         assert S.post(f"{G()}/advance").json()["phase"] == "day"
         assert S.post(f"{G()}/advance").json()["phase"] == "roundtable"
         for p in ps:
-            body = {"player_id": p["id"], "pin": pin_of(p["name"]),
-                    "vote_target_id": fa[1]["id"] if p["id"] != fa[1]["id"] else fa[2]["id"]}
-            if p["id"] == tr["id"]:
-                body.update({"murder_done": True, "target_id": fa[3]["id"]})
-            assert S.post(f"{G()}/turn", json=body).status_code == 200
-        v = private(tr["id"], pin_of(tr["name"])).json()
-        assert v["next_action"] in CUSTOM and v["next_action"] != first_action
+            vt = fa[1]["id"] if p["id"] != fa[1]["id"] else fa[2]["id"]
+            assert S.post(f"{G()}/turn", json={"player_id": p["id"], "pin": pin_of(p["name"]), "vote_target_id": vt}).status_code == 200
+        assert S.post(f"{G()}/advance").json()["phase"] == "banished"
+        assert S.post(f"{G()}/advance").json()["phase"] == "night"
+        # the murder happens after the Round Table — the traitor gets a custom action now
+        r = S.post(f"{G()}/turn", json={"player_id": tr["id"], "pin": pin_of(tr["name"]), "target_id": fa[0]["id"]})
+        assert r.status_code == 200 and r.json()["action"] in CUSTOM and r.json()["target"]["id"] == fa[0]["id"]
+        for p in ps:
+            if p["id"] != tr["id"]:
+                assert S.post(f"{G()}/turn", json={"player_id": p["id"], "pin": pin_of(p["name"])}).status_code == 200
         r = S.post(f"{G()}/advance").json()
         h = r["history"][-1]
         # history contains the murder (but never the secret action) + banishment tally
@@ -72,8 +72,9 @@ class TestActions:
         assert h["banish"]["name"] == fa[1]["name"] and h["banish"]["tally"][0]["votes"] == 4
         r = S.post(f"{G()}/advance").json()
         assert r["day"] == 2 and r["phase"] == "day"
+        # a fresh day clears the victim and action until the next night
         v = private(tr["id"], pin_of(tr["name"])).json()
-        assert v["action"] in CUSTOM and v["target"]["id"] == fa[3]["id"]
+        assert v["target"] is None and v["action"] is None
 
     def test_reset(self):
         r = S.delete(f"{G()}/actions")

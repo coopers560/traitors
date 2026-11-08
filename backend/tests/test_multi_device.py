@@ -14,28 +14,35 @@ def state():
 def seed_setup_done():
     del_game()
     g, r = setup_game(5)
-    ps = g["players"]
-    tr = next(p for p in ps if r[p["id"]] == "traitor")
-    fa = [p for p in ps if r[p["id"]] == "faithful"]
-    S.post(f"{G()}/turn", json={"player_id": tr["id"], "pin": pin_of(tr["name"]), "target_id": fa[0]["id"]})
-    for p in ps:
-        if p["id"] != tr["id"]:
-            S.post(f"{G()}/turn", json={"player_id": p["id"], "pin": pin_of(p["name"])})
+    for p in g["players"]:
+        S.post(f"{G()}/turn", json={"player_id": p["id"], "pin": pin_of(p["name"])})
     return g, r
+
+
+def roles_now():
+    g = state()
+    return {p["id"]: private(p["id"], pin_of(p["name"])).json().get("role") for p in g["players"]}
 
 
 def vote_all():
     g = state()
-    r = {p["id"]: private(p["id"], pin_of(p["name"])).json()["role"] for p in g["players"]}
     alive = [p for p in g["players"] if p["alive"]]
-    alive_f = [p for p in alive if r[p["id"]] == "faithful"]
-    target, nxt = alive_f[-1], alive_f[0]
+    target = alive[-1]
     for p in alive:
         vt = target["id"] if p["id"] != target["id"] else next(x["id"] for x in alive if x["id"] != p["id"])
-        body = {"player_id": p["id"], "pin": pin_of(p["name"]), "vote_target_id": vt}
-        if r[p["id"]] == "traitor":
-            body["murder_done"] = True
-            body["target_id"] = nxt["id"]
+        assert S.post(f"{G()}/turn", json={"player_id": p["id"], "pin": pin_of(p["name"]), "vote_target_id": vt}).status_code == 200
+
+
+def night_all():
+    r = roles_now()
+    g = state()
+    alive = [p for p in g["players"] if p["alive"]]
+    af = [p for p in alive if r[p["id"]] == "faithful"]
+    target = af[-1]["id"] if af else None
+    for p in alive:
+        body = {"player_id": p["id"], "pin": pin_of(p["name"])}
+        if target and r[p["id"]] == "traitor":
+            body["target_id"] = target
         assert S.post(f"{G()}/turn", json=body).status_code == 200
 
 
@@ -63,12 +70,27 @@ class TestAdvanceExpected:
     def test_roundtable_double_tap(self):
         vote_all()
         a = adv("roundtable")
-        assert a.status_code == 200 and a.json()["phase"] == "reveal"
+        assert a.status_code == 200 and a.json()["phase"] == "banished"
         hist_len = len(a.json()["history"])
         b = adv("roundtable")
+        assert b.json()["phase"] == "banished" and len(b.json()["history"]) == hist_len == 1
+
+    def test_banished_double_tap(self):
+        a = adv("banished")
+        assert a.status_code == 200 and a.json()["phase"] == "night"
+        b = adv("banished")  # second phone, same button
+        assert b.json()["phase"] == "night"
+        assert state()["turns_done"] == 0
+
+    def test_night_double_tap(self):
+        night_all()
+        a = adv("night")
+        assert a.status_code == 200 and a.json()["phase"] == "reveal"
+        hist_len = len(a.json()["history"])
+        b = adv("night")
         assert b.json()["phase"] == "reveal" and len(b.json()["history"]) == hist_len == 1
 
-    def test_reveal_double_tap_does_not_skip_day2_roundtable(self):
+    def test_reveal_double_tap_does_not_skip_day2(self):
         a = adv("reveal")
         assert a.json()["phase"] == "day" and a.json()["day"] == 2
         b = adv("reveal")  # stale reveal screen tapping finish
