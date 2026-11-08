@@ -1,0 +1,11 @@
+# Slim runtime deps for deploying the backend (Railway/Docker).
+# The full backend/requirements.txt carries dev/test tooling and the
+# Emergent-only "emergentintegrations" package, which is not on public PyPI
+# and would break a plain pip install. server.py only needs the following.
+fastapi==0.110.1
+uvicorn==0.25.0
+motor==3.7.1
+pymongo==4.18.2
+pydantic>=2.6.4
+python-dotenv>=1.0.1
+tzdata>=2024.2
