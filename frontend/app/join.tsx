@@ -1,6 +1,6 @@
 import { useMutation } from "@tanstack/react-query";
-import { useRouter } from "expo-router";
-import { useState } from "react";
+import { useLocalSearchParams, useRouter } from "expo-router";
+import { useEffect, useRef, useState } from "react";
 import { TextInput, View } from "react-native";
 import { KeyboardAwareScrollView } from "react-native-keyboard-controller";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -17,7 +17,9 @@ export default function Join() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const { setCode } = useGameCode();
-  const [value, setValue] = useState("");
+  const { code: codeParam } = useLocalSearchParams<{ code?: string }>();
+  const clean = (t: string) => t.replace(/[^a-zA-Z0-9]/g, "").toUpperCase().slice(0, 5);
+  const [value, setValue] = useState(() => clean(codeParam ?? ""));
 
   const join = useMutation({
     mutationFn: () => api.findGame(value),
@@ -28,6 +30,17 @@ export default function Join() {
     },
   });
   const ready = value.trim().length === 5;
+
+  // Arrived via a share link / QR scan (…/join?code=XXXXX) with a full code:
+  // join automatically. Manual typing still uses the button below.
+  const autoJoin = useRef(clean(codeParam ?? "").length === 5);
+  useEffect(() => {
+    if (autoJoin.current && ready) {
+      autoJoin.current = false;
+      join.mutate();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ready]);
 
   return (
     <View style={styles.root} testID="join-screen">
