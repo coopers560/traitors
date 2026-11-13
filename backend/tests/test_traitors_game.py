@@ -120,7 +120,7 @@ class TestCreate:
         ps = mk_players(4); ps[0]["name"] = "  "
         assert S.post(f"{API}/games", json={"players": ps}).status_code == 400
 
-    @pytest.mark.parametrize("n,t", [(4, 1), (6, 1), (8, 1), (9, 2), (12, 2), (15, 2)])
+    @pytest.mark.parametrize("n,t", [(4, 1), (6, 1), (7, 2), (12, 2), (13, 3), (15, 3)])
     def test_traitor_counts(self, n, t):
         g, roles = setup_game(n)
         assert list(roles.values()).count("traitor") == t
@@ -361,6 +361,50 @@ class TestSkipMissing:
         assert r["phase"] == "banished"
         h = r["history"][-1]
         assert h["banish"]["target_id"] == ps[0]["id"] and h["banish"]["tally"][0]["votes"] == 3
+
+
+class TestRecruit:
+    def test_recruit_when_short(self):
+        g, roles = setup_game(12)
+        ps = g["players"]
+        traitors = [p for p in ps if roles[p["id"]] == "traitor"]
+        faithful = [p for p in ps if roles[p["id"]] == "faithful"]
+        assert len(traitors) == 2
+        ta, tb = traitors
+        finish_setup(ps)  # -> day 1
+
+        def banish_ta():
+            assert S.post(f"{G()}/advance").json()["phase"] == "roundtable"
+            alive = [p for p in S.get(f"{G()}").json()["players"] if p["alive"]]
+            cast_votes({p["id"]: (ta["id"] if p["id"] != ta["id"] else faithful[0]["id"]) for p in alive})
+            assert S.post(f"{G()}/advance").json()["phase"] == "banished"
+            assert S.post(f"{G()}/advance").json()["phase"] == "night"
+
+        # Day 1: banish ta once (still alive). Two Traitors are at full strength.
+        banish_ta()
+        assert private(tb["id"], pin_of(tb["name"])).json()["can_recruit"] is False
+        # recruiting while at strength is rejected
+        assert S.post(f"{G()}/turn", json={"player_id": tb["id"], "pin": pin_of(tb["name"]), "recruit_id": faithful[1]["id"]}).status_code == 400
+        do_night(roles, None)  # lie low
+        assert S.post(f"{G()}/advance").json()["phase"] == "reveal"
+        assert S.post(f"{G()}/advance").json()["phase"] == "day"
+
+        # Day 2: banish ta again -> eliminated. Now the Traitors are short.
+        banish_ta()
+        assert private(tb["id"], pin_of(tb["name"])).json()["can_recruit"] is True
+        recruit = faithful[1]
+        assert private(recruit["id"], pin_of(recruit["name"])).json()["role"] == "faithful"
+        assert S.post(f"{G()}/turn", json={"player_id": tb["id"], "pin": pin_of(tb["name"]), "recruit_id": recruit["id"]}).status_code == 200
+        for p in S.get(f"{G()}").json()["players"]:
+            if p["alive"] and p["id"] != tb["id"]:
+                assert S.post(f"{G()}/turn", json={"player_id": p["id"], "pin": pin_of(p["name"])}).status_code == 200
+        rv = S.post(f"{G()}/advance").json()
+        assert rv["phase"] == "reveal"
+        assert rv["history"][-1]["recruited"] is True
+        assert rv["history"][-1]["murder"]["success"] is False  # recruiting replaces the murder
+        # the recruit is now a Traitor and sees their fellow
+        nv = private(recruit["id"], pin_of(recruit["name"])).json()
+        assert nv["role"] == "traitor" and tb["name"] in nv["fellow_traitors"]
 
 
 class TestHostEndGame:

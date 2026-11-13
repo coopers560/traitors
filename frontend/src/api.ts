@@ -34,6 +34,7 @@ export type DayResult = {
     role?: Role | null;
   };
   winner: "faithful" | "traitors" | null;
+  recruited?: boolean;
 };
 
 export type GameState =
@@ -68,6 +69,8 @@ export type PrivateView = {
   action?: string | null;
   action_choices?: string[];
   murder_confirmed?: boolean;
+  can_recruit?: boolean;
+  recruit?: { id: string; name: string } | null;
 };
 
 async function request<T>(path: string, method = "GET", body?: unknown): Promise<T> {
@@ -123,6 +126,7 @@ export const api = {
     murder_done?: boolean;
     target_id?: string;
     action?: string;
+    recruit_id?: string;
   }) => request<PrivateView>(`/games/${currentCode}/turn`, "POST", body),
   advance: (expected: Phase, day: number, force?: boolean) =>
     request<GameState>(`/games/${currentCode}/advance?expected=${expected}&expected_day=${day}${force ? "&force=true" : ""}`, "POST"),

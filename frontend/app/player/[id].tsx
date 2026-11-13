@@ -197,15 +197,20 @@ function ActionChoices({ options, selected, onSelect }: { options: string[]; sel
 }
 
 function NightTurn({ view, pin, players, onSealed }: { view: PrivateView; pin: string; players: PublicPlayer[]; onSealed: () => void }) {
+  const styles = useStyles();
+  const { colors } = useTheme();
   const traitor = view.role === "traitor";
   const [target, setTarget] = useState<string | null>(view.target?.id ?? null);
   const [choices, setChoices] = useState<string[]>(view.action_choices ?? []);
   const [chosen, setChosen] = useState<string | null>(null);
   const [override, setOverride] = useState(false);
   const [result, setResult] = useState<PrivateView | null>(null);
+  const [mode, setMode] = useState<"murder" | "recruit">("murder");
+  const [recruitTarget, setRecruitTarget] = useState<string | null>(null);
+  const [recruitedName, setRecruitedName] = useState<string | null>(null);
 
   const traitorIds = new Set<string>();
-  // Traitors cannot murder each other; we only know fellow names, so filter by name.
+  // Traitors cannot murder/recruit each other; we only know fellow names, so filter by name.
   players.forEach((p) => (view.fellow_traitors?.includes(p.name) || p.id === view.player_id) && traitorIds.add(p.id));
 
   const pickVictim = useMutation({
@@ -215,6 +220,10 @@ function NightTurn({ view, pin, players, onSealed }: { view: PrivateView; pin: s
   const confirm = useMutation({
     mutationFn: (action: string) => api.takeTurn({ player_id: view.player_id, pin, action }),
     onSuccess: (v) => setResult(v),
+  });
+  const recruit = useMutation({
+    mutationFn: (rid: string) => api.takeTurn({ player_id: view.player_id, pin, recruit_id: rid }),
+    onSuccess: () => setRecruitedName(players.find((p) => p.id === recruitTarget)?.name ?? "a new Traitor"),
   });
   const pass = useMutation({
     mutationFn: () => api.takeTurn({ player_id: view.player_id, pin }),
@@ -244,6 +253,19 @@ function NightTurn({ view, pin, players, onSealed }: { view: PrivateView; pin: s
       </>
     );
   }
+  // This phone just recruited a new Traitor.
+  if (recruitedName) {
+    return (
+      <>
+        <View style={styles.brief} testID="recruit-done">
+          <Eyebrow>A new Traitor joins you</Eyebrow>
+          <Text style={styles.briefTarget}>{recruitedName}</Text>
+          <Body style={{ fontSize: 15 }}>They will find out they have turned the next time they check their secret. No murder tonight.</Body>
+        </View>
+        <Button testID="night-done-button" label="Hide & pass the phone" icon="eye-off" onPress={onSealed} />
+      </>
+    );
+  }
   // A fellow Traitor already planned tonight's murder.
   if (view.murder_confirmed && !override && choices.length === 0) {
     return (
@@ -268,17 +290,40 @@ function NightTurn({ view, pin, players, onSealed }: { view: PrivateView; pin: s
       </>
     );
   }
-  // Step 1: choose the victim.
+  // Step 1: choose the victim — or, if the Traitors are short, recruit instead.
+  const candidates = players.filter((p) => !traitorIds.has(p.id));
   return (
     <>
-      <Body>
-        Now the Round Table is done, choose who the Traitors murder tonight — you&apos;ll then pick from three secret
-        actions. Or lie low and spare everyone.
-      </Body>
-      <VictimPicker label={`Tonight's victim · Day ${view.day}`} prefix="night-victim" players={players.filter((p) => !traitorIds.has(p.id))} selected={target} onSelect={setTarget} />
-      <ErrorText testID="turn-error" message={pickVictim.error?.message || pass.error?.message} />
-      <Button testID="night-pick-button" label="Choose the method" icon="arrow-forward" disabled={!target} loading={pickVictim.isPending} onPress={() => target && pickVictim.mutate(target)} />
-      <Button testID="night-skip-button" label="Lie low — no murder tonight" variant="ghost" loading={pass.isPending} onPress={() => pass.mutate()} />
+      {view.can_recruit ? (
+        <View style={{ flexDirection: "row", gap: spacing.sm }} testID="night-mode">
+          <Pressable testID="night-mode-murder" onPress={() => setMode("murder")} style={[styles.pick, { flex: 1, justifyContent: "center" }, mode === "murder" && styles.pickOn]}>
+            <Text style={[styles.pickText, mode === "murder" && { color: colors.onBrandPrimary }]}>Murder</Text>
+          </Pressable>
+          <Pressable testID="night-mode-recruit" onPress={() => setMode("recruit")} style={[styles.pick, { flex: 1, justifyContent: "center" }, mode === "recruit" && styles.pickOn]}>
+            <Text style={[styles.pickText, mode === "recruit" && { color: colors.onBrandPrimary }]}>Recruit</Text>
+          </Pressable>
+        </View>
+      ) : null}
+      {view.can_recruit && mode === "recruit" ? (
+        <>
+          <Body>You are short a Traitor. Recruit one of the Faithful to join you — instead of a murder tonight.</Body>
+          <VictimPicker label={`New Traitor · Day ${view.day}`} prefix="night-recruit" players={candidates} selected={recruitTarget} onSelect={setRecruitTarget} />
+          <ErrorText testID="turn-error" message={recruit.error?.message || pass.error?.message} />
+          <Button testID="night-recruit-button" label="Seal the recruitment" icon="people" disabled={!recruitTarget} loading={recruit.isPending} onPress={() => recruitTarget && recruit.mutate(recruitTarget)} />
+          <Button testID="night-skip-button" label="Lie low — nothing tonight" variant="ghost" loading={pass.isPending} onPress={() => pass.mutate()} />
+        </>
+      ) : (
+        <>
+          <Body>
+            Now the Round Table is done, choose who the Traitors murder tonight — you&apos;ll then pick from three secret
+            actions. Or lie low and spare everyone.
+          </Body>
+          <VictimPicker label={`Tonight's victim · Day ${view.day}`} prefix="night-victim" players={candidates} selected={target} onSelect={setTarget} />
+          <ErrorText testID="turn-error" message={pickVictim.error?.message || pass.error?.message} />
+          <Button testID="night-pick-button" label="Choose the method" icon="arrow-forward" disabled={!target} loading={pickVictim.isPending} onPress={() => target && pickVictim.mutate(target)} />
+          <Button testID="night-skip-button" label="Lie low — no murder tonight" variant="ghost" loading={pass.isPending} onPress={() => pass.mutate()} />
+        </>
+      )}
     </>
   );
 }

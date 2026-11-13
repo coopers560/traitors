@@ -114,9 +114,18 @@ function Murder({ r }: { r: DayResult }) {
   if (!m.success) {
     return (
       <Animated.View entering={FadeInDown.duration(900)} style={{ gap: spacing.md }} testID="reveal-murder-failed">
-        <Eyebrow>The murder</Eyebrow>
-        <Title>Nobody was murdered today.</Title>
-        <Body>The Traitors failed to strike. Everyone keeps their lives… for now.</Body>
+        <Eyebrow>The night</Eyebrow>
+        {r.recruited ? (
+          <>
+            <Title testID="reveal-recruited">A new Traitor walks among you.</Title>
+            <Body>There was no murder. Instead the Traitors turned one of the Faithful to their side — but who?</Body>
+          </>
+        ) : (
+          <>
+            <Title>Nobody was murdered today.</Title>
+            <Body>The Traitors failed to strike. Everyone keeps their lives… for now.</Body>
+          </>
+        )}
       </Animated.View>
     );
   }
