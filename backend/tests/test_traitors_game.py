@@ -308,6 +308,13 @@ class TestFlow:
                 winner = rv["winner"]; break
             S.post(f"{G()}/advance")  # -> day
         assert winner == "traitors"
+        # play through to the end screen: the murder methods are now revealed
+        st = S.get(f"{G()}").json()
+        while st["phase"] in ("banished", "reveal"):
+            st = S.post(f"{G()}/advance").json()
+        assert st["phase"] == "ended"
+        murders = [h["murder"] for h in st["history"] if h["murder"] and h["murder"].get("success")]
+        assert murders and all(m.get("action") for m in murders)
 
 
 class TestMurderChoice:

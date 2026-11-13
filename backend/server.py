@@ -250,13 +250,18 @@ def public_state(g: Game) -> dict:
         "turns_done": len(g.turns_done),
         # never reveal which secret action was used (strip from older records too);
         # a day's murder is None until the night step has resolved it
-        "history": [_public_history(h) for h in g.history],
+        "history": [_public_history(h, ended) for h in g.history],
     }
 
 
-def _public_history(h: dict) -> dict:
+def _public_history(h: dict, reveal_actions: bool = False) -> dict:
     m = h.get("murder")
-    pub = {k: v for k, v in m.items() if k != "action"} if m else None
+    if m is None:
+        pub = None
+    elif reveal_actions:
+        pub = m  # the game is over: the murder methods may now be listed
+    else:
+        pub = {k: v for k, v in m.items() if k != "action"}  # keep the method secret during play
     return {**h, "murder": pub}
 
 
@@ -323,6 +328,7 @@ def resolve_murder(g: Game) -> dict:
             "success": True,
             "victim_id": victim.id,
             "victim_name": victim.name,
+            "action": g.action,  # kept hidden until the game ends (see _public_history)
             "lives_left": victim.lives,
             "eliminated": victim.lives == 0,
             "role": victim.role if victim.lives == 0 else None,
