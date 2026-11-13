@@ -310,6 +310,7 @@ function NightTurn({ view, pin, players, onSealed }: { view: PrivateView; pin: s
           <VictimPicker label={`New Traitor · Day ${view.day}`} prefix="night-recruit" players={candidates} selected={recruitTarget} onSelect={setRecruitTarget} />
           <ErrorText testID="turn-error" message={recruit.error?.message || pass.error?.message} />
           <Button testID="night-recruit-button" label="Seal the recruitment" icon="people" disabled={!recruitTarget} loading={recruit.isPending} onPress={() => recruitTarget && recruit.mutate(recruitTarget)} />
+          <Button testID="night-no-recruit-button" label="Don't recruit — murder instead" variant="secondary" icon="skull-outline" onPress={() => { setMode("murder"); setRecruitTarget(null); }} />
           <Button testID="night-skip-button" label="Lie low — nothing tonight" variant="ghost" loading={pass.isPending} onPress={() => pass.mutate()} />
         </>
       ) : (
