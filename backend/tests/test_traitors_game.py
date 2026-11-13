@@ -294,6 +294,28 @@ class TestFlow:
         assert winner == "traitors"
 
 
+class TestSkipMissing:
+    def test_skip_needs_a_vote_then_reveals(self):
+        g, roles = setup_game(5)
+        ps = g["players"]
+        finish_setup(ps)  # -> day
+        assert S.post(f"{G()}/advance").json()["phase"] == "roundtable"
+        # nobody has voted yet: even force refuses
+        assert S.post(f"{G()}/advance?expected=roundtable&force=true").status_code == 400
+        # four of five vote; ps[4] is "missing". Everyone votes ps[0] (ps[0] votes ps[1]).
+        votes = {ps[0]["id"]: ps[1]["id"], ps[1]["id"]: ps[0]["id"], ps[2]["id"]: ps[0]["id"], ps[3]["id"]: ps[0]["id"]}
+        for pid, tid in votes.items():
+            p = next(x for x in ps if x["id"] == pid)
+            assert S.post(f"{G()}/turn", json={"player_id": pid, "pin": pin_of(p["name"]), "vote_target_id": tid}).status_code == 200
+        # normal advance is blocked: ps[4] has not voted
+        assert S.post(f"{G()}/advance?expected=roundtable").status_code == 400
+        # force skips the missing voter and reveals on the votes cast so far
+        r = S.post(f"{G()}/advance?expected=roundtable&force=true").json()
+        assert r["phase"] == "banished"
+        h = r["history"][-1]
+        assert h["banish"]["target_id"] == ps[0]["id"] and h["banish"]["tally"][0]["votes"] == 3
+
+
 class TestHostEndGame:
     def test_only_host_can_end_in_progress_game(self):
         g, _ = setup_game(6)
