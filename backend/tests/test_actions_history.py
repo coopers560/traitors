@@ -19,7 +19,7 @@ class TestActions:
         r = S.get(f"{G()}/actions")
         assert r.status_code == 200
         d = r.json()
-        assert d["is_default"] is True and len(d["actions"]) == 36
+        assert d["is_default"] is True and len(d["actions"]) == 43
         assert "Offer them some sun cream" in d["actions"]
 
     def test_put_trims_and_dedupes(self):
@@ -84,4 +84,4 @@ class TestActions:
         r = S.delete(f"{G()}/actions")
         assert r.status_code == 200 and r.json()["is_default"] is True
         g = S.get(f"{G()}/actions").json()
-        assert g["is_default"] is True and len(g["actions"]) == 36
+        assert g["is_default"] is True and len(g["actions"]) == 43

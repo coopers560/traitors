@@ -78,6 +78,13 @@ ACTIONS = [
     "Use their suncream",
     "Get them to come to the shop with you",
     "Get them to say something in Egyptian",
+    "Accuse them of cheating at cards",
+    "Get Ivy to high five them first before others in the group",
+    "Borrow money from them",
+    "Get a group picture with them in the middle",
+    "Ask them to take a photo",
+    "Take a selfie with them",
+    "Get a photo of them with a sibling or parent",
 ]
 
 
