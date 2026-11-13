@@ -117,7 +117,7 @@ class TestIsolation:
         assert S.get(G(b["code"])).json()["turns_done"] == 0
 
     def test_actions_per_game_and_used_in_murder(self):
-        a, b = create_traitors(5, 1), create_traitors(5, 1)
+        a, b = create_traitors(6, 1), create_traitors(6, 1)
         custom = ["TEST_Iso One", "TEST_Iso Two", "TEST_Iso Three"]
         r = S.put(f"{G(a['code'])}/actions", json={"actions": custom})
         assert r.status_code == 200 and r.json()["actions"] == custom and r.json()["is_default"] is False

@@ -13,7 +13,7 @@ def state():
 
 def seed_setup_done():
     del_game()
-    g, r = setup_game_traitors(5, 1)  # one Traitor so the day-by-day chain never ends early
+    g, r = setup_game_traitors(8, 1)  # one Traitor so the day-by-day chain never ends early
     for p in g["players"]:
         S.post(f"{G()}/turn", json={"player_id": p["id"], "pin": pin_of(p["name"])})
     return g, r
