@@ -351,15 +351,25 @@ function SetupTurn({ view, pin, onSealed }: { view: PrivateView; pin: string; on
 
 function RoundTableTurn({ view, pin, players, onSealed }: { view: PrivateView; pin: string; players: PublicPlayer[]; onSealed: () => void }) {
   const [vote, setVote] = useState<string | null>(view.my_vote_id);
-  const submit = useMutation({
+  const banish = useMutation({
     mutationFn: () => api.takeTurn({ player_id: view.player_id, pin, vote_target_id: vote ?? undefined }),
+    onSuccess: onSealed,
+  });
+  const end = useMutation({
+    mutationFn: () => api.takeTurn({ player_id: view.player_id, pin, end_vote: true }),
     onSuccess: onSealed,
   });
   return (
     <>
+      {view.endgame ? (
+        <Body>Few of you remain. Vote to banish one more player, or vote to end the game now. If everyone votes to end and a Traitor is still among you, the Traitors win.</Body>
+      ) : null}
       <VictimPicker label="Who do you vote to banish?" prefix="vote-option" players={players} selected={vote} onSelect={setVote} excludeId={view.player_id} />
-      <ErrorText testID="turn-error" message={submit.error?.message} />
-      <Button testID="vote-submit-button" label="Seal my vote" icon="lock-closed" disabled={!vote} loading={submit.isPending} onPress={() => submit.mutate()} />
+      <ErrorText testID="turn-error" message={banish.error?.message || end.error?.message} />
+      <Button testID="vote-submit-button" label="Seal my vote to banish" icon="lock-closed" disabled={!vote} loading={banish.isPending} onPress={() => banish.mutate()} />
+      {view.endgame ? (
+        <Button testID="vote-end-button" label="Vote to end the game" variant="secondary" icon="flag" loading={end.isPending} onPress={() => end.mutate()} />
+      ) : null}
     </>
   );
 }

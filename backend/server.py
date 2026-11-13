@@ -36,6 +36,8 @@ api_router = APIRouter(prefix="/api")
 
 TOTAL_DAYS = 12
 START_LIVES = 1  # one hit — a murder or a banishment — puts a player out
+HIDE_ROLE_AT = 6  # once this many (or fewer) remain, a banished player's role stays secret
+ENDGAME_AT = 4  # at this many (or fewer) remain, each round is a "banish again or end the game" vote
 CODE_CHARS = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"  # no 0/O, 1/I/L mix-ups
 CODE_LEN = 5
 
@@ -103,6 +105,7 @@ class Player(BaseModel):
     pin_hash: str
     role: str  # "traitor" | "faithful"
     lives: int = START_LIVES
+    role_revealed: bool = True  # set False when eliminated while roles are being kept secret
 
 
 class Game(BaseModel):
@@ -115,6 +118,7 @@ class Game(BaseModel):
     turns_done: List[str] = []
     votes: Dict[str, str] = {}
     murder_confirmed: bool = False
+    end_votes: List[str] = []  # endgame: players who voted to end the game instead of banishing
     target_id: Optional[str] = None
     action: Optional[str] = None
     action_choices: List[str] = []  # the three options a Traitor picks tonight's action from
@@ -172,6 +176,7 @@ class AuthIn(BaseModel):
 
 class TurnIn(AuthIn):
     vote_target_id: Optional[str] = None
+    end_vote: Optional[bool] = None  # endgame: vote to end the game instead of banishing
     murder_done: Optional[bool] = None
     target_id: Optional[str] = None
     action: Optional[str] = None  # the chosen murder action (one of the three offered)
@@ -235,6 +240,7 @@ def public_state(g: Game) -> dict:
         "total_days": TOTAL_DAYS,
         "phase": g.phase,
         "winner": g.winner,
+        "endgame": in_endgame(g),
         "host_id": g.host_id,
         "host_name": name_of(g, g.host_id),
         "players": [
@@ -243,7 +249,8 @@ def public_state(g: Game) -> dict:
                 "name": p.name,
                 "lives": p.lives,
                 "alive": p.lives > 0,
-                "role": p.role if (p.lives == 0 or ended) else None,
+                # roles stay secret once few remain (role_revealed); all revealed when the game ends
+                "role": p.role if ((p.lives == 0 and p.role_revealed) or ended) else None,
                 "turn_done": p.id in g.turns_done,
             }
             for p in g.players
@@ -285,6 +292,11 @@ def valid_victim(g: Game, pid: Optional[str]) -> Player:
     return v
 
 
+def in_endgame(g: Game) -> bool:
+    """Once few players remain, each round is a 'banish again or end the game' vote."""
+    return len(g.alive()) <= ENDGAME_AT
+
+
 RECRUIT_MIN_PLAYERS = 6
 
 
@@ -309,6 +321,7 @@ def winner_by_roles(g: Game) -> Optional[str]:
 
 def resolve_banish(g: Game) -> dict:
     """The Round Table vote — resolved first, before the Traitors murder."""
+    alive_before = len(g.alive())  # roles stay secret once few players remain
     tally = Counter(v for k, v in g.votes.items() if g.player(k))
     counts = [{"player_id": pid, "name": name_of(g, pid), "votes": n} for pid, n in tally.most_common()]
     banish = {"tally": counts, "tie": False, "target_id": None}
@@ -323,12 +336,15 @@ def resolve_banish(g: Game) -> dict:
             banish["name"] = t.name
             if t.lives > 0:
                 t.lives -= 1
+                t.role_revealed = alive_before > HIDE_ROLE_AT
                 banish["already_dead"] = False
             else:
                 banish["already_dead"] = True
             banish["lives_left"] = t.lives
             banish["eliminated"] = t.lives == 0
-            banish["role"] = t.role if t.lives == 0 else None
+            revealed = t.lives == 0 and t.role_revealed
+            banish["role"] = t.role if revealed else None
+            banish["role_hidden"] = t.lives == 0 and not t.role_revealed
     return banish
 
 
@@ -457,6 +473,8 @@ async def private_view(code: str, data: AuthIn):
         "day": g.day,
         "turn_done": p.id in g.turns_done,
         "my_vote_id": g.votes.get(p.id),
+        "my_end_vote": p.id in g.end_votes,
+        "endgame": in_endgame(g),
     }
     if p.role == "traitor":
         out["fellow_traitors"] = [x.name for x in g.players if x.role == "traitor" and x.id != p.id]
@@ -481,10 +499,18 @@ async def take_turn(code: str, data: TurnIn):
     elif g.phase == "roundtable":
         if p.lives <= 0:
             raise HTTPException(400, "You have been eliminated and cannot vote")
-        tgt = g.player(data.vote_target_id)
-        if not tgt or tgt.lives <= 0 or tgt.id == p.id:
-            raise HTTPException(400, "Choose someone to banish")
-        g.votes[p.id] = tgt.id
+        if in_endgame(g) and data.end_vote:
+            # Endgame: this player votes to end the game now rather than banish
+            g.votes.pop(p.id, None)
+            if p.id not in g.end_votes:
+                g.end_votes.append(p.id)
+        else:
+            tgt = g.player(data.vote_target_id)
+            if not tgt or tgt.lives <= 0 or tgt.id == p.id:
+                raise HTTPException(400, "Choose someone to banish")
+            g.votes[p.id] = tgt.id
+            if p.id in g.end_votes:
+                g.end_votes.remove(p.id)
     elif g.phase == "night":
         # The murder happens after the Round Table, in two steps. A Traitor names
         # the victim and is offered three secret actions (step 1, not yet committed),
@@ -545,7 +571,7 @@ async def advance(code: str, expected: Optional[str] = None, expected_day: Optio
         g.turns_done = []
     elif g.phase == "day":
         g.phase = "roundtable"
-        g.turns_done, g.votes = [], {}
+        g.turns_done, g.votes, g.end_votes = [], {}, []
     elif g.phase == "roundtable":
         alive_ids = {p.id for p in g.alive()}
         if not alive_ids.issubset(set(g.turns_done)):
@@ -553,16 +579,27 @@ async def advance(code: str, expected: Optional[str] = None, expected_day: Optio
             # and reveals the banishment on the votes cast so far (needs at least one).
             if not force:
                 raise HTTPException(400, "Everyone must vote before the banishment")
-            if not g.votes:
+            if not g.votes and not g.end_votes:
                 raise HTTPException(400, "At least one player must vote before you can skip the rest")
-        banish = resolve_banish(g)
-        g.winner = winner_by_roles(g)  # a Traitor banished can end it before nightfall
-        g.history.append({"day": g.day, "murder": None, "banish": banish, "winner": g.winner})
-        g.phase = "banished"
+        if in_endgame(g) and len(g.end_votes) == len(g.alive()):
+            # Everyone voted to end the game: a Traitor still in means the Traitors win.
+            g.winner = "traitors" if any(p.role == "traitor" for p in g.alive()) else "faithful"
+            g.history.append({"day": g.day, "murder": None, "banish": None, "ended_by_vote": True, "winner": g.winner})
+            g.phase = "ended"
+        else:
+            banish = resolve_banish(g)
+            g.winner = winner_by_roles(g)  # a Traitor banished can end it before nightfall
+            g.history.append({"day": g.day, "murder": None, "banish": banish, "winner": g.winner})
+            g.phase = "banished"
     elif g.phase == "banished":
-        # Banishment shown; now the Traitors murder — unless the game is already won.
+        # Banishment shown. In the endgame there are no more murders — straight to the
+        # next final vote; otherwise the Traitors murder. Unless the game is already won.
         if g.winner:
             g.phase = "ended"
+        elif in_endgame(g):
+            g.day += 1
+            g.turns_done, g.votes, g.end_votes = [], {}, []
+            g.phase = "day"
         else:
             g.phase = "night"
             g.turns_done, g.target_id, g.action, g.murder_confirmed, g.action_choices, g.recruit_id = [], None, None, False, [], None
@@ -591,7 +628,7 @@ async def advance(code: str, expected: Optional[str] = None, expected_day: Optio
         else:
             g.day += 1
             g.target_id, g.action, g.murder_confirmed, g.action_choices, g.recruit_id = None, None, False, [], None
-            g.turns_done, g.votes = [], {}
+            g.turns_done, g.votes, g.end_votes = [], {}, []
             g.phase = "day"
     else:
         raise HTTPException(400, "The game is over")

@@ -165,7 +165,14 @@ function Dashboard({ game, refreshing, onRefresh }: { game: ActiveGame; refreshi
 
   const { phase } = game;
   const allDone = game.turns_done >= game.turns_needed;
-  const copy = PHASE_COPY[phase];
+  const copy =
+    phase === "roundtable" && game.endgame
+      ? {
+          eyebrow: "The final vote",
+          title: "Banish, or end the game",
+          body: "Only a few of you remain. Each player votes to banish one more — or to end the game now. If everyone votes to end while a Traitor is still among you, the Traitors win.",
+        }
+      : PHASE_COPY[phase];
   const takingTurns = phase === "setup" || phase === "roundtable" || phase === "night";
   const alive = game.players.filter((p) => p.alive);
   const out = game.players.filter((p) => !p.alive);
@@ -238,10 +245,10 @@ function Dashboard({ game, refreshing, onRefresh }: { game: ActiveGame; refreshi
             {phase === "setup" ? (
               <Button testID="advance-start-day-button" label="Begin Day 1" icon="sunny" disabled={!allDone} loading={advance.isPending} onPress={() => advance.mutate()} />
             ) : phase === "day" ? (
-              <Button testID="advance-round-table-button" label="Gather at the Round Table" icon="flame" loading={advance.isPending} onPress={() => advance.mutate()} />
+              <Button testID="advance-round-table-button" label={game.endgame ? "Gather for the final vote" : "Gather at the Round Table"} icon="flame" loading={advance.isPending} onPress={() => advance.mutate()} />
             ) : phase === "roundtable" ? (
               <>
-                <Button testID="advance-reveal-button" label={allDone ? "Reveal the banishment" : "Waiting for votes…"} icon="mail-open" disabled={!allDone} loading={advance.isPending && allDone} onPress={() => advance.mutate()} />
+                <Button testID="advance-reveal-button" label={allDone ? (game.endgame ? "Reveal the vote" : "Reveal the banishment") : "Waiting for votes…"} icon="mail-open" disabled={!allDone} loading={advance.isPending && allDone} onPress={() => advance.mutate()} />
                 {!allDone ? (
                   <Button testID="advance-skip-missing-button" label="Someone missing? Skip & reveal" variant="ghost" icon="play-skip-forward-outline" onPress={() => setConfirmSkip(true)} />
                 ) : null}
@@ -386,12 +393,14 @@ function EndedCard({ game }: { game: ActiveGame }) {
   const [confirmNew, setConfirmNew] = useState(false);
   const del = useMutation({ mutationFn: api.deleteGame, onSuccess: async () => { setConfirmNew(false); await setCode(null); } });
   const traitorsWin = game.winner === "traitors";
+  const endedByVote = game.history[game.history.length - 1]?.ended_by_vote;
   return (
     <Animated.View entering={FadeInDown.duration(600)} style={styles.phaseCard} testID="ended-card">
       <Eyebrow>{traitorsWin ? "Treachery triumphs" : "Justice is served"}</Eyebrow>
       <Title testID="winner-title" style={styles.phaseTitle}>
         {traitorsWin ? "The Traitors win" : "The Faithful win"}
       </Title>
+      {endedByVote ? <Body testID="ended-by-vote">The players voted to end the game.</Body> : null}
       <Body>All roles are now revealed below. Well played, everyone.</Body>
       <MurderMethods game={game} />
       <Button testID="share-finale-button" label="Share the finale" icon="share-social" onPress={() => router.push("/finale")} />

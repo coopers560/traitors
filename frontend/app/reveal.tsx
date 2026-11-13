@@ -111,6 +111,7 @@ function Murder({ r }: { r: DayResult }) {
   const styles = useStyles();
   const { colors } = useTheme();
   const m = r.murder;
+  if (!m) return null;
   if (!m.success) {
     return (
       <Animated.View entering={FadeInDown.duration(900)} style={{ gap: spacing.md }} testID="reveal-murder-failed">
@@ -145,6 +146,7 @@ function Murder({ r }: { r: DayResult }) {
 function Banish({ r }: { r: DayResult }) {
   const styles = useStyles();
   const b = r.banish;
+  if (!b) return null;
   return (
     <Animated.View entering={FadeInDown.duration(900)} style={{ gap: spacing.md }} testID="reveal-banish">
       <Eyebrow>The Round Table</Eyebrow>
@@ -160,7 +162,7 @@ function Banish({ r }: { r: DayResult }) {
           {b.already_dead ? (
             <Body>…but was already murdered today.</Body>
           ) : (
-            <Consequence eliminated={!!b.eliminated} role={b.role} />
+            <Consequence eliminated={!!b.eliminated} role={b.role} roleHidden={!!b.role_hidden} />
           )}
         </>
       )}
@@ -177,10 +179,17 @@ function Banish({ r }: { r: DayResult }) {
   );
 }
 
-function Consequence({ eliminated, role }: { eliminated: boolean; role?: string | null }) {
+function Consequence({ eliminated, role, roleHidden }: { eliminated: boolean; role?: string | null; roleHidden?: boolean }) {
   const styles = useStyles();
   const { colors } = useTheme();
   if (!eliminated) return null; // a single hit is always out — nothing else to show
+  if (roleHidden) {
+    return (
+      <Animated.View entering={FadeIn.delay(600).duration(1000)} style={{ gap: spacing.xs }} testID="reveal-role-hidden">
+        <Body>Is out of the game — but with so few left, their allegiance stays a secret until the very end.</Body>
+      </Animated.View>
+    );
+  }
   const traitor = role === "traitor";
   return (
     <Animated.View entering={FadeIn.delay(800).duration(1200)} style={{ gap: spacing.xs }} testID="reveal-eliminated">

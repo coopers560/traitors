@@ -39,49 +39,58 @@ function DayCard({ h, index }: { h: DayResult; index: number }) {
   const m = h.murder;
   const b = h.banish;
   const roleText = (role?: string | null) => (role === "traitor" ? "a Traitor" : "Faithful");
+  const banishText = (bb: NonNullable<DayResult["banish"]>) =>
+    bb.tie || !bb.target_id
+      ? "Tied vote — nobody banished"
+      : bb.already_dead
+        ? `${bb.name} got the most votes (already murdered)`
+        : bb.eliminated
+          ? `${bb.name} was banished${bb.role_hidden ? " — allegiance kept secret" : ` — ${roleText(bb.role)}`}`
+          : `${bb.name} lost a life`;
+
   return (
     <Animated.View entering={FadeInDown.delay(Math.min(index, 8) * 60).duration(400)} style={styles.card} testID={`history-day-${h.day}`}>
       <Text style={styles.day}>Day {h.day}</Text>
 
-      <View style={styles.section}>
-        <View style={styles.sectionHead}>
-          <Ionicons name="skull-outline" size={20} color={colors.traitor} />
-          <Text style={styles.label}>Murder</Text>
-        </View>
-        {m.success ? (
-          <Text style={styles.main} testID={`history-murder-${h.day}`}>
-            {m.victim_name} {m.eliminated ? `was killed — ${roleText(m.role)}` : "lost a life"}
-          </Text>
-        ) : (
-          <Text style={styles.main}>No murder — the Traitors failed</Text>
-        )}
-      </View>
+      {h.ended_by_vote ? (
+        <Text style={styles.main} testID={`history-ended-${h.day}`}>The players voted to end the game.</Text>
+      ) : null}
 
-      <View style={styles.divider} />
+      {m ? (
+        <View style={styles.section}>
+          <View style={styles.sectionHead}>
+            <Ionicons name="skull-outline" size={20} color={colors.traitor} />
+            <Text style={styles.label}>Murder</Text>
+          </View>
+          {m.success ? (
+            <Text style={styles.main} testID={`history-murder-${h.day}`}>{m.victim_name} was murdered</Text>
+          ) : (
+            <Text style={styles.main}>No murder — the Traitors failed</Text>
+          )}
+        </View>
+      ) : null}
 
-      <View style={styles.section}>
-        <View style={styles.sectionHead}>
-          <Ionicons name="flame-outline" size={20} color={colors.brand} />
-          <Text style={styles.label}>Round Table</Text>
+      {m && b ? <View style={styles.divider} /> : null}
+
+      {b ? (
+        <View style={styles.section}>
+          <View style={styles.sectionHead}>
+            <Ionicons name="flame-outline" size={20} color={colors.brand} />
+            <Text style={styles.label}>Round Table</Text>
+          </View>
+          <Text style={styles.main} testID={`history-banish-${h.day}`}>{banishText(b)}</Text>
+          <View style={styles.tally}>
+            {b.tally.map((t) => (
+              <View key={t.player_id} style={styles.tallyRow}>
+                <Text style={styles.tallyName}>{t.name}</Text>
+                <Text style={styles.tallyVotes}>
+                  {t.votes} vote{t.votes === 1 ? "" : "s"}
+                </Text>
+              </View>
+            ))}
+          </View>
         </View>
-        <Text style={styles.main} testID={`history-banish-${h.day}`}>
-          {b.tie || !b.target_id
-            ? "Tied vote — nobody banished"
-            : b.already_dead
-              ? `${b.name} got the most votes (already murdered)`
-              : `${b.name} ${b.eliminated ? `was banished — ${roleText(b.role)}` : "lost a life"}`}
-        </Text>
-        <View style={styles.tally}>
-          {b.tally.map((t) => (
-            <View key={t.player_id} style={styles.tallyRow}>
-              <Text style={styles.tallyName}>{t.name}</Text>
-              <Text style={styles.tallyVotes}>
-                {t.votes} vote{t.votes === 1 ? "" : "s"}
-              </Text>
-            </View>
-          ))}
-        </View>
-      </View>
+      ) : null}
     </Animated.View>
   );
 }

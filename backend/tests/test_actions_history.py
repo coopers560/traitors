@@ -42,7 +42,7 @@ class TestActions:
         assert r.status_code == 200 and r.json()["actions"] == CUSTOM
 
     def test_custom_actions_used_in_game(self):
-        g, roles = setup_game_traitors(5, 1)
+        g, roles = setup_game_traitors(6, 1)
         assert S.get(f"{G()}/actions").json()["is_default"] is True  # new game starts with defaults
         S.put(f"{G()}/actions", json={"actions": CUSTOM})
         ps = g["players"]
@@ -73,7 +73,7 @@ class TestActions:
         # history contains the murder (but never the secret action) + banishment tally
         assert h["day"] == 1 and h["murder"]["success"] and "action" not in h["murder"]
         assert h["murder"]["victim_name"] == fa[0]["name"]
-        assert h["banish"]["name"] == fa[1]["name"] and h["banish"]["tally"][0]["votes"] == 4
+        assert h["banish"]["name"] == fa[1]["name"] and h["banish"]["tally"][0]["votes"] == 5
         r = S.post(f"{G()}/advance").json()
         assert r["day"] == 2 and r["phase"] == "day"
         # a fresh day clears the victim and action until the next night

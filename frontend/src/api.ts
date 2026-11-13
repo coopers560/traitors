@@ -22,7 +22,7 @@ export type DayResult = {
     lives_left?: number;
     eliminated?: boolean;
     role?: Role | null;
-  };
+  } | null;
   banish: {
     tally: { player_id: string; name: string; votes: number }[];
     tie: boolean;
@@ -32,9 +32,11 @@ export type DayResult = {
     eliminated?: boolean;
     already_dead?: boolean;
     role?: Role | null;
-  };
+    role_hidden?: boolean;
+  } | null;
   winner: "faithful" | "traitors" | null;
   recruited?: boolean;
+  ended_by_vote?: boolean;
 };
 
 export type GameState =
@@ -46,6 +48,7 @@ export type GameState =
       total_days: number;
       phase: Phase;
       winner: "faithful" | "traitors" | null;
+      endgame?: boolean;
       host_id: string | null;
       host_name: string | null;
       players: PublicPlayer[];
@@ -64,6 +67,8 @@ export type PrivateView = {
   day: number;
   turn_done: boolean;
   my_vote_id: string | null;
+  my_end_vote?: boolean;
+  endgame?: boolean;
   fellow_traitors?: string[];
   target?: { id: string; name: string } | null;
   action?: string | null;
@@ -123,6 +128,7 @@ export const api = {
     player_id: string;
     pin: string;
     vote_target_id?: string;
+    end_vote?: boolean;
     murder_done?: boolean;
     target_id?: string;
     action?: string;
@@ -140,8 +146,8 @@ export type ActionList = { actions: string[]; is_default: boolean };
 /** How and when a player left the game, from the public history. */
 export function exitOf(history: DayResult[], playerId: string): { how: "murdered" | "banished"; day: number } | null {
   for (const h of history) {
-    if (h.murder.success && h.murder.eliminated && h.murder.victim_id === playerId) return { how: "murdered", day: h.day };
-    if (h.banish.target_id === playerId && h.banish.eliminated && !h.banish.already_dead) return { how: "banished", day: h.day };
+    if (h.murder?.success && h.murder.eliminated && h.murder.victim_id === playerId) return { how: "murdered", day: h.day };
+    if (h.banish?.target_id === playerId && h.banish.eliminated && !h.banish.already_dead) return { how: "banished", day: h.day };
   }
   return null;
 }
