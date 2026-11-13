@@ -1,6 +1,6 @@
 # Custom murder actions (GET/PUT/DELETE /api/games/{code}/actions) + history usage tests
 import pytest
-from test_traitors_game import API, S, G, setup_game, pin_of, private, del_game
+from test_traitors_game import API, S, G, setup_game, setup_game_traitors, pin_of, private, del_game
 
 CUSTOM = ["TEST_Act Alpha", "TEST_Act Beta", "TEST_Act Gamma"]
 
@@ -42,7 +42,7 @@ class TestActions:
         assert r.status_code == 200 and r.json()["actions"] == CUSTOM
 
     def test_custom_actions_used_in_game(self):
-        g, roles = setup_game(5)
+        g, roles = setup_game_traitors(5, 1)
         assert S.get(f"{G()}/actions").json()["is_default"] is True  # new game starts with defaults
         S.put(f"{G()}/actions", json={"actions": CUSTOM})
         ps = g["players"]

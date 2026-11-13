@@ -1,5 +1,5 @@
 # Multi-phone sync: /game/advance?expected=<phase> idempotency tests (single global game, run with -n 0)
-from test_traitors_game import API, S, G, setup_game, pin_of, private, del_game
+from test_traitors_game import API, S, G, setup_game, setup_game_traitors, pin_of, private, del_game
 
 
 def adv(expected=None):
@@ -13,7 +13,7 @@ def state():
 
 def seed_setup_done():
     del_game()
-    g, r = setup_game(5)
+    g, r = setup_game_traitors(5, 1)  # one Traitor so the day-by-day chain never ends early
     for p in g["players"]:
         S.post(f"{G()}/turn", json={"player_id": p["id"], "pin": pin_of(p["name"])})
     return g, r

@@ -36,7 +36,6 @@ export default function Setup() {
 
   const update = (key: number, patch: Partial<Row>) => setRows((r) => r.map((x) => (x.key === key ? { ...x, ...patch } : x)));
   const filled = rows.filter((r) => r.name.trim() || r.pin);
-  const traitors = Math.max(1, Math.round(filled.length / 5));
 
   const submit = () => {
     setLocalError(null);
@@ -71,7 +70,7 @@ export default function Setup() {
         <View style={styles.summary} testID="setup-summary">
           <Ionicons name="skull-outline" size={20} color={colors.brand} />
           <Text style={styles.summaryText}>
-            {filled.length} players · {filled.length >= 4 ? traitors : "–"} Traitors · 12 days
+            {filled.length} players · Traitors chosen at random · 12 days
           </Text>
         </View>
 

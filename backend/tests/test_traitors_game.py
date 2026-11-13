@@ -67,6 +67,16 @@ def setup_game(n=10):
     return g, roles
 
 
+def setup_game_traitors(n, want):
+    """Like setup_game but retries the random Traitor draw until exactly `want`
+    Traitors are chosen, so multi-day flow tests stay deterministic."""
+    for _ in range(400):
+        g, roles = setup_game(n)
+        if list(roles.values()).count("traitor") == want:
+            return g, roles
+    raise AssertionError(f"could not draw {want} traitors out of {n}")
+
+
 def cast_votes(votes):
     """Each alive voter in `votes` casts its banish vote. votes: {voter_id: target_id}."""
     g = S.get(f"{G()}").json()
@@ -120,10 +130,11 @@ class TestCreate:
         ps = mk_players(4); ps[0]["name"] = "  "
         assert S.post(f"{API}/games", json={"players": ps}).status_code == 400
 
-    @pytest.mark.parametrize("n,t", [(4, 1), (6, 1), (7, 2), (12, 2), (13, 3), (15, 3)])
-    def test_traitor_counts(self, n, t):
+    @pytest.mark.parametrize("n", [4, 5, 8, 10, 12, 15])
+    def test_traitor_count_random_minority(self, n):
         g, roles = setup_game(n)
-        assert list(roles.values()).count("traitor") == t
+        t = list(roles.values()).count("traitor")
+        assert 1 <= t <= (n - 1) // 2  # random, at least one, always a minority
         assert g["phase"] == "setup" and g["day"] == 1 and g["turns_needed"] == n
 
 
@@ -149,18 +160,20 @@ class TestPrivacy:
 
     def test_faithful_no_traitor_info(self):
         g = S.get(f"{G()}").json()
+        roles = {p["id"]: private(p["id"], pin_of(p["name"])).json()["role"] for p in g["players"]}
+        n_tr = list(roles.values()).count("traitor")
         for p in g["players"]:
             v = private(p["id"], pin_of(p["name"])).json()
             if v["role"] == "faithful":
                 assert "fellow_traitors" not in v and "target" not in v
             else:
-                assert len(v["fellow_traitors"]) == 1
+                assert len(v["fellow_traitors"]) == n_tr - 1
 
 
 # ---- Full round flow: banish first, murder after, each in its own reveal ----
 class TestFlow:
     def test_full_round(self):
-        g, roles = setup_game(10)
+        g, roles = setup_game_traitors(10, 2)
         ps = g["players"]
         traitors = [p for p in ps if roles[p["id"]] == "traitor"]
         faithful = [p for p in ps if roles[p["id"]] == "faithful"]
@@ -307,7 +320,7 @@ class TestFlow:
 
 class TestMurderChoice:
     def test_three_choices_then_lie_low(self):
-        g, roles = setup_game(5)
+        g, roles = setup_game_traitors(5, 1)
         ps = g["players"]
         tr = next(p for p in ps if roles[p["id"]] == "traitor")
         fa = [p for p in ps if roles[p["id"]] == "faithful"]
@@ -352,35 +365,42 @@ class TestSkipMissing:
 
 
 class TestRecruit:
-    def test_recruit_when_short(self):
-        g, roles = setup_game(12)
+    def test_recruit_available_at_six_or_more(self):
+        g, roles = setup_game_traitors(8, 1)  # one Traitor so a banishment can't end it early
         ps = g["players"]
-        traitors = [p for p in ps if roles[p["id"]] == "traitor"]
-        faithful = [p for p in ps if roles[p["id"]] == "faithful"]
-        assert len(traitors) == 2
-        ta, tb = traitors
+        tr = next(p for p in ps if roles[p["id"]] == "traitor")
+        fa = [p for p in ps if roles[p["id"]] == "faithful"]
         finish_setup(ps)  # -> day 1
-        # Day 1: banish ta -> out in one hit. Now the Traitors are short.
+        # Banish a Faithful -> 7 still in (>= 6): recruitment is available tonight
         assert S.post(f"{G()}/advance").json()["phase"] == "roundtable"
-        cast_votes({p["id"]: (ta["id"] if p["id"] != ta["id"] else faithful[0]["id"]) for p in ps})
-        rb = S.post(f"{G()}/advance").json()
-        assert rb["phase"] == "banished" and rb["history"][-1]["banish"]["eliminated"]
+        cast_votes({p["id"]: (fa[0]["id"] if p["id"] != fa[0]["id"] else fa[1]["id"]) for p in ps})
+        assert S.post(f"{G()}/advance").json()["phase"] == "banished"
         assert S.post(f"{G()}/advance").json()["phase"] == "night"
-        # tb can now recruit
-        assert private(tb["id"], pin_of(tb["name"])).json()["can_recruit"] is True
-        recruit = faithful[1]
+        assert private(tr["id"], pin_of(tr["name"])).json()["can_recruit"] is True
+        recruit = fa[2]
         assert private(recruit["id"], pin_of(recruit["name"])).json()["role"] == "faithful"
-        assert S.post(f"{G()}/turn", json={"player_id": tb["id"], "pin": pin_of(tb["name"]), "recruit_id": recruit["id"]}).status_code == 200
+        assert S.post(f"{G()}/turn", json={"player_id": tr["id"], "pin": pin_of(tr["name"]), "recruit_id": recruit["id"]}).status_code == 200
         for p in S.get(f"{G()}").json()["players"]:
-            if p["alive"] and p["id"] != tb["id"]:
+            if p["alive"] and p["id"] != tr["id"]:
                 assert S.post(f"{G()}/turn", json={"player_id": p["id"], "pin": pin_of(p["name"])}).status_code == 200
         rv = S.post(f"{G()}/advance").json()
-        assert rv["phase"] == "reveal"
-        assert rv["history"][-1]["recruited"] is True
-        assert rv["history"][-1]["murder"]["success"] is False  # recruiting replaces the murder
-        # the recruit is now a Traitor and sees their fellow
+        assert rv["phase"] == "reveal" and rv["history"][-1]["recruited"] is True
         nv = private(recruit["id"], pin_of(recruit["name"])).json()
-        assert nv["role"] == "traitor" and tb["name"] in nv["fellow_traitors"]
+        assert nv["role"] == "traitor" and tr["name"] in nv["fellow_traitors"]
+
+    def test_no_recruit_under_six(self):
+        g, roles = setup_game_traitors(6, 1)
+        ps = g["players"]
+        tr = next(p for p in ps if roles[p["id"]] == "traitor")
+        fa = [p for p in ps if roles[p["id"]] == "faithful"]
+        finish_setup(ps)  # -> day 1
+        # Banish a Faithful -> 5 left (< 6): no recruiting tonight
+        assert S.post(f"{G()}/advance").json()["phase"] == "roundtable"
+        cast_votes({p["id"]: (fa[0]["id"] if p["id"] != fa[0]["id"] else fa[1]["id"]) for p in ps})
+        assert S.post(f"{G()}/advance").json()["phase"] == "banished"
+        assert S.post(f"{G()}/advance").json()["phase"] == "night"
+        assert private(tr["id"], pin_of(tr["name"])).json()["can_recruit"] is False
+        assert S.post(f"{G()}/turn", json={"player_id": tr["id"], "pin": pin_of(tr["name"]), "recruit_id": fa[1]["id"]}).status_code == 400
 
 
 class TestHostEndGame:
