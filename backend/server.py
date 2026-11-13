@@ -68,6 +68,16 @@ ACTIONS = [
     "Offer them a cool towel or flannel",
     "Ask if they fancy a stroll along the front",
     "Wish them a lovely day by the pool",
+    "Move their flip flops away from the sunbed",
+    "Spill their full drink near the pool area",
+    "Sing a song and ask them to tell you the next line",
+    "Get them to do the actions to a song in mini disco",
+    "Offer them a drink from the bar",
+    "Drink their drink by mistake",
+    "Sit next to them on their sunbed",
+    "Use their suncream",
+    "Get them to come to the shop with you",
+    "Get them to say something in Egyptian",
 ]
 
 
