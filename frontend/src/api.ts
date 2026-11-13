@@ -66,6 +66,7 @@ export type PrivateView = {
   fellow_traitors?: string[];
   target?: { id: string; name: string } | null;
   action?: string | null;
+  action_choices?: string[];
   murder_confirmed?: boolean;
 };
 
@@ -121,6 +122,7 @@ export const api = {
     vote_target_id?: string;
     murder_done?: boolean;
     target_id?: string;
+    action?: string;
   }) => request<PrivateView>(`/games/${currentCode}/turn`, "POST", body),
   advance: (expected: Phase, day: number, force?: boolean) =>
     request<GameState>(`/games/${currentCode}/advance?expected=${expected}&expected_day=${day}${force ? "&force=true" : ""}`, "POST"),

@@ -35,16 +35,16 @@ def run_setup_and_day1(code, g):
         assert S.post(f"{G(code)}/turn", json={"player_id": p["id"], "pin": pin_of(p["name"]), "vote_target_id": tgt["id"]}).status_code == 200
     assert S.post(f"{G(code)}/advance?expected=roundtable&expected_day=1").json()["phase"] == "banished"
     assert S.post(f"{G(code)}/advance?expected=banished&expected_day=1").json()["phase"] == "night"
-    # the murder is chosen now, after the Round Table
+    # the murder is chosen now, after the Round Table (two steps: victim then action)
     action = None
     for p in ps:
-        body = {"player_id": p["id"], "pin": pin_of(p["name"])}
         if roles[p["id"]] == "traitor" and action is None:
-            body["target_id"] = fa[0]["id"]
-        r = S.post(f"{G(code)}/turn", json=body)
-        assert r.status_code == 200, r.text
-        if roles[p["id"]] == "traitor" and r.json().get("action"):
-            action = r.json()["action"]
+            r = S.post(f"{G(code)}/turn", json={"player_id": p["id"], "pin": pin_of(p["name"]), "target_id": fa[0]["id"]})
+            assert r.status_code == 200, r.text
+            action = r.json()["action_choices"][0]
+            assert S.post(f"{G(code)}/turn", json={"player_id": p["id"], "pin": pin_of(p["name"]), "action": action}).status_code == 200
+        else:
+            assert S.post(f"{G(code)}/turn", json={"player_id": p["id"], "pin": pin_of(p["name"])}).status_code == 200
     res = S.post(f"{G(code)}/advance?expected=night&expected_day=1").json()
     assert res["phase"] == "reveal"
     return action, res

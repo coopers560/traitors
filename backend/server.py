@@ -96,6 +96,7 @@ class Game(BaseModel):
     murder_confirmed: bool = False
     target_id: Optional[str] = None
     action: Optional[str] = None
+    action_choices: List[str] = []  # the three options a Traitor picks tonight's action from
     next_target_id: Optional[str] = None
     next_action: Optional[str] = None
     used_actions: List[str] = []
@@ -124,6 +125,14 @@ class Game(BaseModel):
         self.used_actions.append(a)
         return a
 
+    def pick_actions(self, actions: List[str], n: int = 3) -> List[str]:
+        """Offer n fresh action options (not yet used) for the Traitor to choose from."""
+        pool = [a for a in actions if a not in self.used_actions]
+        if len(pool) < n:
+            pool = list(actions)
+        random.shuffle(pool)
+        return pool[:n]
+
 
 class PlayerIn(BaseModel):
     name: str
@@ -143,6 +152,7 @@ class TurnIn(AuthIn):
     vote_target_id: Optional[str] = None
     murder_done: Optional[bool] = None
     target_id: Optional[str] = None
+    action: Optional[str] = None  # the chosen murder action (one of the three offered)
 
 
 # ---------------- Helpers ----------------
@@ -411,6 +421,7 @@ async def private_view(code: str, data: AuthIn):
         out["fellow_traitors"] = [x.name for x in g.players if x.role == "traitor" and x.id != p.id]
         out["target"] = {"id": g.target_id, "name": name_of(g, g.target_id)} if g.target_id else None
         out["action"] = g.action
+        out["action_choices"] = g.action_choices
         out["murder_confirmed"] = g.murder_confirmed
     return out
 
@@ -432,13 +443,29 @@ async def take_turn(code: str, data: TurnIn):
             raise HTTPException(400, "Choose someone to banish")
         g.votes[p.id] = tgt.id
     elif g.phase == "night":
-        # The murder happens after the Round Table. A Traitor names tonight's
-        # victim (or takes their turn without one to lie low); everyone else just
-        # passes, so watching who taps never reveals who the Traitors are.
+        # The murder happens after the Round Table, in two steps. A Traitor names
+        # the victim and is offered three secret actions (step 1, not yet committed),
+        # then picks one to confirm the murder (step 2). Everyone else — and a
+        # Traitor lying low — just passes, so watching who taps never reveals them.
         if is_traitor and p.lives > 0 and data.target_id:
+            # Step 1: choose the victim, get three action options (no turn taken yet)
             valid_victim(g, data.target_id)
             g.target_id = data.target_id
-            g.action = g.pick_action(g.actions)
+            g.action = None
+            g.murder_confirmed = False
+            g.action_choices = g.pick_actions(g.actions, 3)
+            await save(g)
+            return await private_view(code, AuthIn(player_id=data.player_id, pin=data.pin))
+        if is_traitor and p.lives > 0 and data.action:
+            # Step 2: commit one of the offered actions
+            if not g.target_id:
+                raise HTTPException(400, "Choose a victim first")
+            if data.action not in g.action_choices:
+                raise HTTPException(400, "Choose one of the offered actions")
+            g.action = data.action
+            if data.action not in g.used_actions:
+                g.used_actions.append(data.action)
+            g.action_choices = []
             g.murder_confirmed = True
     else:
         raise HTTPException(400, "It is not time to take a turn")
@@ -483,7 +510,7 @@ async def advance(code: str, expected: Optional[str] = None, expected_day: Optio
             g.phase = "ended"
         else:
             g.phase = "night"
-            g.turns_done, g.target_id, g.action, g.murder_confirmed = [], None, None, False
+            g.turns_done, g.target_id, g.action, g.murder_confirmed, g.action_choices = [], None, None, False, []
     elif g.phase == "night":
         alive_ids = {p.id for p in g.alive()}
         if not alive_ids.issubset(set(g.turns_done)):
@@ -501,7 +528,7 @@ async def advance(code: str, expected: Optional[str] = None, expected_day: Optio
             g.phase = "ended"
         else:
             g.day += 1
-            g.target_id, g.action, g.murder_confirmed = None, None, False
+            g.target_id, g.action, g.murder_confirmed, g.action_choices = None, None, False, []
             g.turns_done, g.votes = [], {}
             g.phase = "day"
     else:
