@@ -118,6 +118,7 @@ class Game(BaseModel):
     target_id: Optional[str] = None
     action: Optional[str] = None
     action_choices: List[str] = []  # the three options a Traitor picks tonight's action from
+    recruit_id: Optional[str] = None  # a Faithful the Traitors recruit tonight (instead of murdering)
     next_target_id: Optional[str] = None
     next_action: Optional[str] = None
     used_actions: List[str] = []
@@ -174,6 +175,7 @@ class TurnIn(AuthIn):
     murder_done: Optional[bool] = None
     target_id: Optional[str] = None
     action: Optional[str] = None  # the chosen murder action (one of the three offered)
+    recruit_id: Optional[str] = None  # a Faithful to recruit into the Traitors
 
 
 # ---------------- Helpers ----------------
@@ -281,6 +283,19 @@ def valid_victim(g: Game, pid: Optional[str]) -> Player:
     if v.role == "traitor":
         raise HTTPException(400, "Traitors cannot murder a fellow Traitor")
     return v
+
+
+def target_traitors(n: int) -> int:
+    """About one Traitor for every six players (at least one)."""
+    return max(1, round(n / 6))
+
+
+def recruitment_available(g: Game) -> bool:
+    """The Traitors may recruit when they've dropped below the ratio and there is
+    still a living Traitor to do it and a living Faithful to turn."""
+    alive_traitors = [p for p in g.alive() if p.role == "traitor"]
+    alive_faithful = [p for p in g.alive() if p.role == "faithful"]
+    return bool(alive_traitors) and bool(alive_faithful) and len(alive_traitors) < target_traitors(len(g.alive()))
 
 
 def winner_by_roles(g: Game) -> Optional[str]:
@@ -395,7 +410,7 @@ async def create_game(data: CreateGameIn):
     for p in data.players:
         if not (p.pin.isdigit() and len(p.pin) == 4):
             raise HTTPException(400, f"{p.name.strip()} needs a 4-digit PIN")
-    n_traitors = max(1, round(len(names) / 6))  # about one Traitor for every six players
+    n_traitors = target_traitors(len(names))
     traitor_idx = set(random.sample(range(len(names)), n_traitors))
     players = [
         Player(name=names[i], pin_hash=hash_pin(p.pin), role="traitor" if i in traitor_idx else "faithful")
@@ -450,6 +465,8 @@ async def private_view(code: str, data: AuthIn):
         out["action"] = g.action
         out["action_choices"] = g.action_choices
         out["murder_confirmed"] = g.murder_confirmed
+        out["can_recruit"] = recruitment_available(g)
+        out["recruit"] = {"id": g.recruit_id, "name": name_of(g, g.recruit_id)} if g.recruit_id else None
     return out
 
 
@@ -474,16 +491,28 @@ async def take_turn(code: str, data: TurnIn):
         # the victim and is offered three secret actions (step 1, not yet committed),
         # then picks one to confirm the murder (step 2). Everyone else — and a
         # Traitor lying low — just passes, so watching who taps never reveals them.
-        if is_traitor and p.lives > 0 and data.target_id:
+        if is_traitor and p.lives > 0 and data.recruit_id:
+            # Recruit a Faithful to replace a lost Traitor (instead of murdering tonight)
+            if not recruitment_available(g):
+                raise HTTPException(400, "The Traitors are already up to strength")
+            r = g.player(data.recruit_id)
+            if not r or r.lives <= 0 or r.role != "faithful":
+                raise HTTPException(400, "Choose a Faithful to recruit")
+            g.recruit_id = data.recruit_id
+            g.target_id = g.action = None
+            g.action_choices = []
+            g.murder_confirmed = False
+        elif is_traitor and p.lives > 0 and data.target_id:
             # Step 1: choose the victim, get three action options (no turn taken yet)
             valid_victim(g, data.target_id)
+            g.recruit_id = None
             g.target_id = data.target_id
             g.action = None
             g.murder_confirmed = False
             g.action_choices = g.pick_actions(g.actions, 3)
             await save(g)
             return await private_view(code, AuthIn(player_id=data.player_id, pin=data.pin))
-        if is_traitor and p.lives > 0 and data.action:
+        elif is_traitor and p.lives > 0 and data.action:
             # Step 2: commit one of the offered actions
             if not g.target_id:
                 raise HTTPException(400, "Choose a victim first")
@@ -537,17 +566,24 @@ async def advance(code: str, expected: Optional[str] = None, expected_day: Optio
             g.phase = "ended"
         else:
             g.phase = "night"
-            g.turns_done, g.target_id, g.action, g.murder_confirmed, g.action_choices = [], None, None, False, []
+            g.turns_done, g.target_id, g.action, g.murder_confirmed, g.action_choices, g.recruit_id = [], None, None, False, [], None
     elif g.phase == "night":
         alive_ids = {p.id for p in g.alive()}
         if not alive_ids.issubset(set(g.turns_done)):
             raise HTTPException(400, "Everyone must take their turn before the reveal")
+        # Recruitment first: a recruited Faithful becomes a Traitor (instead of being murdered)
+        recruited = False
+        rp = g.player(g.recruit_id)
+        if rp and rp.lives > 0 and rp.role == "faithful":
+            rp.role = "traitor"
+            recruited = True
         murder = resolve_murder(g)
         g.winner = winner_by_roles(g)
         if not g.winner and g.day >= TOTAL_DAYS:
             g.winner = "traitors"  # they survived to the final day
         if g.history:
             g.history[-1]["murder"] = murder
+            g.history[-1]["recruited"] = recruited
             g.history[-1]["winner"] = g.winner
         g.phase = "reveal"
     elif g.phase == "reveal":
@@ -555,7 +591,7 @@ async def advance(code: str, expected: Optional[str] = None, expected_day: Optio
             g.phase = "ended"
         else:
             g.day += 1
-            g.target_id, g.action, g.murder_confirmed, g.action_choices = None, None, False, []
+            g.target_id, g.action, g.murder_confirmed, g.action_choices, g.recruit_id = None, None, False, [], None
             g.turns_done, g.votes = [], {}
             g.phase = "day"
     else:
