@@ -285,17 +285,15 @@ def valid_victim(g: Game, pid: Optional[str]) -> Player:
     return v
 
 
-def target_traitors(n: int) -> int:
-    """One Traitor per six players, rounding up: 4-6 -> 1, 7-12 -> 2, 13-15 -> 3."""
-    return max(1, (n + 5) // 6)
+RECRUIT_MIN_PLAYERS = 6
 
 
 def recruitment_available(g: Game) -> bool:
-    """The Traitors may recruit when they've dropped below the ratio and there is
-    still a living Traitor to do it and a living Faithful to turn."""
-    alive_traitors = [p for p in g.alive() if p.role == "traitor"]
-    alive_faithful = [p for p in g.alive() if p.role == "faithful"]
-    return bool(alive_traitors) and bool(alive_faithful) and len(alive_traitors) < target_traitors(len(g.alive()))
+    """Traitors may recruit on any night while at least six players are still in."""
+    alive = g.alive()
+    traitors = [p for p in alive if p.role == "traitor"]
+    faithful = [p for p in alive if p.role == "faithful"]
+    return len(alive) >= RECRUIT_MIN_PLAYERS and bool(traitors) and bool(faithful)
 
 
 def winner_by_roles(g: Game) -> Optional[str]:
@@ -410,7 +408,8 @@ async def create_game(data: CreateGameIn):
     for p in data.players:
         if not (p.pin.isdigit() and len(p.pin) == 4):
             raise HTTPException(400, f"{p.name.strip()} needs a 4-digit PIN")
-    n_traitors = target_traitors(len(names))
+    # A random number of Traitors, always a minority (at least one, fewer than the Faithful)
+    n_traitors = random.randint(1, max(1, (len(names) - 1) // 2))
     traitor_idx = set(random.sample(range(len(names)), n_traitors))
     players = [
         Player(name=names[i], pin_hash=hash_pin(p.pin), role="traitor" if i in traitor_idx else "faithful")

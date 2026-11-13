@@ -306,7 +306,7 @@ function NightTurn({ view, pin, players, onSealed }: { view: PrivateView; pin: s
       ) : null}
       {view.can_recruit && mode === "recruit" ? (
         <>
-          <Body>You are short a Traitor. Recruit one of the Faithful to join you — instead of a murder tonight.</Body>
+          <Body>Recruit one of the Faithful to join the Traitors — instead of a murder tonight.</Body>
           <VictimPicker label={`New Traitor · Day ${view.day}`} prefix="night-recruit" players={candidates} selected={recruitTarget} onSelect={setRecruitTarget} />
           <ErrorText testID="turn-error" message={recruit.error?.message || pass.error?.message} />
           <Button testID="night-recruit-button" label="Seal the recruitment" icon="people" disabled={!recruitTarget} loading={recruit.isPending} onPress={() => recruitTarget && recruit.mutate(recruitTarget)} />

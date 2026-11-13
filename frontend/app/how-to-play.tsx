@@ -10,7 +10,7 @@ const STEPS: { icon: React.ComponentProps<typeof Ionicons>["name"]; title: strin
   {
     icon: "people",
     title: "1. The Gathering",
-    body: "Everyone adds their name and a secret 4-digit PIN. The app secretly picks the Traitors (about 1 in 5 players). Pass the phone round so each person sees their role in private. The Traitors also choose who to murder on Day 1.",
+    body: "Everyone adds their name and a secret 4-digit PIN. The app secretly picks a random number of Traitors (always a minority). Pass the phone round so each person sees their role in private.",
   },
   {
     icon: "sunny",
