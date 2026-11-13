@@ -77,16 +77,24 @@ def cast_votes(votes):
 
 
 def do_night(roles, murder_target=None):
-    """Every alive player takes the night turn; alive Traitors name `murder_target` (or lie low)."""
+    """Every alive player takes the night turn. The first alive Traitor murders
+    `murder_target` via the two-step flow (pick victim -> choose 1 of 3 actions);
+    everyone else just passes. With no target, all lie low."""
     g = S.get(f"{G()}").json()
+    committed = False
     for p in g["players"]:
         if not p["alive"]:
             continue
-        body = {"player_id": p["id"], "pin": pin_of(p["name"])}
-        if murder_target and roles.get(p["id"]) == "traitor":
-            body["target_id"] = murder_target
-        r = S.post(f"{G()}/turn", json=body)
-        assert r.status_code == 200, r.text
+        if murder_target and not committed and roles.get(p["id"]) == "traitor":
+            r = S.post(f"{G()}/turn", json={"player_id": p["id"], "pin": pin_of(p["name"]), "target_id": murder_target})
+            assert r.status_code == 200, r.text
+            choices = r.json()["action_choices"]
+            assert len(choices) == 3
+            r2 = S.post(f"{G()}/turn", json={"player_id": p["id"], "pin": pin_of(p["name"]), "action": choices[0]})
+            assert r2.status_code == 200 and r2.json()["murder_confirmed"] is True, r2.text
+            committed = True
+        else:
+            assert S.post(f"{G()}/turn", json={"player_id": p["id"], "pin": pin_of(p["name"])}).status_code == 200
 
 
 # ---- Create validation ----
@@ -186,8 +194,16 @@ class TestFlow:
         # a traitor cannot murder a fellow traitor
         assert S.post(f"{G()}/turn", json={"player_id": t0["id"], "pin": pin_of(t0["name"]), "target_id": traitors[1]["id"]}).status_code == 400
         victim = faithful[0]
+        # step 1: pick the victim -> three action choices, nothing committed, turn not yet taken
         r = S.post(f"{G()}/turn", json={"player_id": t0["id"], "pin": pin_of(t0["name"]), "target_id": victim["id"]})
-        assert r.status_code == 200 and r.json()["target"]["id"] == victim["id"] and r.json()["action"]
+        assert r.status_code == 200 and r.json()["target"]["id"] == victim["id"]
+        choices = r.json()["action_choices"]
+        assert len(choices) == 3 and r.json()["action"] is None and r.json()["murder_confirmed"] is False
+        # an action that was not offered is rejected
+        assert S.post(f"{G()}/turn", json={"player_id": t0["id"], "pin": pin_of(t0["name"]), "action": "not a real option"}).status_code == 400
+        # step 2: confirm one of the three
+        r = S.post(f"{G()}/turn", json={"player_id": t0["id"], "pin": pin_of(t0["name"]), "action": choices[1]})
+        assert r.status_code == 200 and r.json()["action"] == choices[1] and r.json()["murder_confirmed"] is True
         for p in ps:
             if p["id"] != t0["id"]:
                 assert S.post(f"{G()}/turn", json={"player_id": p["id"], "pin": pin_of(p["name"])}).status_code == 200
@@ -292,6 +308,30 @@ class TestFlow:
                 winner = rv["winner"]; break
             S.post(f"{G()}/advance")  # -> day
         assert winner == "traitors"
+
+
+class TestMurderChoice:
+    def test_three_choices_then_lie_low(self):
+        g, roles = setup_game(5)
+        ps = g["players"]
+        tr = next(p for p in ps if roles[p["id"]] == "traitor")
+        fa = [p for p in ps if roles[p["id"]] == "faithful"]
+        finish_setup(ps)  # -> day
+        assert S.post(f"{G()}/advance").json()["phase"] == "roundtable"
+        cast_votes({p["id"]: (fa[0]["id"] if p["id"] != fa[0]["id"] else fa[1]["id"]) for p in ps})
+        assert S.post(f"{G()}/advance").json()["phase"] == "banished"
+        assert S.post(f"{G()}/advance").json()["phase"] == "night"
+        # picking a victim offers three distinct actions and commits nothing yet
+        r = S.post(f"{G()}/turn", json={"player_id": tr["id"], "pin": pin_of(tr["name"]), "target_id": fa[2]["id"]})
+        ch = r.json()["action_choices"]
+        assert len(ch) == 3 and len(set(ch)) == 3 and r.json()["action"] is None and r.json()["murder_confirmed"] is False
+        # the traitor can still lie low after seeing the choices -> no murder, turn taken
+        assert S.post(f"{G()}/turn", json={"player_id": tr["id"], "pin": pin_of(tr["name"])}).status_code == 200
+        for p in ps:
+            if p["id"] != tr["id"]:
+                S.post(f"{G()}/turn", json={"player_id": p["id"], "pin": pin_of(p["name"])})
+        rv = S.post(f"{G()}/advance").json()
+        assert rv["phase"] == "reveal" and rv["history"][-1]["murder"]["success"] is False
 
 
 class TestSkipMissing:

@@ -39,11 +39,16 @@ def night_all():
     alive = [p for p in g["players"] if p["alive"]]
     af = [p for p in alive if r[p["id"]] == "faithful"]
     target = af[-1]["id"] if af else None
+    committed = False
     for p in alive:
-        body = {"player_id": p["id"], "pin": pin_of(p["name"])}
-        if target and r[p["id"]] == "traitor":
-            body["target_id"] = target
-        assert S.post(f"{G()}/turn", json=body).status_code == 200
+        if target and not committed and r[p["id"]] == "traitor":
+            rr = S.post(f"{G()}/turn", json={"player_id": p["id"], "pin": pin_of(p["name"]), "target_id": target})
+            assert rr.status_code == 200
+            choices = rr.json()["action_choices"]
+            assert S.post(f"{G()}/turn", json={"player_id": p["id"], "pin": pin_of(p["name"]), "action": choices[0]}).status_code == 200
+            committed = True
+        else:
+            assert S.post(f"{G()}/turn", json={"player_id": p["id"], "pin": pin_of(p["name"])}).status_code == 200
 
 
 class TestAdvanceExpected:

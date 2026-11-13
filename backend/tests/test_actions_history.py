@@ -58,9 +58,13 @@ class TestActions:
             assert S.post(f"{G()}/turn", json={"player_id": p["id"], "pin": pin_of(p["name"]), "vote_target_id": vt}).status_code == 200
         assert S.post(f"{G()}/advance").json()["phase"] == "banished"
         assert S.post(f"{G()}/advance").json()["phase"] == "night"
-        # the murder happens after the Round Table — the traitor gets a custom action now
+        # the murder happens after the Round Table — the traitor is offered a choice
+        # of three custom actions and confirms one
         r = S.post(f"{G()}/turn", json={"player_id": tr["id"], "pin": pin_of(tr["name"]), "target_id": fa[0]["id"]})
-        assert r.status_code == 200 and r.json()["action"] in CUSTOM and r.json()["target"]["id"] == fa[0]["id"]
+        assert r.status_code == 200 and r.json()["target"]["id"] == fa[0]["id"]
+        choices = r.json()["action_choices"]
+        assert len(choices) == 3 and all(c in CUSTOM for c in choices)
+        assert S.post(f"{G()}/turn", json={"player_id": tr["id"], "pin": pin_of(tr["name"]), "action": choices[0]}).status_code == 200
         for p in ps:
             if p["id"] != tr["id"]:
                 assert S.post(f"{G()}/turn", json={"player_id": p["id"], "pin": pin_of(p["name"])}).status_code == 200
