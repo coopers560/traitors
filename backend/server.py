@@ -408,8 +408,8 @@ async def create_game(data: CreateGameIn):
     for p in data.players:
         if not (p.pin.isdigit() and len(p.pin) == 4):
             raise HTTPException(400, f"{p.name.strip()} needs a 4-digit PIN")
-    # A random number of Traitors, always a minority (at least one, fewer than the Faithful)
-    n_traitors = random.randint(1, max(1, (len(names) - 1) // 2))
+    # A random number of Traitors: 1 to 3, always a minority (fewer than the Faithful)
+    n_traitors = random.randint(1, max(1, min(3, (len(names) - 1) // 2)))
     traitor_idx = set(random.sample(range(len(names)), n_traitors))
     players = [
         Player(name=names[i], pin_hash=hash_pin(p.pin), role="traitor" if i in traitor_idx else "faithful")

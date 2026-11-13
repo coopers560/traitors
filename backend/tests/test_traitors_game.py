@@ -134,7 +134,7 @@ class TestCreate:
     def test_traitor_count_random_minority(self, n):
         g, roles = setup_game(n)
         t = list(roles.values()).count("traitor")
-        assert 1 <= t <= (n - 1) // 2  # random, at least one, always a minority
+        assert 1 <= t <= min(3, (n - 1) // 2)  # random 1-3, always a minority
         assert g["phase"] == "setup" and g["day"] == 1 and g["turns_needed"] == n
 
 
