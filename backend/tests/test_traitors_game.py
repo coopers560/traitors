@@ -120,7 +120,7 @@ class TestCreate:
         ps = mk_players(4); ps[0]["name"] = "  "
         assert S.post(f"{API}/games", json={"players": ps}).status_code == 400
 
-    @pytest.mark.parametrize("n,t", [(4, 1), (10, 2), (12, 2), (13, 3), (15, 3)])
+    @pytest.mark.parametrize("n,t", [(4, 1), (6, 1), (8, 1), (9, 2), (12, 2), (15, 2)])
     def test_traitor_counts(self, n, t):
         g, roles = setup_game(n)
         assert list(roles.values()).count("traitor") == t
