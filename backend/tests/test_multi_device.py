@@ -25,9 +25,11 @@ def roles_now():
 
 
 def vote_all():
+    # Banish a Faithful (not the Traitor) so a single-elimination game keeps going.
+    r = roles_now()
     g = state()
     alive = [p for p in g["players"] if p["alive"]]
-    target = alive[-1]
+    target = next(p for p in alive if r[p["id"]] == "faithful")
     for p in alive:
         vt = target["id"] if p["id"] != target["id"] else next(x["id"] for x in alive if x["id"] != p["id"])
         assert S.post(f"{G()}/turn", json={"player_id": p["id"], "pin": pin_of(p["name"]), "vote_target_id": vt}).status_code == 200

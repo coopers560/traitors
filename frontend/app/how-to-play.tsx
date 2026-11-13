@@ -25,7 +25,7 @@ const STEPS: { icon: React.ComponentProps<typeof Ionicons>["name"]; title: strin
   {
     icon: "mail-open",
     title: "4. The Reveal",
-    body: "The app reveals who was murdered (but never the secret action, so keep guessing who did it), then who the table banished. Each costs one life. Lose both lives and you are out — and your role is revealed.",
+    body: "The app reveals who was murdered (but never the secret action, so keep guessing who did it), then who the table banished. One hit — a murder or a banishment — puts you out, and your role is revealed.",
   },
   {
     icon: "trophy",
@@ -59,7 +59,7 @@ export default function HowToPlay() {
       </View>
       <ScrollView contentContainerStyle={[styles.scroll, { paddingBottom: insets.bottom + spacing.lg }]}>
         <View style={{ gap: spacing.sm }}>
-          <Eyebrow>12 days · 2 lives each</Eyebrow>
+          <Eyebrow>12 days · one hit and you&apos;re out</Eyebrow>
           <Title>The rules</Title>
         </View>
         {STEPS.map((s) => (

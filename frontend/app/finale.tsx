@@ -7,7 +7,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { api, exitOf } from "@/src/api";
 import { ScreenHeader } from "@/src/components/screen-header";
-import { Button, Hearts } from "@/src/components/ui";
+import { Button } from "@/src/components/ui";
 import { fonts, makeStyles, radius, spacing, useTheme } from "@/src/theme";
 
 export default function Finale() {
@@ -77,7 +77,6 @@ export default function Finale() {
                 </View>
                 <View style={{ alignItems: "flex-end", gap: 4 }}>
                   <Text style={[styles.role, { color: traitor ? colors.traitor : colors.brand }]}>{traitor ? "Traitor" : "Faithful"}</Text>
-                  <Hearts lives={p.lives} size={14} />
                 </View>
               </View>
             );

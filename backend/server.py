@@ -35,7 +35,7 @@ async def health():
 api_router = APIRouter(prefix="/api")
 
 TOTAL_DAYS = 12
-START_LIVES = 2
+START_LIVES = 1  # one hit — a murder or a banishment — puts a player out
 CODE_CHARS = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"  # no 0/O, 1/I/L mix-ups
 CODE_LEN = 5
 
