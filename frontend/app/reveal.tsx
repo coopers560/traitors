@@ -6,7 +6,7 @@ import Animated, { FadeIn, FadeInDown } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { api, DayResult } from "@/src/api";
-import { Backdrop, Body, Button, ErrorText, Eyebrow, Hearts, IMAGES, Title } from "@/src/components/ui";
+import { Backdrop, Body, Button, ErrorText, Eyebrow, IMAGES, Title } from "@/src/components/ui";
 import { fonts, makeStyles, radius, spacing, useTheme } from "@/src/theme";
 
 export default function Reveal() {
@@ -123,7 +123,7 @@ function Murder({ r }: { r: DayResult }) {
         ) : (
           <>
             <Title>Nobody was murdered today.</Title>
-            <Body>The Traitors failed to strike. Everyone keeps their lives… for now.</Body>
+            <Body>The Traitors failed to strike. No one was taken tonight… for now.</Body>
           </>
         )}
       </Animated.View>
@@ -137,7 +137,7 @@ function Murder({ r }: { r: DayResult }) {
         <Text style={styles.cardLabel}>The secret action stays secret</Text>
         <Body style={{ fontSize: 15 }}>Somebody did something to {m.victim_name} today. Who was it? Think hard…</Body>
       </View>
-      <Consequence eliminated={!!m.eliminated} lives={m.lives_left ?? 0} role={m.role} />
+      <Consequence eliminated={!!m.eliminated} role={m.role} />
     </Animated.View>
   );
 }
@@ -160,7 +160,7 @@ function Banish({ r }: { r: DayResult }) {
           {b.already_dead ? (
             <Body>…but was already murdered today.</Body>
           ) : (
-            <Consequence eliminated={!!b.eliminated} lives={b.lives_left ?? 0} role={b.role} />
+            <Consequence eliminated={!!b.eliminated} role={b.role} />
           )}
         </>
       )}
@@ -177,21 +177,14 @@ function Banish({ r }: { r: DayResult }) {
   );
 }
 
-function Consequence({ eliminated, lives, role }: { eliminated: boolean; lives: number; role?: string | null }) {
+function Consequence({ eliminated, role }: { eliminated: boolean; role?: string | null }) {
   const styles = useStyles();
   const { colors } = useTheme();
-  if (!eliminated) {
-    return (
-      <View style={styles.lifeRow}>
-        <Hearts lives={lives} size={26} />
-        <Body>Loses a life — one left.</Body>
-      </View>
-    );
-  }
+  if (!eliminated) return null; // a single hit is always out — nothing else to show
   const traitor = role === "traitor";
   return (
     <Animated.View entering={FadeIn.delay(800).duration(1200)} style={{ gap: spacing.xs }} testID="reveal-eliminated">
-      <Body>Has lost their last life and leaves the game. They were…</Body>
+      <Body>Is out of the game. They were…</Body>
       <Text style={[styles.role, { color: traitor ? colors.traitor : colors.brand }]} testID="reveal-eliminated-role">
         {traitor ? "A Traitor" : "Faithful"}
       </Text>

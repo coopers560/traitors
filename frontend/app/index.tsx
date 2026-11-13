@@ -10,7 +10,7 @@ import { api, GameState, PublicPlayer } from "@/src/api";
 import { ConfirmSheet } from "@/src/components/confirm-sheet";
 import { PinPad } from "@/src/components/pin-pad";
 import { QrCode } from "@/src/components/qr-code";
-import { Backdrop, Body, Button, ErrorText, Eyebrow, Hearts, IMAGES, Title } from "@/src/components/ui";
+import { Backdrop, Body, Button, ErrorText, Eyebrow, IMAGES, Title } from "@/src/components/ui";
 import { useGameCode } from "@/src/game-code";
 import { inviteLink, shareInvite, shareToWhatsApp } from "@/src/utils/invite";
 import { fonts, makeStyles, radius, spacing, useTheme } from "@/src/theme";
@@ -69,7 +69,7 @@ function Welcome({ gone }: { gone: boolean }) {
           <Eyebrow>Holiday edition · Egypt</Eyebrow>
           <Title style={styles.heroTitle}>The Traitors</Title>
           <Body>
-            Twelve days. Two lives each. Hidden among the family are Traitors who murder in plain sight. Find them
+            Twelve days. Hidden among the family are Traitors who murder in plain sight. Find them
             before it&apos;s too late.
           </Body>
         </Animated.View>
@@ -351,9 +351,9 @@ function PlayerRow({ p, index, showTurn, onPress, disabled }: { p: PublicPlayer;
             size={26}
             color={p.turn_done ? colors.brand : colors.borderStrong}
           />
-        ) : (
-          <Hearts lives={p.lives} />
-        )}
+        ) : !p.alive ? (
+          <Ionicons testID={`player-out-${p.id}`} name="skull" size={22} color={colors.muted} />
+        ) : null}
       </Pressable>
     </Animated.View>
   );
@@ -459,7 +459,7 @@ function EndGameSheet({
       <View style={[styles.endSheet, { paddingBottom: insets.bottom + spacing.lg }]} testID="end-game-sheet">
         <Title style={{ fontSize: 28, lineHeight: 34 }}>End this game?</Title>
         <Body>
-          Only {hostName} can end the game for everyone. Enter {hostName}&apos;s PIN to confirm — all roles, lives
+          Only {hostName} can end the game for everyone. Enter {hostName}&apos;s PIN to confirm — all roles
           and votes will be lost on every phone.
         </Body>
         <ErrorText testID="end-game-error" message={error} />

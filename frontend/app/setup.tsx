@@ -71,7 +71,7 @@ export default function Setup() {
         <View style={styles.summary} testID="setup-summary">
           <Ionicons name="skull-outline" size={20} color={colors.brand} />
           <Text style={styles.summaryText}>
-            {filled.length} players · {filled.length >= 4 ? traitors : "–"} Traitors · 2 lives each · 12 days
+            {filled.length} players · {filled.length >= 4 ? traitors : "–"} Traitors · 12 days
           </Text>
         </View>
 
