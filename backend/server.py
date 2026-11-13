@@ -85,6 +85,10 @@ ACTIONS = [
     "Ask them to take a photo",
     "Take a selfie with them",
     "Get a photo of them with a sibling or parent",
+    "Put a note on their towel saying you have been murdered",
+    "Put a note through their door saying you have been murdered",
+    "Get them a coffee",
+    "Get them some cake",
 ]
 
 
