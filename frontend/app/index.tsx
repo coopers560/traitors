@@ -359,6 +359,26 @@ function PlayerRow({ p, index, showTurn, onPress, disabled }: { p: PublicPlayer;
   );
 }
 
+function MurderMethods({ game }: { game: ActiveGame }) {
+  const styles = useStyles();
+  // Methods are only sent by the server once the game has ended.
+  const murders = game.history.filter((h) => h.murder?.success && h.murder?.action);
+  if (!murders.length) return null;
+  return (
+    <View style={styles.methodsCard} testID="murder-methods">
+      <Text style={styles.methodsTitle}>How the murders were done</Text>
+      {murders.map((h) => (
+        <View key={h.day} style={styles.methodRow}>
+          <Text style={styles.methodDay}>Day {h.day}</Text>
+          <Text style={styles.methodText}>
+            <Text style={{ fontWeight: "700" }}>{h.murder.victim_name}</Text> — {h.murder.action}
+          </Text>
+        </View>
+      ))}
+    </View>
+  );
+}
+
 function EndedCard({ game }: { game: ActiveGame }) {
   const styles = useStyles();
   const { setCode } = useGameCode();
@@ -373,6 +393,7 @@ function EndedCard({ game }: { game: ActiveGame }) {
         {traitorsWin ? "The Traitors win" : "The Faithful win"}
       </Title>
       <Body>All roles are now revealed below. Well played, everyone.</Body>
+      <MurderMethods game={game} />
       <Button testID="share-finale-button" label="Share the finale" icon="share-social" onPress={() => router.push("/finale")} />
       <Button testID="ended-history-button" label="Day history" variant="secondary" icon="time-outline" onPress={() => router.push("/history")} />
       <Button testID="new-game-button" label="Start a new game" variant="ghost" icon="refresh" onPress={() => setConfirmNew(true)} />
@@ -452,6 +473,18 @@ function EndGameSheet({
 const useStyles = makeStyles((c) => ({
   root: { flex: 1, backgroundColor: c.surface },
   center: { flex: 1, backgroundColor: c.surface, alignItems: "center", justifyContent: "center" },
+  methodsCard: {
+    backgroundColor: c.surfaceTertiary,
+    borderRadius: radius.md,
+    padding: spacing.md,
+    gap: spacing.sm,
+    borderWidth: 1,
+    borderColor: c.brandTertiary,
+  },
+  methodsTitle: { color: c.brand, fontSize: 13, letterSpacing: 1.5, textTransform: "uppercase", fontWeight: "700" },
+  methodRow: { flexDirection: "row", gap: spacing.sm, alignItems: "flex-start" },
+  methodDay: { color: c.muted, fontSize: 13, fontWeight: "700", minWidth: 46 },
+  methodText: { color: c.onSurface, fontSize: 15, flex: 1, lineHeight: 21 },
   scrim: { flex: 1, backgroundColor: c.scrim },
   inviteSheet: {
     backgroundColor: c.surfaceSecondary,
