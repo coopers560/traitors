@@ -132,15 +132,17 @@ function Dashboard({ game, refreshing, onRefresh }: { game: ActiveGame; refreshi
   const [menu, setMenu] = useState(false);
   const [invite, setInvite] = useState(false);
   const [confirmEnd, setConfirmEnd] = useState(false);
+  const [confirmSkip, setConfirmSkip] = useState(false);
   const [endPin, setEndPin] = useState("");
   const [peekMode, setPeekMode] = useState(false);
   const [confirmLeave, setConfirmLeave] = useState(false);
   const { setCode } = useGameCode();
 
   const advance = useMutation({
-    mutationFn: () => api.advance(game.phase, game.day),
+    mutationFn: (force?: boolean) => api.advance(game.phase, game.day, force),
     onSuccess: (s) => {
       qc.setQueryData(["game"], s);
+      setConfirmSkip(false);
       if (s.exists && (s.phase === "banished" || s.phase === "reveal")) router.push("/reveal");
     },
   });
@@ -238,7 +240,12 @@ function Dashboard({ game, refreshing, onRefresh }: { game: ActiveGame; refreshi
             ) : phase === "day" ? (
               <Button testID="advance-round-table-button" label="Gather at the Round Table" icon="flame" loading={advance.isPending} onPress={() => advance.mutate()} />
             ) : phase === "roundtable" ? (
-              <Button testID="advance-reveal-button" label={allDone ? "Reveal the banishment" : "Waiting for votes…"} icon="mail-open" disabled={!allDone} loading={advance.isPending} onPress={() => advance.mutate()} />
+              <>
+                <Button testID="advance-reveal-button" label={allDone ? "Reveal the banishment" : "Waiting for votes…"} icon="mail-open" disabled={!allDone} loading={advance.isPending && allDone} onPress={() => advance.mutate()} />
+                {!allDone ? (
+                  <Button testID="advance-skip-missing-button" label="Someone missing? Skip & reveal" variant="ghost" icon="play-skip-forward-outline" onPress={() => setConfirmSkip(true)} />
+                ) : null}
+              </>
             ) : phase === "night" ? (
               <Button testID="advance-murder-button" label={allDone ? "Reveal the murder" : "Waiting for the night…"} icon="moon" disabled={!allDone} loading={advance.isPending} onPress={() => advance.mutate()} />
             ) : phase === "banished" ? (
@@ -280,6 +287,17 @@ function Dashboard({ game, refreshing, onRefresh }: { game: ActiveGame; refreshi
       </ScrollView>
 
       <InviteSheet visible={invite} code={game.code} onClose={() => setInvite(false)} />
+
+      <ConfirmSheet
+        visible={confirmSkip}
+        title="Skip missing players?"
+        message={`${game.turns_done} of ${game.turns_needed} have voted. The banishment will be decided on the votes cast so far — anyone who hasn't voted is skipped.`}
+        confirmLabel="Skip & reveal"
+        danger
+        loading={advance.isPending}
+        onConfirm={() => advance.mutate(true)}
+        onCancel={() => setConfirmSkip(false)}
+      />
 
       <EndGameSheet
         visible={confirmEnd}

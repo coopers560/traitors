@@ -451,7 +451,7 @@ async def take_turn(code: str, data: TurnIn):
 
 @api_router.post("/games/{code}/advance")
 @locked
-async def advance(code: str, expected: Optional[str] = None, expected_day: Optional[int] = None):
+async def advance(code: str, expected: Optional[str] = None, expected_day: Optional[int] = None, force: Optional[bool] = None):
     g = await require_game(code)
     # Several phones may tap the same button: only the first one moves the game on
     if (expected and expected != g.phase) or (expected_day and expected_day != g.day):
@@ -467,7 +467,12 @@ async def advance(code: str, expected: Optional[str] = None, expected_day: Optio
     elif g.phase == "roundtable":
         alive_ids = {p.id for p in g.alive()}
         if not alive_ids.issubset(set(g.turns_done)):
-            raise HTTPException(400, "Everyone must vote before the banishment")
+            # A player can be missing at the Round Table: `force` skips the stragglers
+            # and reveals the banishment on the votes cast so far (needs at least one).
+            if not force:
+                raise HTTPException(400, "Everyone must vote before the banishment")
+            if not g.votes:
+                raise HTTPException(400, "At least one player must vote before you can skip the rest")
         banish = resolve_banish(g)
         g.winner = winner_by_roles(g)  # a Traitor banished can end it before nightfall
         g.history.append({"day": g.day, "murder": None, "banish": banish, "winner": g.winner})
