@@ -286,8 +286,8 @@ def valid_victim(g: Game, pid: Optional[str]) -> Player:
 
 
 def target_traitors(n: int) -> int:
-    """About one Traitor for every six players (at least one)."""
-    return max(1, round(n / 6))
+    """One Traitor per six players, rounding up: 4-6 -> 1, 7-12 -> 2, 13-15 -> 3."""
+    return max(1, (n + 5) // 6)
 
 
 def recruitment_available(g: Game) -> bool:

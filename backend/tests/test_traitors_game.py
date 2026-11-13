@@ -120,7 +120,7 @@ class TestCreate:
         ps = mk_players(4); ps[0]["name"] = "  "
         assert S.post(f"{API}/games", json={"players": ps}).status_code == 400
 
-    @pytest.mark.parametrize("n,t", [(4, 1), (6, 1), (8, 1), (9, 2), (12, 2), (15, 2)])
+    @pytest.mark.parametrize("n,t", [(4, 1), (6, 1), (7, 2), (12, 2), (13, 3), (15, 3)])
     def test_traitor_counts(self, n, t):
         g, roles = setup_game(n)
         assert list(roles.values()).count("traitor") == t
@@ -365,7 +365,7 @@ class TestSkipMissing:
 
 class TestRecruit:
     def test_recruit_when_short(self):
-        g, roles = setup_game(13)
+        g, roles = setup_game(12)
         ps = g["players"]
         traitors = [p for p in ps if roles[p["id"]] == "traitor"]
         faithful = [p for p in ps if roles[p["id"]] == "faithful"]
