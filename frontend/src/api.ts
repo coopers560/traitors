@@ -75,6 +75,8 @@ export type PrivateView = {
   action?: string | null;
   action_choices?: string[];
   murder_confirmed?: boolean;
+  murder_done?: boolean;
+  planned_murder?: boolean;
   can_recruit?: boolean;
   recruit?: { id: string; name: string } | null;
 };
@@ -139,6 +141,7 @@ export type ModeratorView = {
     victim_name: string | null;
     action: string | null;
     murder_confirmed: boolean;
+    murder_done: boolean;
     recruit_id: string | null;
     recruit_name: string | null;
   } | null;

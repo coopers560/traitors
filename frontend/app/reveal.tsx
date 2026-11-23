@@ -6,7 +6,7 @@ import { ActivityIndicator, ScrollView, Text, View } from "react-native";
 import Animated, { FadeIn, FadeInDown, ZoomIn } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-import { api, DayResult } from "@/src/api";
+import { api, DayResult, Phase } from "@/src/api";
 import { ConfirmSheet } from "@/src/components/confirm-sheet";
 import { HelpButton } from "@/src/components/help-button";
 import { Backdrop, Body, Button, ErrorText, Eyebrow, IMAGES, Title } from "@/src/components/ui";
@@ -23,32 +23,39 @@ export default function Reveal() {
   // A 5-4-3-2-1 beat plays before the name is shown; we remember which step it finished on.
   const [revealedStep, setRevealedStep] = useState<number | null>(null);
   const [confirmFinish, setConfirmFinish] = useState(false);
+  // Freeze the reveal the moment it opens: the game keeps polling and another phone may
+  // move it on, but this screen must stay put so everyone can read it in their own time.
+  // Captured once, on the first render where the game data is available.
+  const [snap, setSnap] = useState<{ phase: Phase; day: number; result: DayResult } | null>(null);
+  if (!snap && data?.exists && data.history.length) {
+    setSnap({ phase: data.phase, day: data.day, result: data.history[data.history.length - 1] });
+  }
 
   const advance = useMutation({
-    mutationFn: () => api.advance(data?.exists ? data.phase : "reveal", data?.exists ? data.day : 0),
+    mutationFn: () => api.advance(snap?.phase ?? "banished", snap?.day ?? 0),
     onSuccess: (s) => {
       qc.setQueryData(["game"], s);
       router.dismissTo("/");
     },
   });
 
-  if (!data?.exists) {
+  if (!snap) {
     return (
       <View style={[styles.root, { alignItems: "center", justifyContent: "center" }]}>
         <ActivityIndicator color={colors.brand} />
       </View>
     );
   }
-  const result: DayResult | undefined = data.history[data.history.length - 1];
-  if (!result) return null;
+  const result: DayResult = snap.result;
 
-  // The banishment and the murder are now revealed in two separate visits:
-  // "banished" after the Round Table, "reveal" after the night.
-  const isBanish = data.phase === "banished";
-  const isMurder = data.phase === "reveal";
+  // The reveal is frozen on open: the Round Table shows the murder then the banishment.
+  const isBanish = snap.phase === "banished";
+  const isMurder = snap.phase === "reveal";
   const inFlow = isBanish || isMurder;
+  // The Round Table reveal now shows the murder first (carried out in plain sight), then
+  // the banishment — all at the table, in their own time.
   const steps = isBanish
-    ? ["intro", "banish", ...(result.winner ? ["winner"] : [])]
+    ? ["intro", ...(result.murder ? ["murder"] : []), "banish", ...(result.winner ? ["winner"] : [])]
     : isMurder
       ? ["intro", "murder", ...(result.winner ? ["winner"] : [])]
       : ["banish", ...(result.murder ? ["murder"] : []), ...(result.winner ? ["winner"] : [])];
@@ -79,9 +86,9 @@ export default function Reveal() {
       <HelpButton from="reveal" testID="reveal-help-button" style={{ position: "absolute", top: insets.top + spacing.sm, right: spacing.md, zIndex: 1 }} />
       <ScrollView contentContainerStyle={[styles.scroll, { paddingTop: insets.top + spacing.xl, paddingBottom: insets.bottom + spacing.lg }]}>
         <View style={{ flex: 1, justifyContent: "center", gap: spacing.lg }}>
-          {current === "intro" ? <Intro day={result.day} kind={isBanish ? "banish" : "murder"} /> : null}
+          {current === "intro" ? <Intro day={result.day} kind={isBanish ? "roundtable" : "murder"} /> : null}
           {counting ? (
-            <Countdown kind={isBanish ? "banish" : "murder"} onDone={() => setRevealedStep(step)} />
+            <Countdown kind={current === "banish" ? "banish" : "murder"} onDone={() => setRevealedStep(step)} />
           ) : (
             <>
               {current === "murder" ? <Murder r={result} /> : null}
@@ -152,20 +159,20 @@ function Countdown({ kind, onDone }: { kind: "banish" | "murder"; onDone: () => 
   );
 }
 
-function Intro({ day, kind }: { day: number; kind: "banish" | "murder" }) {
+function Intro({ day, kind }: { day: number; kind: "roundtable" | "murder" }) {
   return (
     <Animated.View entering={FadeIn.duration(1200)} style={{ gap: spacing.md }} testID="reveal-intro">
-      {kind === "banish" ? (
+      {kind === "roundtable" ? (
         <>
           <Eyebrow>The end of Day {day}</Eyebrow>
-          <Title style={{ fontSize: 52, lineHeight: 56 }}>The Round Table has spoken…</Title>
-          <Body>Gather everyone round. First, we learn who the table has banished.</Body>
+          <Title style={{ fontSize: 52, lineHeight: 56 }}>The Round Table gathers…</Title>
+          <Body>Take your time. First, did the Traitors strike today? Then, who the table has banished.</Body>
         </>
       ) : (
         <>
-          <Eyebrow>Night falls on Day {day}</Eyebrow>
+          <Eyebrow>Day {day}</Eyebrow>
           <Title style={{ fontSize: 52, lineHeight: 56 }}>The candles flicker…</Title>
-          <Body>While the castle slept, did the Traitors strike?</Body>
+          <Body>Did the Traitors strike today, in plain sight?</Body>
         </>
       )}
     </Animated.View>

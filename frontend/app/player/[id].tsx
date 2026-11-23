@@ -347,8 +347,8 @@ function NightTurn({ view, pin, players, onSealed }: { view: PrivateView; pin: s
       ) : (
         <>
           <Body>
-            Now the Round Table is done, choose who the Traitors murder tonight — you&apos;ll then pick from three secret
-            actions. Or lie low and spare everyone.
+            The day begins. Choose who the Traitors will murder in plain sight today — you&apos;ll then pick from three
+            secret actions to carry out before the Round Table. Or lie low and spare everyone.
           </Body>
           <VictimPicker label={`Tonight's victim · Day ${view.day}`} prefix="night-victim" players={candidates} selected={target} onSelect={setTarget} />
           <ErrorText testID="turn-error" message={pickVictim.error?.message || pass.error?.message} />
@@ -369,7 +369,7 @@ function SetupTurn({ view, pin, onSealed }: { view: PrivateView; pin: string; on
     <>
       {view.role === "traitor" ? (
         <Body testID="setup-traitor-note">
-          Remember your fellow Traitors. You&apos;ll choose who to murder after the first Round Table — not before.
+          Remember your fellow Traitors. Each day you&apos;ll choose a victim at night, carry out the murder in plain sight during the day, then confirm it at the Round Table.
         </Body>
       ) : (
         <FaithfulBrief view={view} />
@@ -381,25 +381,47 @@ function SetupTurn({ view, pin, onSealed }: { view: PrivateView; pin: string; on
 }
 
 function RoundTableTurn({ view, pin, players, onSealed }: { view: PrivateView; pin: string; players: PublicPlayer[]; onSealed: () => void }) {
+  const styles = useStyles();
+  const { colors } = useTheme();
+  const planned = view.role === "traitor" && !!view.planned_murder;
   const [vote, setVote] = useState<string | null>(view.my_vote_id);
+  const [carried, setCarried] = useState<boolean | null>(view.murder_done ? true : null);
+  const murderDone = planned ? carried ?? false : undefined;
   const banish = useMutation({
-    mutationFn: () => api.takeTurn({ player_id: view.player_id, pin, vote_target_id: vote ?? undefined }),
+    mutationFn: () => api.takeTurn({ player_id: view.player_id, pin, vote_target_id: vote ?? undefined, murder_done: murderDone }),
     onSuccess: onSealed,
   });
   const end = useMutation({
-    mutationFn: () => api.takeTurn({ player_id: view.player_id, pin, end_vote: true }),
+    mutationFn: () => api.takeTurn({ player_id: view.player_id, pin, end_vote: true, murder_done: murderDone }),
     onSuccess: onSealed,
   });
+  const needCarried = planned && carried === null;
   return (
     <>
+      {planned ? (
+        <View style={styles.carriedCard} testID="carried-card">
+          <Eyebrow style={{ color: colors.traitor }}>Your murder in plain sight</Eyebrow>
+          <Text style={styles.carriedVictim} testID="carried-victim">{view.target?.name}</Text>
+          <Text style={styles.carriedAction}>{view.action}</Text>
+          <Text style={styles.carriedQ}>Did you carry it out — in plain sight, without being caught?</Text>
+          <View style={{ flexDirection: "row", gap: spacing.sm }}>
+            <Pressable testID="carried-yes" onPress={() => setCarried(true)} style={[styles.pick, { flex: 1, justifyContent: "center" }, carried === true && styles.pickOn]}>
+              <Text style={[styles.pickText, carried === true && { color: colors.onBrandPrimary }]}>Yes — it&apos;s done</Text>
+            </Pressable>
+            <Pressable testID="carried-no" onPress={() => setCarried(false)} style={[styles.pick, { flex: 1, justifyContent: "center" }, carried === false && styles.pickOn]}>
+              <Text style={[styles.pickText, carried === false && { color: colors.onBrandPrimary }]}>No — I couldn&apos;t</Text>
+            </Pressable>
+          </View>
+        </View>
+      ) : null}
       {view.endgame ? (
         <Body>Few of you remain. Vote to banish one more player, or vote to end the game now. If everyone votes to end and a Traitor is still among you, the Traitors win.</Body>
       ) : null}
       <VictimPicker label="Who do you vote to banish?" prefix="vote-option" players={players} selected={vote} onSelect={setVote} excludeId={view.player_id} />
       <ErrorText testID="turn-error" message={banish.error?.message || end.error?.message} />
-      <Button testID="vote-submit-button" label="Seal my vote to banish" icon="lock-closed" disabled={!vote} loading={banish.isPending} onPress={() => banish.mutate()} />
+      <Button testID="vote-submit-button" label="Seal my vote to banish" icon="lock-closed" disabled={!vote || needCarried} loading={banish.isPending} onPress={() => banish.mutate()} />
       {view.endgame ? (
-        <Button testID="vote-end-button" label="Vote to end the game" variant="secondary" icon="flag" loading={end.isPending} onPress={() => end.mutate()} />
+        <Button testID="vote-end-button" label="Vote to end the game" variant="secondary" icon="flag" disabled={needCarried} loading={end.isPending} onPress={() => end.mutate()} />
       ) : null}
     </>
   );
@@ -459,4 +481,8 @@ const useStyles = makeStyles((c) => ({
   rememberSub: { color: c.muted, fontSize: 13, lineHeight: 18, marginTop: 1 },
   rememberOn: { flexDirection: "row", alignItems: "center", gap: spacing.sm, paddingVertical: spacing.xs },
   rememberOnText: { color: c.onSurfaceTertiary, fontSize: 14, flex: 1 },
+  carriedCard: { gap: spacing.sm, padding: spacing.lg, borderRadius: radius.lg, backgroundColor: c.surfaceSecondary, borderWidth: 1, borderColor: c.traitor },
+  carriedVictim: { fontFamily: fonts.display, fontSize: 34, lineHeight: 38, color: c.onSurface },
+  carriedAction: { fontFamily: fonts.displaySemi, fontSize: 22, lineHeight: 26, color: c.brand },
+  carriedQ: { color: c.onSurfaceSecondary, fontSize: 16, lineHeight: 22, marginTop: spacing.xs },
 }));

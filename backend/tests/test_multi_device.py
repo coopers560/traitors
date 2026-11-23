@@ -25,14 +25,18 @@ def roles_now():
 
 
 def vote_all():
-    # Banish a Faithful (not the Traitor) so a single-elimination game keeps going.
+    # Banish a Faithful (not the Traitor) so a single-elimination game keeps going. The
+    # Traitor also confirms the planned murder was carried out, so it lands at the reveal.
     r = roles_now()
     g = state()
     alive = [p for p in g["players"] if p["alive"]]
     target = next(p for p in alive if r[p["id"]] == "faithful")
     for p in alive:
         vt = target["id"] if p["id"] != target["id"] else next(x["id"] for x in alive if x["id"] != p["id"])
-        assert S.post(f"{G()}/turn", json={"player_id": p["id"], "pin": pin_of(p["name"]), "vote_target_id": vt}).status_code == 200
+        body = {"player_id": p["id"], "pin": pin_of(p["name"]), "vote_target_id": vt}
+        if r[p["id"]] == "traitor":
+            body["murder_done"] = True
+        assert S.post(f"{G()}/turn", json=body).status_code == 200
 
 
 def night_all():
@@ -76,20 +80,13 @@ class TestAdvanceExpected:
         assert s["phase"] == "night" and s["turns_done"] == 0
 
     def test_night_double_tap(self):
-        night_all()
+        night_all()  # the Traitors plan their murder; nothing is revealed at night now
         a = adv("night")
-        assert a.status_code == 200 and a.json()["phase"] == "reveal"
-        hist_len = len(a.json()["history"])
+        assert a.status_code == 200 and a.json()["phase"] == "roundtable"
         b = adv("night")
-        assert b.json()["phase"] == "reveal" and len(b.json()["history"]) == hist_len == 1
-
-    def test_reveal_advances_to_roundtable(self):
-        a = adv("reveal")
-        assert a.json()["phase"] == "roundtable"
-        b = adv("reveal")  # second phone, same button
-        assert b.json()["phase"] == "roundtable"
+        assert b.json()["phase"] == "roundtable" and len(b.json()["history"]) == 0
         s = state()
-        assert s["phase"] == "roundtable" and s["turns_done"] == 0 and len(s["history"]) == 1
+        assert s["phase"] == "roundtable" and s["turns_done"] == 0
 
     def test_roundtable_double_tap(self):
         vote_all()
