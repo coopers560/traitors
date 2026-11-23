@@ -78,7 +78,7 @@ const SECTIONS: Section[] = [
       ["Night (first)", "tap your name once — the Traitors secretly pick their victim and method. Then Gather at the Round Table."],
       ["During the day", "the Traitors carry out the murder in plain sight. Watch closely."],
       ["Round Table (evening)", "everyone taps their name and votes; the Traitors confirm the kill. Then Reveal the Round Table — the murder is shown first, then the banishment."],
-      ["Someone missing for the vote?", "Skip & reveal counts the votes cast so far."],
+      ["Everyone must check in", "the reveal stays locked until every player still in has voted — a missing vote could give the Traitors away."],
       ["Take your time", "the reveal stays put — everyone can look before you Begin the next day."],
     ],
   },
