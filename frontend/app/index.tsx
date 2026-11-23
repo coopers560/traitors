@@ -90,6 +90,7 @@ function Welcome({ gone }: { gone: boolean }) {
             variant="ghost"
             icon="help-circle-outline"
             onPress={() => router.push({ pathname: "/help", params: { from: "welcome" } })}
+            onLongPress={() => router.push("/moderator")}
           />
         </Animated.View>
       </View>

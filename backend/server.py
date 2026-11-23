@@ -41,6 +41,11 @@ ENDGAME_AT = 4  # at this many (or fewer) remain, each round is a "banish again 
 CODE_CHARS = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"  # no 0/O, 1/I/L mix-ups
 CODE_LEN = 5
 
+# The moderator ("Claudia") god-view passphrase. Kept out of the app bundle and
+# checked only here on the server, so players can't see it in the frontend JS.
+# Override it in deployment by setting MODERATOR_PASSPHRASE; this is the default.
+MODERATOR_PASSPHRASE = os.environ.get("MODERATOR_PASSPHRASE", "!Uganda02!")
+
 # Simple, family friendly "murders in plain sight" — subtle holiday small talk
 # and gestures that look completely natural around a resort or by the pool.
 ACTIONS = [
@@ -174,6 +179,10 @@ class AuthIn(BaseModel):
     pin: str
 
 
+class ModeratorIn(BaseModel):
+    passphrase: str
+
+
 class TurnIn(AuthIn):
     vote_target_id: Optional[str] = None
     end_vote: Optional[bool] = None  # endgame: vote to end the game instead of banishing
@@ -272,6 +281,87 @@ def _public_history(h: dict, reveal_actions: bool = False) -> dict:
     else:
         pub = {k: v for k, v in m.items() if k != "action"}  # keep the method secret during play
     return {**h, "murder": pub}
+
+
+def check_moderator(passphrase: Optional[str]):
+    """Gate the god-view. Constant-time compare so the passphrase can't be timed out."""
+    import hmac
+    if not passphrase or not hmac.compare_digest(passphrase, MODERATOR_PASSPHRASE):
+        raise HTTPException(403, "Wrong moderator passphrase")
+
+
+STAGE_LABEL = {
+    "setup": "The Gathering — roles being revealed",
+    "day": "Daytime — the holiday goes on",
+    "roundtable": "The Round Table — voting to banish",
+    "banished": "The banishment is being revealed",
+    "night": "Night — the Traitors are choosing",
+    "reveal": "The morning after — the murder is being revealed",
+    "ended": "The game is over",
+}
+
+
+def moderator_state(g: Game) -> dict:
+    """The full 'Claudia' god-view: every secret laid bare. Never sent to players."""
+    alive = g.alive()
+    traitors_alive = [p for p in alive if p.role == "traitor"]
+    faithful_alive = [p for p in alive if p.role == "faithful"]
+    outstanding = [p.name for p in (g.players if g.phase == "setup" else alive) if p.id not in g.turns_done]
+
+    tonight = None
+    if g.phase in ("night", "reveal"):
+        tonight = {
+            "victim_id": g.target_id,
+            "victim_name": name_of(g, g.target_id),
+            "action": g.action,  # the secret method, shown to the moderator only
+            "murder_confirmed": g.murder_confirmed,
+            "recruit_id": g.recruit_id,
+            "recruit_name": name_of(g, g.recruit_id),
+        }
+
+    # Who has voted for whom so far at the Round Table (live, as votes land).
+    votes = [
+        {"voter_id": vid, "voter_name": name_of(g, vid), "target_id": tid, "target_name": name_of(g, tid)}
+        for vid, tid in g.votes.items()
+    ]
+    end_votes = [name_of(g, pid) for pid in g.end_votes]
+
+    return {
+        "exists": True,
+        "code": g.code,
+        "day": g.day,
+        "total_days": TOTAL_DAYS,
+        "phase": g.phase,
+        "stage": STAGE_LABEL.get(g.phase, g.phase),
+        "endgame": in_endgame(g),
+        "winner": g.winner,
+        "host_id": g.host_id,
+        "host_name": name_of(g, g.host_id),
+        "counts": {
+            "alive": len(alive),
+            "out": len(g.players) - len(alive),
+            "traitors_alive": len(traitors_alive),
+            "faithful_alive": len(faithful_alive),
+        },
+        "players": [
+            {
+                "id": p.id,
+                "name": p.name,
+                "role": p.role,  # the real role — always, for every player
+                "lives": p.lives,
+                "alive": p.lives > 0,
+                "turn_done": p.id in g.turns_done,
+                "is_host": p.id == g.host_id,
+            }
+            for p in g.players
+        ],
+        "turns_done": len(g.turns_done),
+        "turns_needed": len(g.players) if g.phase == "setup" else len(alive),
+        "outstanding": outstanding,
+        "tonight": tonight,
+        "round_table": {"votes": votes, "end_votes": end_votes},
+        "history": g.history,  # the full record, murder methods included
+    }
 
 
 def auth(g: Game, data: AuthIn) -> Player:
@@ -404,6 +494,20 @@ async def reset_actions(code: str):
     g.actions = list(ACTIONS)
     await save(g)
     return actions_out(g)
+
+
+@api_router.post("/moderator/unlock")
+async def moderator_unlock(data: ModeratorIn):
+    """Check the moderator passphrase alone, so the view can gate before a code is entered."""
+    check_moderator(data.passphrase)
+    return {"ok": True}
+
+
+@api_router.post("/games/{code}/moderator")
+async def moderator_view(code: str, data: ModeratorIn):
+    """The god-view for one game. Passphrase-gated; reveals every role and secret."""
+    check_moderator(data.passphrase)
+    return moderator_state(await require_game(code))
 
 
 @api_router.get("/games/{code}")

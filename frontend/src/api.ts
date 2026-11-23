@@ -78,6 +78,45 @@ export type PrivateView = {
   recruit?: { id: string; name: string } | null;
 };
 
+export type ModeratorView = {
+  exists: true;
+  code: string;
+  day: number;
+  total_days: number;
+  phase: Phase;
+  stage: string;
+  endgame: boolean;
+  winner: "faithful" | "traitors" | null;
+  host_id: string | null;
+  host_name: string | null;
+  counts: { alive: number; out: number; traitors_alive: number; faithful_alive: number };
+  players: {
+    id: string;
+    name: string;
+    role: Role;
+    lives: number;
+    alive: boolean;
+    turn_done: boolean;
+    is_host: boolean;
+  }[];
+  turns_done: number;
+  turns_needed: number;
+  outstanding: string[];
+  tonight: {
+    victim_id: string | null;
+    victim_name: string | null;
+    action: string | null;
+    murder_confirmed: boolean;
+    recruit_id: string | null;
+    recruit_name: string | null;
+  } | null;
+  round_table: {
+    votes: { voter_id: string; voter_name: string | null; target_id: string; target_name: string | null }[];
+    end_votes: (string | null)[];
+  };
+  history: DayResult[];
+};
+
 async function request<T>(path: string, method = "GET", body?: unknown): Promise<T> {
   const res = await fetch(`${BASE}${path}`, {
     method,
@@ -136,6 +175,9 @@ export const api = {
   }) => request<PrivateView>(`/games/${currentCode}/turn`, "POST", body),
   advance: (expected: Phase, day: number, force?: boolean) =>
     request<GameState>(`/games/${currentCode}/advance?expected=${expected}&expected_day=${day}${force ? "&force=true" : ""}`, "POST"),
+  moderatorUnlock: (passphrase: string) => request<{ ok: boolean }>("/moderator/unlock", "POST", { passphrase }),
+  moderatorView: (code: string, passphrase: string) =>
+    request<ModeratorView>(`/games/${encodeURIComponent(code.trim().toUpperCase())}/moderator`, "POST", { passphrase }),
   getActions: () => request<ActionList>(`/games/${currentCode}/actions`),
   saveActions: (actions: string[]) => request<ActionList>(`/games/${currentCode}/actions`, "PUT", { actions }),
   resetActions: () => request<ActionList>(`/games/${currentCode}/actions`, "DELETE"),
