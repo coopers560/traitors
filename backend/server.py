@@ -132,6 +132,9 @@ class Game(BaseModel):
     next_action: Optional[str] = None
     used_actions: List[str] = []
     history: List[dict] = []
+    # Who voted for whom at each Round Table — kept for the moderator only and never
+    # put in the public history, so secret ballots stay secret to the players.
+    vote_log: List[dict] = []
     winner: Optional[str] = None
     created_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
 
@@ -301,12 +304,57 @@ STAGE_LABEL = {
 }
 
 
+def snapshot_votes(g: Game) -> dict:
+    """Freeze who voted for whom this Round Table, for the moderator-only vote log."""
+    return {
+        "day": g.day,
+        "votes": [
+            {"voter_id": vid, "voter_name": name_of(g, vid), "target_id": tid, "target_name": name_of(g, tid)}
+            for vid, tid in g.votes.items()
+        ],
+        "end_votes": [name_of(g, pid) for pid in g.end_votes],
+    }
+
+
+def _next_step(g: Game) -> str:
+    """A plain hint of what the host does next on the main app, to narrate the room."""
+    alive_done = {p.id for p in g.alive()}.issubset(set(g.turns_done))
+    all_seen = len(g.turns_done) >= len(g.players)
+    return {
+        "setup": "Everyone sees their role, then start Day 1." if all_seen else "Pass the phone round so each player sees their role.",
+        "day": "Gather for the final vote." if in_endgame(g) else "Gather everyone at the Round Table.",
+        "roundtable": "Reveal the banishment." if alive_done else "Waiting for the last votes — or skip missing players.",
+        "banished": "Show the banishment, then night falls." if not g.winner else "Show the banishment — the game is won.",
+        "night": "Reveal the murder." if alive_done else "Waiting for everyone to take their night turn.",
+        "reveal": "Open the envelope, then begin the next day." if not g.winner else "Open the envelope — the game is won.",
+        "ended": "The game is over.",
+    }.get(g.phase, "")
+
+
+def _win_note(g: Game) -> str:
+    """How each side wins from here, given who's left."""
+    if g.winner:
+        return "The Traitors have won." if g.winner == "traitors" else "The Faithful have won."
+    t = sum(1 for p in g.alive() if p.role == "traitor")
+    f = sum(1 for p in g.alive() if p.role == "faithful")
+    if t == 0:
+        return "No Traitors remain — the Faithful win at the next reveal."
+    need = max(0, f - t)  # Faithful to remove for the Traitors to reach parity
+    faithful_part = f"Faithful win by banishing the {t} remaining Traitor{'s' if t != 1 else ''}."
+    if need == 0:
+        traitor_part = "Traitors are already at parity — they win at the next reveal."
+    else:
+        traitor_part = f"Traitors win by reaching {t} v {t} ({need} more Faithful out) or surviving to Day {TOTAL_DAYS}."
+    return f"{faithful_part} {traitor_part}"
+
+
 def moderator_state(g: Game) -> dict:
     """The full 'Claudia' god-view: every secret laid bare. Never sent to players."""
     alive = g.alive()
     traitors_alive = [p for p in alive if p.role == "traitor"]
     faithful_alive = [p for p in alive if p.role == "faithful"]
-    outstanding = [p.name for p in (g.players if g.phase == "setup" else alive) if p.id not in g.turns_done]
+    turn_pool = g.players if g.phase == "setup" else alive
+    outstanding = [p.name for p in turn_pool if p.id not in g.turns_done]
 
     tonight = None
     if g.phase in ("night", "reveal"):
@@ -319,12 +367,22 @@ def moderator_state(g: Game) -> dict:
             "recruit_name": name_of(g, g.recruit_id),
         }
 
-    # Who has voted for whom so far at the Round Table (live, as votes land).
-    votes = [
-        {"voter_id": vid, "voter_name": name_of(g, vid), "target_id": tid, "target_name": name_of(g, tid)}
-        for vid, tid in g.votes.items()
-    ]
-    end_votes = [name_of(g, pid) for pid in g.end_votes]
+    # Live Round Table: individual ballots, a running tally, who hasn't voted, end-game votes.
+    round_table = None
+    if g.phase == "roundtable":
+        tally = Counter(tid for tid in g.votes.values())
+        voted_ids = set(g.votes.keys()) | set(g.end_votes)
+        round_table = {
+            "votes": [
+                {"voter_id": vid, "voter_name": name_of(g, vid), "target_id": tid, "target_name": name_of(g, tid)}
+                for vid, tid in g.votes.items()
+            ],
+            "tally": [
+                {"target_id": tid, "name": name_of(g, tid), "votes": n} for tid, n in tally.most_common()
+            ],
+            "end_votes": [name_of(g, pid) for pid in g.end_votes],
+            "not_voted": [p.name for p in alive if p.id not in voted_ids],
+        }
 
     return {
         "exists": True,
@@ -333,15 +391,19 @@ def moderator_state(g: Game) -> dict:
         "total_days": TOTAL_DAYS,
         "phase": g.phase,
         "stage": STAGE_LABEL.get(g.phase, g.phase),
+        "next_step": _next_step(g),
+        "win_note": _win_note(g),
         "endgame": in_endgame(g),
         "winner": g.winner,
         "host_id": g.host_id,
         "host_name": name_of(g, g.host_id),
         "counts": {
+            "total": len(g.players),
             "alive": len(alive),
             "out": len(g.players) - len(alive),
             "traitors_alive": len(traitors_alive),
             "faithful_alive": len(faithful_alive),
+            "traitors_total": sum(1 for p in g.players if p.role == "traitor"),
         },
         "players": [
             {
@@ -352,14 +414,16 @@ def moderator_state(g: Game) -> dict:
                 "alive": p.lives > 0,
                 "turn_done": p.id in g.turns_done,
                 "is_host": p.id == g.host_id,
+                "fellow_traitors": [x.name for x in g.players if x.role == "traitor" and x.id != p.id] if p.role == "traitor" else [],
             }
             for p in g.players
         ],
         "turns_done": len(g.turns_done),
-        "turns_needed": len(g.players) if g.phase == "setup" else len(alive),
+        "turns_needed": len(turn_pool),
         "outstanding": outstanding,
         "tonight": tonight,
-        "round_table": {"votes": votes, "end_votes": end_votes},
+        "round_table": round_table,
+        "vote_log": g.vote_log,  # moderator-only: who voted for whom, each past Round Table
         "history": g.history,  # the full record, murder methods included
     }
 
@@ -685,6 +749,7 @@ async def advance(code: str, expected: Optional[str] = None, expected_day: Optio
                 raise HTTPException(400, "Everyone must vote before the banishment")
             if not g.votes and not g.end_votes:
                 raise HTTPException(400, "At least one player must vote before you can skip the rest")
+        g.vote_log.append(snapshot_votes(g))  # moderator-only record of who voted for whom
         if in_endgame(g) and len(g.end_votes) == len(g.alive()):
             # Everyone voted to end the game: a Traitor still in means the Traitors win.
             g.winner = "traitors" if any(p.role == "traitor" for p in g.alive()) else "faithful"
