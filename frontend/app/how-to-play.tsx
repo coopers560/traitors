@@ -27,7 +27,7 @@ const STEPS: { icon: React.ComponentProps<typeof Ionicons>["name"]; title: strin
   {
     icon: "flame",
     title: "4. The Round Table (evening)",
-    body: "The Traitors confirm whether they pulled it off. Then everyone gathers: first the app reveals who was murdered (the method stays secret), then you discuss, accuse, and vote in private to banish someone. Most votes is out; a tie banishes nobody. One hit, a banishment or a murder, and you are out.",
+    body: "Everyone checks in on their phone — the Traitors also confirm, in secret, whether they pulled it off. Then the app reveals who was murdered (the method stays secret). Only then do you discuss, accuse, and vote in private to banish someone. Most votes is out; a tie banishes nobody. One hit, a banishment or a murder, and you are out.",
   },
   {
     icon: "trophy",

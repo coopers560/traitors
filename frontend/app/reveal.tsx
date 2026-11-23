@@ -52,10 +52,10 @@ export default function Reveal() {
   const isBanish = snap.phase === "banished";
   const isMurder = snap.phase === "reveal";
   const inFlow = isBanish || isMurder;
-  // The Round Table reveal now shows the murder first (carried out in plain sight), then
-  // the banishment — all at the table, in their own time.
+  // Two reveals a day: the murder ("reveal", before anyone votes), then the banishment
+  // ("banished", after the vote). Each is frozen on open so everyone can take their time.
   const steps = isBanish
-    ? ["intro", ...(result.murder ? ["murder"] : []), "banish", ...(result.winner ? ["winner"] : [])]
+    ? ["intro", "banish", ...(result.winner ? ["winner"] : [])]
     : isMurder
       ? ["intro", "murder", ...(result.winner ? ["winner"] : [])]
       : ["banish", ...(result.murder ? ["murder"] : []), ...(result.winner ? ["winner"] : [])];
@@ -67,7 +67,7 @@ export default function Reveal() {
       : `Begin Day ${result.day + 1}`
     : result.winner
       ? "See all the roles"
-      : "Gather at the Round Table";
+      : "On to the vote";
 
   // A dramatic countdown gates the actual name on the banishment/murder step.
   const current = steps[step];
@@ -86,7 +86,7 @@ export default function Reveal() {
       <HelpButton from="reveal" testID="reveal-help-button" style={{ position: "absolute", top: insets.top + spacing.sm, right: spacing.md, zIndex: 1 }} />
       <ScrollView contentContainerStyle={[styles.scroll, { paddingTop: insets.top + spacing.xl, paddingBottom: insets.bottom + spacing.lg }]}>
         <View style={{ flex: 1, justifyContent: "center", gap: spacing.lg }}>
-          {current === "intro" ? <Intro day={result.day} kind={isBanish ? "roundtable" : "murder"} /> : null}
+          {current === "intro" ? <Intro day={result.day} kind={isBanish ? "banish" : "murder"} /> : null}
           {counting ? (
             <Countdown kind={current === "banish" ? "banish" : "murder"} onDone={() => setRevealedStep(step)} />
           ) : (
@@ -119,7 +119,7 @@ export default function Reveal() {
 
       <ConfirmSheet
         visible={confirmFinish}
-        title={isBanish ? `Begin Day ${result.day + 1}?` : "Gather at the Round Table?"}
+        title={isBanish ? `Begin Day ${result.day + 1}?` : "Start the vote?"}
         message="This moves the game on for everyone. Make sure the whole group has seen the reveal — you can't come back to this screen."
         confirmLabel={finishLabel}
         loading={advance.isPending}
@@ -159,20 +159,20 @@ function Countdown({ kind, onDone }: { kind: "banish" | "murder"; onDone: () => 
   );
 }
 
-function Intro({ day, kind }: { day: number; kind: "roundtable" | "murder" }) {
+function Intro({ day, kind }: { day: number; kind: "banish" | "murder" }) {
   return (
     <Animated.View entering={FadeIn.duration(1200)} style={{ gap: spacing.md }} testID="reveal-intro">
-      {kind === "roundtable" ? (
+      {kind === "banish" ? (
         <>
           <Eyebrow>The end of Day {day}</Eyebrow>
-          <Title style={{ fontSize: 52, lineHeight: 56 }}>The Round Table gathers…</Title>
-          <Body>Take your time. First, did the Traitors strike today? Then, who the table has banished.</Body>
+          <Title style={{ fontSize: 52, lineHeight: 56 }}>The Round Table has spoken…</Title>
+          <Body>Take your time. Here is who the table has banished — and how everyone voted.</Body>
         </>
       ) : (
         <>
           <Eyebrow>Day {day}</Eyebrow>
           <Title style={{ fontSize: 52, lineHeight: 56 }}>The candles flicker…</Title>
-          <Body>Did the Traitors strike today, in plain sight?</Body>
+          <Body>Before anyone votes: did the Traitors strike today, in plain sight?</Body>
         </>
       )}
     </Animated.View>
