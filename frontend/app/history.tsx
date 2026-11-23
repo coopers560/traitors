@@ -17,7 +17,7 @@ export default function History() {
 
   return (
     <View style={styles.root} testID="history-screen">
-      <ScreenHeader title="Day history" testID="history" />
+      <ScreenHeader title="Day history" testID="history" help="history" />
       <ScrollView contentContainerStyle={[styles.scroll, { paddingBottom: insets.bottom + spacing.lg }]}>
         <View style={{ gap: spacing.sm }}>
           <Eyebrow>The castle records</Eyebrow>

@@ -7,6 +7,7 @@ import Animated, { FadeIn, FadeInDown } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { api, PrivateView, PublicPlayer } from "@/src/api";
+import { HelpButton } from "@/src/components/help-button";
 import { PinPad } from "@/src/components/pin-pad";
 import { Backdrop, Body, Button, ErrorText, Eyebrow, IMAGES, Title } from "@/src/components/ui";
 import { fonts, makeStyles, radius, spacing, useTheme } from "@/src/theme";
@@ -51,6 +52,7 @@ export default function PlayerTurn() {
     <View style={styles.root} testID="player-screen">
       <Backdrop image={bg} strong={!!view} />
       <View style={[styles.header, { paddingTop: insets.top + spacing.sm }]}>
+        <HelpButton from="player" testID="player-help-button" />
         <Pressable testID="player-close-button" onPress={leave} style={styles.iconBtn} hitSlop={8}>
           <Ionicons name="close" size={26} color={colors.onSurface} />
         </Pressable>
@@ -392,7 +394,7 @@ function Sealed({ onDone }: { onDone: () => void }) {
 
 const useStyles = makeStyles((c) => ({
   root: { flex: 1, backgroundColor: c.surface },
-  header: { paddingHorizontal: spacing.md, flexDirection: "row", justifyContent: "flex-end" },
+  header: { paddingHorizontal: spacing.md, flexDirection: "row", justifyContent: "space-between" },
   iconBtn: { width: 48, height: 48, borderRadius: radius.pill, alignItems: "center", justifyContent: "center", backgroundColor: c.surfaceSecondary },
   pinWrap: { flex: 1, justifyContent: "space-evenly", alignItems: "center", paddingHorizontal: spacing.lg, gap: spacing.md },
   scroll: { padding: spacing.lg, gap: spacing.lg },

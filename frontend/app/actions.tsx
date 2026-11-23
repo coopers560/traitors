@@ -73,7 +73,7 @@ export default function Actions() {
   if (!unlocked) {
     return (
       <View style={styles.root} testID="actions-screen">
-        <ScreenHeader title="Secret actions" testID="actions" />
+        <ScreenHeader title="Secret actions" testID="actions" help="actions" />
         <View style={[styles.gate, { paddingBottom: insets.bottom + spacing.lg }]}>
           {me && me.role !== "traitor" ? (
             <View style={styles.deny} testID="actions-denied">
@@ -114,7 +114,7 @@ export default function Actions() {
   // ---- Unlocked (Traitor): the editable list ----
   return (
     <View style={styles.root} testID="actions-screen">
-      <ScreenHeader title="Secret actions" testID="actions" />
+      <ScreenHeader title="Secret actions" testID="actions" help="actions" />
       {isLoading ? (
         <ActivityIndicator color={colors.brand} style={{ marginTop: spacing.xl }} />
       ) : (

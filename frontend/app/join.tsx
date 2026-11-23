@@ -44,7 +44,7 @@ export default function Join() {
 
   return (
     <View style={styles.root} testID="join-screen">
-      <ScreenHeader title="Join a game" testID="join" />
+      <ScreenHeader title="Join a game" testID="join" help="join" />
       <KeyboardAwareScrollView bottomOffset={24} keyboardShouldPersistTaps="handled" contentContainerStyle={[styles.scroll, { paddingBottom: insets.bottom + spacing.lg }]}>
         <View style={{ gap: spacing.sm }}>
           <Eyebrow>Already started on another phone?</Eyebrow>

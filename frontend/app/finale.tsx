@@ -22,7 +22,7 @@ export default function Finale() {
   if (data.phase !== "ended") {
     return (
       <View style={styles.root} testID="finale-screen">
-        <ScreenHeader title="Share the finale" testID="finale" />
+        <ScreenHeader title="Share the finale" testID="finale" help="finale" />
         <Text style={[styles.info, { margin: spacing.lg }]} testID="finale-not-ended">The finale picture is ready once the game is over.</Text>
       </View>
     );
@@ -52,7 +52,7 @@ export default function Finale() {
 
   return (
     <View style={styles.root} testID="finale-screen">
-      <ScreenHeader title="Share the finale" testID="finale" />
+      <ScreenHeader title="Share the finale" testID="finale" help="finale" />
       <ScrollView contentContainerStyle={[styles.scroll, { paddingBottom: insets.bottom + spacing.lg }]}>
         <View ref={cardRef} collapsable={false} style={styles.card} testID="finale-card">
           <Text style={styles.kicker}>The Traitors · Holiday in Egypt</Text>

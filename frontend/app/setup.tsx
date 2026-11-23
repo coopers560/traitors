@@ -7,6 +7,7 @@ import { KeyboardAwareScrollView } from "react-native-keyboard-controller";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { api } from "@/src/api";
+import { HelpButton } from "@/src/components/help-button";
 import { useGameCode } from "@/src/game-code";
 import { Body, Button, ErrorText, Eyebrow, Title } from "@/src/components/ui";
 import { makeStyles, radius, spacing, useTheme } from "@/src/theme";
@@ -52,6 +53,7 @@ export default function Setup() {
           <Ionicons name="chevron-back" size={26} color={colors.onSurface} />
         </Pressable>
         <Text style={styles.headerText}>New game</Text>
+        <HelpButton from="setup" testID="setup-help-button" />
       </View>
       <KeyboardAwareScrollView
         bottomOffset={24}
@@ -130,7 +132,7 @@ const useStyles = makeStyles((c) => ({
     borderBottomWidth: 1,
     borderBottomColor: c.divider,
   },
-  headerText: { color: c.onSurface, fontSize: 18, fontWeight: "700" },
+  headerText: { color: c.onSurface, fontSize: 18, fontWeight: "700", flex: 1 },
   iconBtn: { width: 48, height: 48, borderRadius: radius.pill, alignItems: "center", justifyContent: "center", backgroundColor: c.surfaceSecondary },
   scroll: { padding: spacing.lg, gap: spacing.md },
   summary: {
