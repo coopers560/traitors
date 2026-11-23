@@ -298,10 +298,10 @@ def check_moderator(passphrase: Optional[str]):
 STAGE_LABEL = {
     "setup": "The Gathering — roles being revealed",
     "day": "Daytime — the holiday goes on",
+    "night": "The Traitors are choosing their victim",
+    "reveal": "The murder is being revealed",
     "roundtable": "The Round Table — voting to banish",
     "banished": "The banishment is being revealed",
-    "night": "Night — the Traitors are choosing",
-    "reveal": "The morning after — the murder is being revealed",
     "ended": "The game is over",
 }
 
@@ -324,11 +324,11 @@ def _next_step(g: Game) -> str:
     all_seen = len(g.turns_done) >= len(g.players)
     return {
         "setup": "Everyone sees their role, then start Day 1." if all_seen else "Pass the phone round so each player sees their role.",
-        "day": "Gather for the final vote." if in_endgame(g) else "Gather everyone at the Round Table.",
-        "roundtable": "Reveal the banishment." if alive_done else "Waiting for the last votes — or skip missing players.",
-        "banished": "Show the banishment, then night falls." if not g.winner else "Show the banishment — the game is won.",
+        "day": "Gather for the final vote." if in_endgame(g) else "Night falls — the Traitors choose their victim.",
         "night": "Reveal the murder." if alive_done else "Waiting for everyone to take their night turn.",
-        "reveal": "Open the envelope, then begin the next day." if not g.winner else "Open the envelope — the game is won.",
+        "reveal": "Show the murder, then gather at the Round Table." if not g.winner else "Show the murder — the game is won.",
+        "roundtable": "Reveal the banishment." if alive_done else "Waiting for the last votes — or skip missing players.",
+        "banished": "Show the banishment, then begin the next day." if not g.winner else "Show the banishment — the game is won.",
         "ended": "The game is over.",
     }.get(g.phase, "")
 
@@ -712,7 +712,7 @@ async def take_turn(code: str, data: TurnIn):
             if p.id in g.end_votes:
                 g.end_votes.remove(p.id)
     elif g.phase == "night":
-        # The murder happens after the Round Table, in two steps. A Traitor names
+        # The murder is chosen BEFORE the Round Table, in two steps. A Traitor names
         # the victim and is offered three secret actions (step 1, not yet committed),
         # then picks one to confirm the murder (step 2). Everyone else — and a
         # Traitor lying low — just passes, so watching who taps never reveals them.
@@ -770,8 +770,36 @@ async def advance(code: str, expected: Optional[str] = None, expected_day: Optio
         g.phase = "day"
         g.turns_done = []
     elif g.phase == "day":
-        g.phase = "roundtable"
-        g.turns_done, g.votes, g.end_votes = [], {}, []
+        # The Traitors now plot BEFORE the Round Table: each day opens with the night,
+        # where they pick the victim and the plain-sight action (or recruit). In the
+        # endgame there are no murders, so the day goes straight to the final vote.
+        if in_endgame(g):
+            g.phase = "roundtable"
+            g.turns_done, g.votes, g.end_votes = [], {}, []
+        else:
+            g.phase = "night"
+            g.turns_done, g.target_id, g.action, g.murder_confirmed, g.action_choices, g.recruit_id = [], None, None, False, [], None
+    elif g.phase == "night":
+        alive_ids = {p.id for p in g.alive()}
+        if not alive_ids.issubset(set(g.turns_done)):
+            raise HTTPException(400, "Everyone must take their turn before the reveal")
+        # Recruitment first: a recruited Faithful becomes a Traitor (instead of being murdered)
+        recruited = False
+        rp = g.player(g.recruit_id)
+        if rp and rp.lives > 0 and rp.role == "faithful":
+            rp.role = "traitor"
+            recruited = True
+        murder = resolve_murder(g)
+        g.winner = winner_by_roles(g)  # the murder can win it before the Round Table
+        g.history.append({"day": g.day, "murder": murder, "banish": None, "recruited": recruited, "winner": g.winner})
+        g.phase = "reveal"
+    elif g.phase == "reveal":
+        # The murder has been shown. If it won the game, stop; otherwise on to the Round Table.
+        if g.winner:
+            g.phase = "ended"
+        else:
+            g.phase = "roundtable"
+            g.turns_done, g.votes, g.end_votes = [], {}, []
     elif g.phase == "roundtable":
         alive_ids = {p.id for p in g.alive()}
         if not alive_ids.issubset(set(g.turns_done)):
@@ -789,42 +817,24 @@ async def advance(code: str, expected: Optional[str] = None, expected_day: Optio
             g.phase = "ended"
         else:
             banish = resolve_banish(g)
-            g.winner = winner_by_roles(g)  # a Traitor banished can end it before nightfall
-            g.history.append({"day": g.day, "murder": None, "banish": banish, "winner": g.winner})
+            g.winner = winner_by_roles(g)
+            # A night already opened an entry for this day (not in the endgame); fill in its
+            # banishment, otherwise start the day's entry here.
+            if g.history and g.history[-1].get("day") == g.day and g.history[-1].get("banish") is None and not g.history[-1].get("ended_by_vote"):
+                g.history[-1]["banish"] = banish
+                g.history[-1]["winner"] = g.winner
+            else:
+                g.history.append({"day": g.day, "murder": None, "banish": banish, "winner": g.winner})
             g.phase = "banished"
     elif g.phase == "banished":
-        # Banishment shown. In the endgame there are no more murders — straight to the
-        # next final vote; otherwise the Traitors murder. Unless the game is already won.
+        # Banishment shown — the day is over. The game may be won; the Traitors also win
+        # if they survive to the end of the final day. Otherwise a new day (and night) begins.
         if g.winner:
             g.phase = "ended"
-        elif in_endgame(g):
-            g.day += 1
-            g.turns_done, g.votes, g.end_votes = [], {}, []
-            g.phase = "day"
-        else:
-            g.phase = "night"
-            g.turns_done, g.target_id, g.action, g.murder_confirmed, g.action_choices, g.recruit_id = [], None, None, False, [], None
-    elif g.phase == "night":
-        alive_ids = {p.id for p in g.alive()}
-        if not alive_ids.issubset(set(g.turns_done)):
-            raise HTTPException(400, "Everyone must take their turn before the reveal")
-        # Recruitment first: a recruited Faithful becomes a Traitor (instead of being murdered)
-        recruited = False
-        rp = g.player(g.recruit_id)
-        if rp and rp.lives > 0 and rp.role == "faithful":
-            rp.role = "traitor"
-            recruited = True
-        murder = resolve_murder(g)
-        g.winner = winner_by_roles(g)
-        if not g.winner and g.day >= TOTAL_DAYS:
+        elif g.day >= TOTAL_DAYS:
             g.winner = "traitors"  # they survived to the final day
-        if g.history:
-            g.history[-1]["murder"] = murder
-            g.history[-1]["recruited"] = recruited
-            g.history[-1]["winner"] = g.winner
-        g.phase = "reveal"
-    elif g.phase == "reveal":
-        if g.winner:
+            if g.history:
+                g.history[-1]["winner"] = g.winner
             g.phase = "ended"
         else:
             g.day += 1

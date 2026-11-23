@@ -69,25 +69,11 @@ class TestAdvanceExpected:
         assert r.json()["phase"] == "day" and state()["day"] == 1
 
     def test_day_double_tap(self):
-        assert adv("day").json()["phase"] == "roundtable"
-        assert adv("day").json()["phase"] == "roundtable"
+        # New order: the day opens with the night (Traitors plot before the Round Table)
+        assert adv("day").json()["phase"] == "night"
+        assert adv("day").json()["phase"] == "night"
         s = state()
-        assert s["phase"] == "roundtable" and s["turns_done"] == 0
-
-    def test_roundtable_double_tap(self):
-        vote_all()
-        a = adv("roundtable")
-        assert a.status_code == 200 and a.json()["phase"] == "banished"
-        hist_len = len(a.json()["history"])
-        b = adv("roundtable")
-        assert b.json()["phase"] == "banished" and len(b.json()["history"]) == hist_len == 1
-
-    def test_banished_double_tap(self):
-        a = adv("banished")
-        assert a.status_code == 200 and a.json()["phase"] == "night"
-        b = adv("banished")  # second phone, same button
-        assert b.json()["phase"] == "night"
-        assert state()["turns_done"] == 0
+        assert s["phase"] == "night" and s["turns_done"] == 0
 
     def test_night_double_tap(self):
         night_all()
@@ -97,24 +83,40 @@ class TestAdvanceExpected:
         b = adv("night")
         assert b.json()["phase"] == "reveal" and len(b.json()["history"]) == hist_len == 1
 
-    def test_reveal_double_tap_does_not_skip_day2(self):
+    def test_reveal_advances_to_roundtable(self):
         a = adv("reveal")
-        assert a.json()["phase"] == "day" and a.json()["day"] == 2
-        b = adv("reveal")  # stale reveal screen tapping finish
+        assert a.json()["phase"] == "roundtable"
+        b = adv("reveal")  # second phone, same button
+        assert b.json()["phase"] == "roundtable"
+        s = state()
+        assert s["phase"] == "roundtable" and s["turns_done"] == 0 and len(s["history"]) == 1
+
+    def test_roundtable_double_tap(self):
+        vote_all()
+        a = adv("roundtable")
+        assert a.status_code == 200 and a.json()["phase"] == "banished"
+        hist_len = len(a.json()["history"])
+        b = adv("roundtable")
+        assert b.json()["phase"] == "banished" and len(b.json()["history"]) == hist_len == 1
+
+    def test_banished_double_tap_begins_day2(self):
+        a = adv("banished")
+        assert a.status_code == 200 and a.json()["phase"] == "day" and a.json()["day"] == 2
+        b = adv("banished")  # stale banishment screen tapping finish
         assert b.json()["phase"] == "day" and b.json()["day"] == 2
         s = state()
         assert s["phase"] == "day" and s["day"] == 2 and len(s["history"]) == 1
 
     def test_no_param_still_advances(self):
         r = adv()
-        assert r.status_code == 200 and r.json()["phase"] == "roundtable" and r.json()["day"] == 2
+        assert r.status_code == 200 and r.json()["phase"] == "night" and r.json()["day"] == 2
 
     def test_invalid_expected_value_noop(self):
         r = adv("bogus")
-        assert r.status_code == 200 and r.json()["phase"] == "roundtable"
+        assert r.status_code == 200 and r.json()["phase"] == "night"
 
     def test_empty_expected_treated_as_none(self):
-        # ?expected= (empty) behaves like no param -> roundtable without votes must 400
+        # ?expected= (empty) behaves like no param -> night without turns must 400
         r = S.post(f"{G()}/advance?expected=")
         assert r.status_code == 400
 

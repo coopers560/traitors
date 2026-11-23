@@ -56,10 +56,10 @@ export default function Reveal() {
   const finishLabel = isBanish
     ? result.winner
       ? "See all the roles"
-      : "Continue — night falls"
+      : `Begin Day ${result.day + 1}`
     : result.winner
       ? "See all the roles"
-      : `Begin Day ${result.day + 1}`;
+      : "Gather at the Round Table";
 
   // A dramatic countdown gates the actual name on the banishment/murder step.
   const current = steps[step];
@@ -98,7 +98,7 @@ export default function Reveal() {
               <Button
                 testID="reveal-finish-button"
                 label={finishLabel}
-                icon={result.winner ? "trophy" : isBanish ? "moon" : "sunny"}
+                icon={result.winner ? "trophy" : isBanish ? "sunny" : "flame"}
                 loading={advance.isPending}
                 onPress={finish}
               />
@@ -111,7 +111,7 @@ export default function Reveal() {
 
       <ConfirmSheet
         visible={confirmFinish}
-        title={isBanish ? "Night falls?" : `Begin Day ${result.day + 1}?`}
+        title={isBanish ? `Begin Day ${result.day + 1}?` : "Gather at the Round Table?"}
         message="This moves the game on for everyone. Make sure the whole group has seen the reveal — you can't come back to this screen."
         confirmLabel={finishLabel}
         loading={advance.isPending}

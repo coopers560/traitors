@@ -458,6 +458,25 @@ function DayCard({ h, votes }: { h: ModeratorView["history"][number]; votes?: Vo
 
       {h.ended_by_vote ? <Text style={styles.dayLine}>The players voted to end the game.</Text> : null}
 
+      {/* The murder comes first in the day now (chosen at night, before the Round Table) */}
+      {mu ? (
+        <View style={styles.daySection}>
+          <View style={styles.dayRow}>
+            <Ionicons name="moon" size={15} color={colors.traitor} />
+            <Text style={styles.dayLabel}>The murder</Text>
+          </View>
+          {mu.success ? (
+            <Text style={styles.dayLine}>
+              {mu.victim_name} was murdered{mu.action ? ` — ${mu.action}` : ""}.
+            </Text>
+          ) : h.recruited ? (
+            <Text style={styles.dayLine}>No murder — a Faithful was recruited into the Traitors.</Text>
+          ) : (
+            <Text style={styles.dayLine}>No murder.</Text>
+          )}
+        </View>
+      ) : null}
+
       {/* Round Table */}
       {b ? (
         <View style={styles.daySection}>
@@ -489,25 +508,6 @@ function DayCard({ h, votes }: { h: ModeratorView["history"][number]; votes?: Vo
             </View>
           ) : null}
           {votes && votes.end_votes.length ? <Text style={styles.dayTally}>Voted to end: {votes.end_votes.join(", ")}</Text> : null}
-        </View>
-      ) : null}
-
-      {/* Night */}
-      {mu ? (
-        <View style={styles.daySection}>
-          <View style={styles.dayRow}>
-            <Ionicons name="moon" size={15} color={colors.traitor} />
-            <Text style={styles.dayLabel}>Night</Text>
-          </View>
-          {mu.success ? (
-            <Text style={styles.dayLine}>
-              {mu.victim_name} was murdered{mu.action ? ` — ${mu.action}` : ""}.
-            </Text>
-          ) : h.recruited ? (
-            <Text style={styles.dayLine}>No murder — a Faithful was recruited into the Traitors.</Text>
-          ) : (
-            <Text style={styles.dayLine}>No murder.</Text>
-          )}
         </View>
       ) : null}
     </View>

@@ -38,13 +38,8 @@ def run_setup_and_day1(code, g):
     for p in ps:
         S.post(f"{G(code)}/turn", json={"player_id": p["id"], "pin": pin_of(p["name"])})
     assert S.post(f"{G(code)}/advance?expected=setup&expected_day=1").json()["phase"] == "day"
-    assert S.post(f"{G(code)}/advance?expected=day&expected_day=1").json()["phase"] == "roundtable"
-    for p in ps:
-        tgt = fa[1] if p["id"] != fa[1]["id"] else fa[2]
-        assert S.post(f"{G(code)}/turn", json={"player_id": p["id"], "pin": pin_of(p["name"]), "vote_target_id": tgt["id"]}).status_code == 200
-    assert S.post(f"{G(code)}/advance?expected=roundtable&expected_day=1").json()["phase"] == "banished"
-    assert S.post(f"{G(code)}/advance?expected=banished&expected_day=1").json()["phase"] == "night"
-    # the murder is chosen now, after the Round Table (two steps: victim then action)
+    # the Traitors now choose the murder BEFORE the Round Table: day -> night (two steps)
+    assert S.post(f"{G(code)}/advance?expected=day&expected_day=1").json()["phase"] == "night"
     action = None
     for p in ps:
         if roles[p["id"]] == "traitor" and action is None:

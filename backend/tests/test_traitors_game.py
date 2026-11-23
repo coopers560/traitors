@@ -107,6 +107,21 @@ def do_night(roles, murder_target=None):
             assert S.post(f"{G()}/turn", json={"player_id": p["id"], "pin": pin_of(p["name"])}).status_code == 200
 
 
+def to_roundtable(roles):
+    """From the 'day' phase, reach the Round Table in the new order. A normal day
+    passes through a lie-low night (Traitors plot BEFORE the vote); an endgame day
+    goes straight to the final vote with no night."""
+    g = S.get(f"{G()}").json()
+    assert g["phase"] == "day", g["phase"]
+    if g["endgame"]:
+        assert S.post(f"{G()}/advance").json()["phase"] == "roundtable"
+        return
+    assert S.post(f"{G()}/advance").json()["phase"] == "night"
+    do_night(roles)  # everyone lies low; no murder tonight
+    assert S.post(f"{G()}/advance").json()["phase"] == "reveal"
+    assert S.post(f"{G()}/advance").json()["phase"] == "roundtable"
+
+
 # ---- Create validation ----
 class TestCreate:
     def test_too_few(self):
@@ -189,20 +204,7 @@ class TestFlow:
         assert S.post(f"{G()}/advance").json()["phase"] == "day"
         # no turns in the day phase
         assert S.post(f"{G()}/turn", json={"player_id": ps[0]["id"], "pin": pin_of(ps[0]["name"]), "vote_target_id": ps[1]["id"]}).status_code == 400
-        assert S.post(f"{G()}/advance").json()["phase"] == "roundtable"
-        # self-vote rejected
-        assert S.post(f"{G()}/turn", json={"player_id": ps[0]["id"], "pin": pin_of(ps[0]["name"]), "vote_target_id": ps[0]["id"]}).status_code == 400
-        # cannot banish before all voted
-        assert S.post(f"{G()}/advance").status_code == 400
-        banished = faithful[1]
-        cast_votes({p["id"]: (banished["id"] if p["id"] != banished["id"] else faithful[2]["id"]) for p in ps})
-        rb = S.post(f"{G()}/advance").json()
-        assert rb["phase"] == "banished"
-        h = rb["history"][-1]
-        assert h["murder"] is None  # the murder has not happened yet
-        assert h["banish"]["target_id"] == banished["id"] and h["banish"]["eliminated"] and not h["banish"]["tie"]
-        assert h["winner"] is None
-        # banished -> night: the murder is chosen now, after the Round Table
+        # the Traitors now move BEFORE the Round Table: day -> night
         assert S.post(f"{G()}/advance").json()["phase"] == "night"
         # a traitor cannot murder a fellow traitor
         assert S.post(f"{G()}/turn", json={"player_id": t0["id"], "pin": pin_of(t0["name"]), "target_id": traitors[1]["id"]}).status_code == 400
@@ -224,8 +226,23 @@ class TestFlow:
         assert rv["phase"] == "reveal"
         h = rv["history"][-1]
         assert h["murder"]["success"] and h["murder"]["victim_id"] == victim["id"] and h["murder"]["eliminated"]
-        assert "action" not in h["murder"] and h["banish"]["target_id"] == banished["id"]
+        assert "action" not in h["murder"] and h["banish"] is None  # banishment hasn't happened yet
         assert h["winner"] is None
+        # reveal -> roundtable
+        assert S.post(f"{G()}/advance").json()["phase"] == "roundtable"
+        # self-vote rejected
+        assert S.post(f"{G()}/turn", json={"player_id": ps[0]["id"], "pin": pin_of(ps[0]["name"]), "vote_target_id": ps[0]["id"]}).status_code == 400
+        # cannot banish before all voted
+        assert S.post(f"{G()}/advance").status_code == 400
+        banished = faithful[1]  # distinct from the murdered victim (faithful[0])
+        cast_votes({p["id"]: (banished["id"] if p["id"] != banished["id"] else faithful[2]["id"]) for p in ps})
+        rb = S.post(f"{G()}/advance").json()
+        assert rb["phase"] == "banished"
+        h = rb["history"][-1]
+        assert h["murder"]["victim_id"] == victim["id"]  # same day's entry holds both
+        assert h["banish"]["target_id"] == banished["id"] and h["banish"]["eliminated"] and not h["banish"]["tie"]
+        assert h["winner"] is None
+        # banished -> day 2
         r = S.post(f"{G()}/advance").json()
         assert r["phase"] == "day" and r["day"] == 2
         t = private(t0["id"], pin_of(t0["name"])).json()
@@ -241,7 +258,7 @@ class TestFlow:
         assert dead[banished["id"]]["role"] == "faithful" and dead[victim["id"]]["role"] == "faithful"
         assert g["phase"] == "day" and g["turns_needed"] == 8  # 10 - 2 eliminated
         alive = [p for p in g["players"] if p["alive"]]
-        assert S.post(f"{G()}/advance").json()["phase"] == "roundtable"
+        to_roundtable(roles)  # day -> night (lie low) -> reveal -> roundtable
         # an eliminated player cannot vote
         assert S.post(f"{G()}/turn", json={"player_id": banished["id"], "pin": pin_of(banished["name"]), "vote_target_id": alive[0]["id"]}).status_code == 400
         # cannot vote for an eliminated player
@@ -276,13 +293,16 @@ class TestFlow:
         ps = g["players"]
         fa = [p for p in ps if roles[p["id"]] == "faithful"]
         finish_setup(ps)  # -> day
-        assert S.post(f"{G()}/advance").json()["phase"] == "roundtable"
-        cast_votes({p["id"]: (fa[0]["id"] if p["id"] != fa[0]["id"] else fa[1]["id"]) for p in ps})
-        assert S.post(f"{G()}/advance").json()["phase"] == "banished"  # 7 alive, no winner yet
+        # Night first: murder a Faithful -> 7 alive (3 Traitors vs 4 Faithful), no winner yet
         assert S.post(f"{G()}/advance").json()["phase"] == "night"
-        do_night(roles, murder_target=fa[1]["id"])  # 6 alive -> 3 Traitors vs 3 Faithful
+        do_night(roles, murder_target=fa[0]["id"])
         rv = S.post(f"{G()}/advance").json()
-        assert rv["phase"] == "reveal" and rv["winner"] == "traitors"
+        assert rv["phase"] == "reveal" and rv["winner"] is None
+        assert S.post(f"{G()}/advance").json()["phase"] == "roundtable"
+        # Round Table: banish a Faithful -> 6 alive, 3 Traitors vs 3 Faithful -> Traitors win
+        cast_votes({p["id"]: (fa[1]["id"] if p["id"] != fa[1]["id"] else fa[2]["id"]) for p in ps})
+        rb = S.post(f"{G()}/advance").json()
+        assert rb["phase"] == "banished" and rb["winner"] == "traitors"
         # the murder method is revealed once the game ends
         st = S.post(f"{G()}/advance").json()
         assert st["phase"] == "ended"
@@ -297,9 +317,7 @@ class TestMurderChoice:
         tr = next(p for p in ps if roles[p["id"]] == "traitor")
         fa = [p for p in ps if roles[p["id"]] == "faithful"]
         finish_setup(ps)  # -> day
-        assert S.post(f"{G()}/advance").json()["phase"] == "roundtable"
-        cast_votes({p["id"]: (fa[0]["id"] if p["id"] != fa[0]["id"] else fa[1]["id"]) for p in ps})
-        assert S.post(f"{G()}/advance").json()["phase"] == "banished"
+        # new order: the night (with the murder choice) comes first, before the Round Table
         assert S.post(f"{G()}/advance").json()["phase"] == "night"
         # picking a victim offers three distinct actions and commits nothing yet
         r = S.post(f"{G()}/turn", json={"player_id": tr["id"], "pin": pin_of(tr["name"]), "target_id": fa[2]["id"]})
@@ -319,7 +337,7 @@ class TestSkipMissing:
         g, roles = setup_game(5)
         ps = g["players"]
         finish_setup(ps)  # -> day
-        assert S.post(f"{G()}/advance").json()["phase"] == "roundtable"
+        to_roundtable(roles)  # day -> night (lie low) -> reveal -> roundtable
         # nobody has voted yet: even force refuses
         assert S.post(f"{G()}/advance?expected=roundtable&force=true").status_code == 400
         # four of five vote; ps[4] is "missing". Everyone votes ps[0] (ps[0] votes ps[1]).
@@ -343,13 +361,10 @@ class TestRecruit:
         tr = next(p for p in ps if roles[p["id"]] == "traitor")
         fa = [p for p in ps if roles[p["id"]] == "faithful"]
         finish_setup(ps)  # -> day 1
-        # Banish a Faithful -> 7 still in (>= 6): recruitment is available tonight
-        assert S.post(f"{G()}/advance").json()["phase"] == "roundtable"
-        cast_votes({p["id"]: (fa[0]["id"] if p["id"] != fa[0]["id"] else fa[1]["id"]) for p in ps})
-        assert S.post(f"{G()}/advance").json()["phase"] == "banished"
+        # Day 1 night comes first: 8 still in (>= 6), so recruitment is available
         assert S.post(f"{G()}/advance").json()["phase"] == "night"
         assert private(tr["id"], pin_of(tr["name"])).json()["can_recruit"] is True
-        recruit = fa[2]
+        recruit = fa[0]
         assert private(recruit["id"], pin_of(recruit["name"])).json()["role"] == "faithful"
         assert S.post(f"{G()}/turn", json={"player_id": tr["id"], "pin": pin_of(tr["name"]), "recruit_id": recruit["id"]}).status_code == 200
         for p in S.get(f"{G()}").json()["players"]:
@@ -366,10 +381,12 @@ class TestRecruit:
         tr = next(p for p in ps if roles[p["id"]] == "traitor")
         fa = [p for p in ps if roles[p["id"]] == "faithful"]
         finish_setup(ps)  # -> day 1
-        # Banish a Faithful -> 5 left (< 6): no recruiting tonight
-        assert S.post(f"{G()}/advance").json()["phase"] == "roundtable"
+        # Day 1 night (6 still in): lie low. Then banish a Faithful at the Round Table -> 5 left.
+        to_roundtable(roles)
         cast_votes({p["id"]: (fa[0]["id"] if p["id"] != fa[0]["id"] else fa[1]["id"]) for p in ps})
-        assert S.post(f"{G()}/advance").json()["phase"] == "banished"
+        assert S.post(f"{G()}/advance").json()["phase"] == "banished"  # 5 alive
+        assert S.post(f"{G()}/advance").json()["phase"] == "day"  # day 2, not endgame
+        # Day 2 night: 5 still in (< 6), so no recruiting
         assert S.post(f"{G()}/advance").json()["phase"] == "night"
         assert private(tr["id"], pin_of(tr["name"])).json()["can_recruit"] is False
         assert S.post(f"{G()}/turn", json={"player_id": tr["id"], "pin": pin_of(tr["name"]), "recruit_id": fa[1]["id"]}).status_code == 400
@@ -381,7 +398,7 @@ class TestHideRoleAndEndgame:
         ps = g["players"]
         fa = [p for p in ps if roles[p["id"]] == "faithful"]
         finish_setup(ps)  # -> day
-        assert S.post(f"{G()}/advance").json()["phase"] == "roundtable"
+        to_roundtable(roles)  # lie-low night keeps all 7 in
         cast_votes({p["id"]: (fa[0]["id"] if p["id"] != fa[0]["id"] else fa[1]["id"]) for p in ps})
         h = S.post(f"{G()}/advance").json()["history"][-1]["banish"]
         assert h["eliminated"] and h["role"] == "faithful" and not h.get("role_hidden")  # 7 remained
@@ -391,7 +408,7 @@ class TestHideRoleAndEndgame:
         ps = g["players"]
         fa = [p for p in ps if roles[p["id"]] == "faithful"]
         finish_setup(ps)  # -> day
-        assert S.post(f"{G()}/advance").json()["phase"] == "roundtable"
+        to_roundtable(roles)  # lie-low night keeps all 6 in
         cast_votes({p["id"]: (fa[0]["id"] if p["id"] != fa[0]["id"] else fa[1]["id"]) for p in ps})
         rb = S.post(f"{G()}/advance").json()
         h = rb["history"][-1]["banish"]

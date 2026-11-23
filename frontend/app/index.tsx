@@ -108,7 +108,7 @@ const PHASE_COPY: Record<string, { eyebrow: string; title: string; body: string 
   day: {
     eyebrow: "During the day",
     title: "Enjoy the holiday",
-    body: "Mingle, relax and watch everyone closely. The Traitors strike tonight — after the Round Table — so there is nothing to do yet but gather clues.",
+    body: "Mingle, relax and watch everyone closely. When night falls the Traitors choose their victim and the murder in plain sight — then you gather at the Round Table.",
   },
   roundtable: {
     eyebrow: "This evening",
@@ -118,7 +118,7 @@ const PHASE_COPY: Record<string, { eyebrow: string; title: string; body: string 
   banished: {
     eyebrow: "The verdict",
     title: "The banishment",
-    body: "Gather everyone together to see who the table has banished — before the night falls.",
+    body: "Gather everyone together to see who the table has banished. That closes the day.",
   },
   night: {
     eyebrow: "After dark",
@@ -289,7 +289,7 @@ function Dashboard({ game, refreshing, onRefresh }: { game: ActiveGame; refreshi
             {phase === "setup" ? (
               <Button testID="advance-start-day-button" label="Begin Day 1" icon="sunny" disabled={!allDone} loading={advance.isPending} onPress={() => setConfirmGo({ label: "Begin Day 1", run: () => advance.mutate() })} />
             ) : phase === "day" ? (
-              <Button testID="advance-round-table-button" label={game.endgame ? "Gather for the final vote" : "Gather at the Round Table"} icon="flame" loading={advance.isPending} onPress={() => setConfirmGo({ label: game.endgame ? "Gather for the final vote" : "Gather at the Round Table", run: () => advance.mutate() })} />
+              <Button testID="advance-round-table-button" label={game.endgame ? "Gather for the final vote" : "Night falls — the Traitors move"} icon={game.endgame ? "flame" : "moon"} loading={advance.isPending} onPress={() => setConfirmGo({ label: game.endgame ? "Gather for the final vote" : "Night falls — the Traitors move", run: () => advance.mutate() })} />
             ) : phase === "roundtable" ? (
               <>
                 <Button testID="advance-reveal-button" label={allDone ? (game.endgame ? "Reveal the vote" : "Reveal the banishment") : "Waiting for votes…"} icon="mail-open" disabled={!allDone} loading={advance.isPending && allDone} onPress={() => setConfirmGo({ label: game.endgame ? "Reveal the vote" : "Reveal the banishment", run: () => advance.mutate() })} />
