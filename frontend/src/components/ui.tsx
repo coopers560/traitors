@@ -58,6 +58,7 @@ export function Body({ children, style, testID }: { children: React.ReactNode; s
 type ButtonProps = {
   label: string;
   onPress: () => void;
+  onLongPress?: () => void;
   variant?: "primary" | "secondary" | "ghost" | "danger";
   icon?: React.ComponentProps<typeof Ionicons>["name"];
   disabled?: boolean;
@@ -68,7 +69,7 @@ type ButtonProps = {
 
 const AnimatedPressable = Animated.createAnimatedComponent(Pressable);
 
-export function Button({ label, onPress, variant = "primary", icon, disabled, loading, testID, style }: ButtonProps) {
+export function Button({ label, onPress, onLongPress, variant = "primary", icon, disabled, loading, testID, style }: ButtonProps) {
   const styles = useStyles();
   const { colors } = useTheme();
   const scale = useSharedValue(1);
@@ -97,6 +98,8 @@ export function Button({ label, onPress, variant = "primary", icon, disabled, lo
         if (Platform.OS !== "web") Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
         onPress();
       }}
+      onLongPress={onLongPress}
+      delayLongPress={600}
       style={[
         styles.button,
         { backgroundColor: bg, opacity: off ? 0.45 : 1 },

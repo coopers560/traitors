@@ -75,11 +75,11 @@ const SECTIONS: Section[] = [
     title: "What to tap, through the day",
     tips: [
       ["Before Day 1", "everyone taps their name to see their role. Then Begin Day 1."],
-      ["During the day", "nothing to tap. In the evening, Gather at the Round Table."],
-      ["Round Table", "talk it over, then everyone taps their name and votes. Then Reveal the banishment."],
+      ["Night (first)", "tap your name once — the Traitors secretly pick their victim before the Round Table. Then Reveal the murder."],
+      ["The reveal", "open the envelope together to see who was murdered."],
+      ["Round Table (evening)", "talk it over, then everyone taps their name and votes. Then Reveal the banishment."],
       ["Someone missing for the vote?", "Skip & reveal counts the votes cast so far."],
-      ["Night", "everyone still in the game taps their name once. Then Reveal the murder."],
-      ["Morning", "Open the envelope together, then begin the next day."],
+      ["Next day", "after the banishment, begin the next day."],
     ],
   },
   {

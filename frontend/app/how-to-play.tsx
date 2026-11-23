@@ -16,23 +16,18 @@ const STEPS: { icon: React.ComponentProps<typeof Ionicons>["name"]; title: strin
   },
   {
     icon: "sunny",
-    title: "2. During the day",
-    body: "Enjoy the holiday and watch each other closely. There is nothing to do on the phone until the evening.",
-  },
-  {
-    icon: "flame",
-    title: "3. The Round Table (evening)",
-    body: "Gather together, discuss and accuse. Then everyone votes in private for who to banish. The player with the most votes is out. A tied vote banishes nobody.",
-  },
-  {
-    icon: "moon",
-    title: "4. The night",
-    body: "Everyone taps their name once more, in private. The Traitors plan in secret; everyone else simply passes the phone on, so every turn looks the same. Then the Traitors murder in plain sight: a small, ordinary-looking action done to their victim in front of everyone. Could you spot it?",
+    title: "2. The Traitors move",
+    body: "Each day opens with the Traitors. On the phone they secretly pick their victim and a method; everyone else just passes the phone on, so every turn looks the same. The chosen Traitor then murders in plain sight: a small, ordinary-looking action done to their victim during the day, in front of everyone. Could you spot it?",
   },
   {
     icon: "mail-open",
-    title: "5. The morning",
-    body: "Open the envelope together to learn whether the Traitors struck, and who they took. How it was done stays secret until the game is over. One hit, a banishment or a murder, and you are out.",
+    title: "3. The reveal",
+    body: "Open the envelope together to learn who was murdered. How it was done stays secret, so keep guessing who did it.",
+  },
+  {
+    icon: "flame",
+    title: "4. The Round Table (evening)",
+    body: "Now gather together, discuss and accuse. Everyone votes in private for who to banish. The player with the most votes is out — and a tied vote banishes nobody. One hit, a banishment or a murder, and you are out.",
   },
   {
     icon: "trophy",

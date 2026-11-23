@@ -12,6 +12,7 @@ import { PinPad } from "@/src/components/pin-pad";
 import { QrCode } from "@/src/components/qr-code";
 import { Backdrop, Body, Button, ErrorText, Eyebrow, IMAGES, Title } from "@/src/components/ui";
 import { useGameCode } from "@/src/game-code";
+import { useMe } from "@/src/me";
 import { inviteLink, shareInvite, shareToWhatsApp } from "@/src/utils/invite";
 import { fonts, makeStyles, radius, spacing, useTheme } from "@/src/theme";
 
@@ -90,6 +91,7 @@ function Welcome({ gone }: { gone: boolean }) {
             variant="ghost"
             icon="help-circle-outline"
             onPress={() => router.push({ pathname: "/help", params: { from: "welcome" } })}
+            onLongPress={() => router.push("/moderator")}
           />
         </Animated.View>
       </View>
@@ -106,7 +108,7 @@ const PHASE_COPY: Record<string, { eyebrow: string; title: string; body: string 
   day: {
     eyebrow: "During the day",
     title: "Enjoy the holiday",
-    body: "Mingle, relax and watch everyone closely. The Traitors strike tonight — after the Round Table — so there is nothing to do yet but gather clues.",
+    body: "Mingle, relax and watch everyone closely. When night falls the Traitors choose their victim and the murder in plain sight — then you gather at the Round Table.",
   },
   roundtable: {
     eyebrow: "This evening",
@@ -116,7 +118,7 @@ const PHASE_COPY: Record<string, { eyebrow: string; title: string; body: string 
   banished: {
     eyebrow: "The verdict",
     title: "The banishment",
-    body: "Gather everyone together to see who the table has banished — before the night falls.",
+    body: "Gather everyone together to see who the table has banished. That closes the day.",
   },
   night: {
     eyebrow: "After dark",
@@ -140,18 +142,24 @@ function Dashboard({ game, refreshing, onRefresh }: { game: ActiveGame; refreshi
   const [invite, setInvite] = useState(false);
   const [confirmEnd, setConfirmEnd] = useState(false);
   const [confirmSkip, setConfirmSkip] = useState(false);
+  // Reconfirm the big "move the whole game on" taps so no one skips a stage by accident.
+  const [confirmGo, setConfirmGo] = useState<{ label: string; run: () => void } | null>(null);
   const [endPin, setEndPin] = useState("");
   const [peekMode, setPeekMode] = useState(false);
   const [confirmLeave, setConfirmLeave] = useState(false);
   const { setCode } = useGameCode();
+  const { me: boundMe, clearMe } = useMe();
+  const boundPlayer = boundMe ? game.players.find((p) => p.id === boundMe.playerId) : null;
 
   const advance = useMutation({
     mutationFn: (force?: boolean) => api.advance(game.phase, game.day, force),
     onSuccess: (s) => {
       qc.setQueryData(["game"], s);
       setConfirmSkip(false);
+      setConfirmGo(null);
       if (s.exists && (s.phase === "banished" || s.phase === "reveal")) router.push("/reveal");
     },
+    onError: () => setConfirmGo(null),
   });
   const endGame = useMutation({
     mutationFn: (pin: string) => api.deleteGame({ player_id: game.host_id ?? "", pin }),
@@ -226,6 +234,9 @@ function Dashboard({ game, refreshing, onRefresh }: { game: ActiveGame; refreshi
           <Button testID="menu-history-button" label="Day history" variant="secondary" icon="time-outline" onPress={() => { setMenu(false); router.push("/history"); }} />
           <Button testID="menu-actions-button" label="Secret actions" variant="secondary" icon="list-outline" onPress={() => { setMenu(false); router.push("/actions"); }} />
           <Button testID="menu-share-code-button" label="Invite players (QR & link)" variant="secondary" icon="qr-code-outline" onPress={openInvite} />
+          {boundPlayer ? (
+            <Button testID="menu-forget-me-button" label={`Forget me on this phone (${boundPlayer.name})`} variant="secondary" icon="phone-portrait-outline" onPress={() => { setMenu(false); clearMe(); }} />
+          ) : null}
           <Button testID="menu-leave-game-button" label="Leave game on this phone" variant="secondary" icon="exit-outline" onPress={() => { setMenu(false); setConfirmLeave(true); }} />
           <Button testID="menu-end-game-button" label="End this game for everyone" variant="danger" icon="trash-outline" onPress={() => { setMenu(false); setEndPin(""); endGame.reset(); setConfirmEnd(true); }} />
         </View>
@@ -235,6 +246,31 @@ function Dashboard({ game, refreshing, onRefresh }: { game: ActiveGame; refreshi
         contentContainerStyle={[styles.scroll, { paddingBottom: insets.bottom + spacing.lg }]}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.brand} />}
       >
+        {boundPlayer ? (
+          <View style={styles.boundCard} testID="bound-banner">
+            <Ionicons name="phone-portrait" size={20} color={colors.brand} />
+            <View style={{ flex: 1, minWidth: 0 }}>
+              <Text style={styles.boundName} numberOfLines={1}>This phone: {boundPlayer.name}</Text>
+              <Text style={styles.boundSub} numberOfLines={1}>
+                {phase === "ended"
+                  ? "Game over"
+                  : !boundPlayer.alive
+                    ? "You're out — tap to peek"
+                    : takingTurns
+                      ? boundPlayer.turn_done ? "You've taken your turn" : "Your turn · no PIN"
+                      : "Tap to check your secret"}
+              </Text>
+            </View>
+            {takingTurns && boundPlayer.alive && !boundPlayer.turn_done ? (
+              <Button testID="bound-take-turn" label="Turn" icon="arrow-forward" onPress={() => onPlayer(boundPlayer)} style={{ minHeight: 44, paddingHorizontal: spacing.md }} />
+            ) : (
+              <Pressable testID="bound-peek" onPress={() => router.push({ pathname: "/player/[id]", params: { id: boundPlayer.id, mode: "peek" } })} style={styles.iconBtn} hitSlop={8}>
+                <Ionicons name="eye-outline" size={22} color={colors.brand} />
+              </Pressable>
+            )}
+          </View>
+        ) : null}
+
         {phase === "ended" ? (
           <EndedCard game={game} />
         ) : (
@@ -251,18 +287,18 @@ function Dashboard({ game, refreshing, onRefresh }: { game: ActiveGame; refreshi
             ) : null}
             <ErrorText testID="advance-error" message={advance.error?.message} />
             {phase === "setup" ? (
-              <Button testID="advance-start-day-button" label="Begin Day 1" icon="sunny" disabled={!allDone} loading={advance.isPending} onPress={() => advance.mutate()} />
+              <Button testID="advance-start-day-button" label="Begin Day 1" icon="sunny" disabled={!allDone} loading={advance.isPending} onPress={() => setConfirmGo({ label: "Begin Day 1", run: () => advance.mutate() })} />
             ) : phase === "day" ? (
-              <Button testID="advance-round-table-button" label={game.endgame ? "Gather for the final vote" : "Gather at the Round Table"} icon="flame" loading={advance.isPending} onPress={() => advance.mutate()} />
+              <Button testID="advance-round-table-button" label={game.endgame ? "Gather for the final vote" : "Night falls — the Traitors move"} icon={game.endgame ? "flame" : "moon"} loading={advance.isPending} onPress={() => setConfirmGo({ label: game.endgame ? "Gather for the final vote" : "Night falls — the Traitors move", run: () => advance.mutate() })} />
             ) : phase === "roundtable" ? (
               <>
-                <Button testID="advance-reveal-button" label={allDone ? (game.endgame ? "Reveal the vote" : "Reveal the banishment") : "Waiting for votes…"} icon="mail-open" disabled={!allDone} loading={advance.isPending && allDone} onPress={() => advance.mutate()} />
+                <Button testID="advance-reveal-button" label={allDone ? (game.endgame ? "Reveal the vote" : "Reveal the banishment") : "Waiting for votes…"} icon="mail-open" disabled={!allDone} loading={advance.isPending && allDone} onPress={() => setConfirmGo({ label: game.endgame ? "Reveal the vote" : "Reveal the banishment", run: () => advance.mutate() })} />
                 {!allDone ? (
                   <Button testID="advance-skip-missing-button" label="Someone missing? Skip & reveal" variant="ghost" icon="play-skip-forward-outline" onPress={() => setConfirmSkip(true)} />
                 ) : null}
               </>
             ) : phase === "night" ? (
-              <Button testID="advance-murder-button" label={allDone ? "Reveal the murder" : "Waiting for the night…"} icon="moon" disabled={!allDone} loading={advance.isPending} onPress={() => advance.mutate()} />
+              <Button testID="advance-murder-button" label={allDone ? "Reveal the murder" : "Waiting for the night…"} icon="moon" disabled={!allDone} loading={advance.isPending} onPress={() => setConfirmGo({ label: "Reveal the murder", run: () => advance.mutate() })} />
             ) : phase === "banished" ? (
               <Button testID="open-banishment-button" label="Open the banishment" icon="mail" onPress={() => router.push("/reveal")} />
             ) : (
@@ -307,6 +343,16 @@ function Dashboard({ game, refreshing, onRefresh }: { game: ActiveGame; refreshi
       </ScrollView>
 
       <InviteSheet visible={invite} code={game.code} onClose={() => setInvite(false)} />
+
+      <ConfirmSheet
+        visible={!!confirmGo}
+        title="Move the game on?"
+        message={`This advances the game on every phone: "${confirmGo?.label}". Make sure everyone is together and ready — you can't go back a stage.`}
+        confirmLabel={confirmGo?.label ?? "Continue"}
+        loading={advance.isPending}
+        onConfirm={() => confirmGo?.run()}
+        onCancel={() => setConfirmGo(null)}
+      />
 
       <ConfirmSheet
         visible={confirmSkip}
@@ -574,6 +620,9 @@ const useStyles = makeStyles((c) => ({
     justifyContent: "center",
     backgroundColor: c.surfaceSecondary,
   },
+  boundCard: { flexDirection: "row", alignItems: "center", gap: spacing.md, backgroundColor: c.brandTertiary, borderRadius: radius.lg, padding: spacing.md, borderWidth: 1, borderColor: c.brandSecondary },
+  boundName: { color: c.onSurface, fontSize: 17, fontWeight: "700" },
+  boundSub: { color: c.onBrandTertiary, fontSize: 13, marginTop: 1 },
   progress: { height: 3, backgroundColor: c.surfaceTertiary },
   progressFill: { height: 3, backgroundColor: c.brand },
   menu: { padding: spacing.md, gap: spacing.sm, backgroundColor: c.surfaceSecondary, borderBottomWidth: 1, borderBottomColor: c.border },

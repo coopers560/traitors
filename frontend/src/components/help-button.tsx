@@ -19,6 +19,10 @@ export function HelpButton({ from, testID, style }: { from: string; testID: stri
       accessibilityRole="button"
       accessibilityLabel="Help"
       onPress={() => router.push({ pathname: "/help", params: { from } })}
+      // Hidden door: a long press opens the moderator ("Claudia") god-view, behind
+      // its own passphrase. Players never see it; it looks exactly like the help button.
+      onLongPress={() => router.push("/moderator")}
+      delayLongPress={600}
       style={[styles.btn, style]}
       hitSlop={8}
     >
