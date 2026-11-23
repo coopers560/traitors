@@ -805,12 +805,11 @@ async def advance(code: str, expected: Optional[str] = None, expected_day: Optio
     elif g.phase == "roundtable":
         alive_ids = {p.id for p in g.alive()}
         if not alive_ids.issubset(set(g.turns_done)):
-            # A player can be missing at the Round Table: `force` skips the stragglers
-            # and reveals on the votes cast so far (needs at least one).
-            if not force:
-                raise HTTPException(400, "Everyone must vote before the banishment")
-            if not g.votes and not g.end_votes:
-                raise HTTPException(400, "At least one player must vote before you can skip the rest")
+            # Everyone still in must check in at the Round Table before it is revealed.
+            # Skipping stragglers would leak the Traitors: a murder only lands if the
+            # Traitor checked in, so a partial check-in narrows down who they are.
+            missing = [name_of(g, pid) for pid in alive_ids - set(g.turns_done)]
+            raise HTTPException(400, f"Everyone must check in first. Still to vote: {', '.join(n for n in missing if n)}")
         g.vote_log.append(snapshot_votes(g))  # moderator-only record of who voted for whom
         if in_endgame(g) and len(g.end_votes) == len(g.alive()):
             # Everyone voted to end the game: a Traitor still in means the Traitors win.

@@ -350,26 +350,27 @@ class TestMurderChoice:
         assert rb["phase"] == "banished" and rb["history"][-1]["murder"]["success"] is False
 
 
-class TestSkipMissing:
-    def test_skip_needs_a_vote_then_reveals(self):
+class TestRoundTableCheckIn:
+    def test_everyone_must_check_in_before_reveal(self):
         g, roles = setup_game(5)
         ps = g["players"]
         finish_setup(ps)  # -> day
-        to_roundtable(roles)  # day -> night (lie low) -> reveal -> roundtable
-        # nobody has voted yet: even force refuses
-        assert S.post(f"{G()}/advance?expected=roundtable&force=true").status_code == 400
-        # four of five vote; ps[4] is "missing". Everyone votes ps[0] (ps[0] votes ps[1]).
+        to_roundtable(roles)  # day -> night (lie low) -> roundtable
+        # four of five vote; ps[4] is still missing
         votes = {ps[0]["id"]: ps[1]["id"], ps[1]["id"]: ps[0]["id"], ps[2]["id"]: ps[0]["id"], ps[3]["id"]: ps[0]["id"]}
         for pid, tid in votes.items():
             p = next(x for x in ps if x["id"] == pid)
             assert S.post(f"{G()}/turn", json={"player_id": pid, "pin": pin_of(p["name"]), "vote_target_id": tid}).status_code == 200
-        # normal advance is blocked: ps[4] has not voted
+        # the reveal is blocked: everyone still in must check in first (no skipping — it could
+        # give the Traitors away). force is no longer honoured.
         assert S.post(f"{G()}/advance?expected=roundtable").status_code == 400
-        # force skips the missing voter and reveals on the votes cast so far
-        r = S.post(f"{G()}/advance?expected=roundtable&force=true").json()
+        assert S.post(f"{G()}/advance?expected=roundtable&force=true").status_code == 400
+        # the last player checks in -> now it reveals
+        assert S.post(f"{G()}/turn", json={"player_id": ps[4]["id"], "pin": pin_of(ps[4]["name"]), "vote_target_id": ps[0]["id"]}).status_code == 200
+        r = S.post(f"{G()}/advance?expected=roundtable").json()
         assert r["phase"] == "banished"
         h = r["history"][-1]
-        assert h["banish"]["target_id"] == ps[0]["id"] and h["banish"]["tally"][0]["votes"] == 3
+        assert h["banish"]["target_id"] == ps[0]["id"] and h["banish"]["tally"][0]["votes"] == 4
 
 
 class TestRecruit:

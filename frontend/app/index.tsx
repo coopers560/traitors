@@ -141,7 +141,6 @@ function Dashboard({ game, refreshing, onRefresh }: { game: ActiveGame; refreshi
   const [menu, setMenu] = useState(false);
   const [invite, setInvite] = useState(false);
   const [confirmEnd, setConfirmEnd] = useState(false);
-  const [confirmSkip, setConfirmSkip] = useState(false);
   // Reconfirm the big "move the whole game on" taps so no one skips a stage by accident.
   const [confirmGo, setConfirmGo] = useState<{ label: string; run: () => void } | null>(null);
   const [endPin, setEndPin] = useState("");
@@ -155,7 +154,6 @@ function Dashboard({ game, refreshing, onRefresh }: { game: ActiveGame; refreshi
     mutationFn: (force?: boolean) => api.advance(game.phase, game.day, force),
     onSuccess: (s) => {
       qc.setQueryData(["game"], s);
-      setConfirmSkip(false);
       setConfirmGo(null);
       if (s.exists && (s.phase === "banished" || s.phase === "reveal")) router.push("/reveal");
     },
@@ -292,9 +290,9 @@ function Dashboard({ game, refreshing, onRefresh }: { game: ActiveGame; refreshi
               <Button testID="advance-round-table-button" label={game.endgame ? "Gather for the final vote" : "Night falls — the Traitors move"} icon={game.endgame ? "flame" : "moon"} loading={advance.isPending} onPress={() => setConfirmGo({ label: game.endgame ? "Gather for the final vote" : "Night falls — the Traitors move", run: () => advance.mutate() })} />
             ) : phase === "roundtable" ? (
               <>
-                <Button testID="advance-reveal-button" label={allDone ? (game.endgame ? "Reveal the vote" : "Reveal the Round Table") : "Waiting for votes…"} icon="mail-open" disabled={!allDone} loading={advance.isPending && allDone} onPress={() => setConfirmGo({ label: game.endgame ? "Reveal the vote" : "Reveal the Round Table", run: () => advance.mutate() })} />
+                <Button testID="advance-reveal-button" label={allDone ? (game.endgame ? "Reveal the vote" : "Reveal the Round Table") : "Everyone must check in first…"} icon="mail-open" disabled={!allDone} loading={advance.isPending && allDone} onPress={() => setConfirmGo({ label: game.endgame ? "Reveal the vote" : "Reveal the Round Table", run: () => advance.mutate() })} />
                 {!allDone ? (
-                  <Button testID="advance-skip-missing-button" label="Someone missing? Skip & reveal" variant="ghost" icon="play-skip-forward-outline" onPress={() => setConfirmSkip(true)} />
+                  <Text style={styles.waitNote} testID="roundtable-wait-note">Everyone still in must vote before the reveal — otherwise the Traitors could be given away.</Text>
                 ) : null}
               </>
             ) : phase === "night" ? (
@@ -352,17 +350,6 @@ function Dashboard({ game, refreshing, onRefresh }: { game: ActiveGame; refreshi
         loading={advance.isPending}
         onConfirm={() => confirmGo?.run()}
         onCancel={() => setConfirmGo(null)}
-      />
-
-      <ConfirmSheet
-        visible={confirmSkip}
-        title="Skip missing players?"
-        message={`${game.turns_done} of ${game.turns_needed} have voted. The banishment will be decided on the votes cast so far — anyone who hasn't voted is skipped.`}
-        confirmLabel="Skip & reveal"
-        danger
-        loading={advance.isPending}
-        onConfirm={() => advance.mutate(true)}
-        onCancel={() => setConfirmSkip(false)}
       />
 
       <EndGameSheet
@@ -642,6 +629,7 @@ const useStyles = makeStyles((c) => ({
   turnText: { color: c.onSurfaceSecondary, fontSize: 16, fontWeight: "600" },
   sectionHead: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginTop: spacing.sm, gap: spacing.sm },
   sectionTitle: { color: c.muted, fontSize: 15, fontWeight: "600", flex: 1 },
+  waitNote: { color: c.muted, fontSize: 14, lineHeight: 20, textAlign: "center", paddingHorizontal: spacing.md },
   chip: {
     flexDirection: "row",
     alignItems: "center",
