@@ -2,7 +2,7 @@ import Ionicons from "@react-native-vector-icons/ionicons";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { useRouter } from "expo-router";
 import { useState } from "react";
-import { ActivityIndicator, ScrollView, Text, TextInput, View } from "react-native";
+import { ActivityIndicator, Pressable, ScrollView, Text, TextInput, View } from "react-native";
 import { KeyboardAwareScrollView } from "react-native-keyboard-controller";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
@@ -64,32 +64,7 @@ export default function Moderator() {
   }
 
   if (!code) {
-    return (
-      <View style={styles.root} testID="moderator-screen">
-        <ScreenHeader title="Moderator" testID="moderator" />
-        <KeyboardAwareScrollView bottomOffset={24} keyboardShouldPersistTaps="handled" contentContainerStyle={[styles.scroll, { paddingBottom: insets.bottom + spacing.lg }]}>
-          <View style={{ gap: spacing.sm }}>
-            <Eyebrow>Unlocked</Eyebrow>
-            <Title>Which game?</Title>
-            <Body>Enter the 5-character code of the game you want to watch over.</Body>
-          </View>
-          <TextInput
-            testID="moderator-code-input"
-            value={codeInput}
-            onChangeText={(t) => setCodeInput(t.replace(/[^a-zA-Z0-9]/g, "").toUpperCase().slice(0, 5))}
-            placeholder="ABCDE"
-            placeholderTextColor="#8E989E"
-            autoCapitalize="characters"
-            autoCorrect={false}
-            autoFocus
-            returnKeyType="go"
-            onSubmitEditing={() => codeInput.length === 5 && setCode(codeInput)}
-            style={[styles.input, styles.codeInput]}
-          />
-          <Button testID="moderator-reveal-button" label="Reveal everything" icon="eye" disabled={codeInput.length !== 5} onPress={() => setCode(codeInput)} />
-        </KeyboardAwareScrollView>
-      </View>
-    );
+    return <PickGame passphrase={unlockedPass} codeInput={codeInput} setCodeInput={setCodeInput} onPick={setCode} />;
   }
 
   return (
@@ -99,6 +74,106 @@ export default function Moderator() {
       onChangeGame={() => { setCode(null); setCodeInput(""); }}
       onLock={() => { setUnlockedPass(null); setPass(""); setCode(null); setCodeInput(""); }}
     />
+  );
+}
+
+function timeAgo(iso: string): string {
+  const s = Math.max(0, (Date.now() - new Date(iso).getTime()) / 1000);
+  if (s < 60) return "just now";
+  if (s < 3600) return `${Math.floor(s / 60)}m ago`;
+  if (s < 86400) return `${Math.floor(s / 3600)}h ago`;
+  return `${Math.floor(s / 86400)}d ago`;
+}
+
+function PickGame({ passphrase, codeInput, setCodeInput, onPick }: { passphrase: string; codeInput: string; setCodeInput: (s: string) => void; onPick: (c: string) => void }) {
+  const styles = useStyles();
+  const { colors } = useTheme();
+  const insets = useSafeAreaInsets();
+  const { data, isLoading, refetch, isRefetching } = useQuery({
+    queryKey: ["moderator-games"],
+    queryFn: () => api.moderatorGames(passphrase),
+    refetchInterval: 8000, // keep the live list fresh
+  });
+  const games = data?.games ?? [];
+  const live = games.filter((g) => g.live);
+  const ended = games.filter((g) => !g.live).slice(0, 8);
+
+  return (
+    <View style={styles.root} testID="moderator-screen">
+      <ScreenHeader title="Moderator" testID="moderator" />
+      <KeyboardAwareScrollView bottomOffset={24} keyboardShouldPersistTaps="handled" contentContainerStyle={[styles.scroll, { paddingBottom: insets.bottom + spacing.lg }]}>
+        <View style={{ gap: spacing.sm }}>
+          <Eyebrow>Unlocked</Eyebrow>
+          <Title>Which game?</Title>
+          <Body>Tap a live game below, or enter a 5-character code.</Body>
+        </View>
+
+        <View style={styles.listHead}>
+          <Text style={styles.listHeadText}>{isLoading ? "Loading games…" : live.length ? "Live games — most recent first" : "No live games right now"}</Text>
+          <Pressable testID="moderator-games-refresh" onPress={() => refetch()} hitSlop={8}>
+            <Ionicons name="refresh" size={18} color={isRefetching ? colors.muted : colors.brand} />
+          </Pressable>
+        </View>
+
+        {live.map((g) => <GameRow key={g.code} g={g} onPick={onPick} />)}
+
+        {ended.length ? (
+          <>
+            <Text style={[styles.listHeadText, { marginTop: spacing.sm }]}>Recently finished</Text>
+            {ended.map((g) => <GameRow key={g.code} g={g} onPick={onPick} />)}
+          </>
+        ) : null}
+
+        <View style={styles.orRow}><View style={styles.orLine} /><Text style={styles.orText}>or enter a code</Text><View style={styles.orLine} /></View>
+        <TextInput
+          testID="moderator-code-input"
+          value={codeInput}
+          onChangeText={(t) => setCodeInput(t.replace(/[^a-zA-Z0-9]/g, "").toUpperCase().slice(0, 5))}
+          placeholder="ABCDE"
+          placeholderTextColor="#8E989E"
+          autoCapitalize="characters"
+          autoCorrect={false}
+          returnKeyType="go"
+          onSubmitEditing={() => codeInput.length === 5 && onPick(codeInput)}
+          style={[styles.input, styles.codeInput]}
+        />
+        <Button testID="moderator-reveal-button" label="Reveal everything" icon="eye" disabled={codeInput.length !== 5} onPress={() => onPick(codeInput)} />
+      </KeyboardAwareScrollView>
+    </View>
+  );
+}
+
+const SHORT_PHASE: Record<string, string> = {
+  setup: "Before Day 1",
+  day: "Daytime",
+  roundtable: "Round Table",
+  banished: "Banishment",
+  night: "Night",
+  reveal: "Morning reveal",
+  ended: "Finished",
+};
+
+function GameRow({ g, onPick }: { g: import("@/src/api").ModeratorGame; onPick: (c: string) => void }) {
+  const styles = useStyles();
+  const { colors } = useTheme();
+  const sub = g.winner
+    ? g.winner === "traitors" ? "Traitors won" : "Faithful won"
+    : g.phase === "setup" ? "Before Day 1" : `Day ${g.day} · ${SHORT_PHASE[g.phase] ?? g.phase}`;
+  return (
+    <Pressable testID={`moderator-game-${g.code}`} onPress={() => onPick(g.code)} style={({ pressed }) => [styles.gameRow, pressed && { backgroundColor: colors.surfaceTertiary }]}>
+      <View style={[styles.gameDot, { backgroundColor: g.live ? "#3E6950" : colors.border }]}>
+        <Ionicons name={g.live ? "ellipse" : "flag"} size={g.live ? 10 : 14} color={g.live ? "#7FDFA6" : colors.muted} />
+      </View>
+      <View style={{ flex: 1, minWidth: 0 }}>
+        <Text style={styles.gameCode}>{g.code}</Text>
+        <Text style={styles.gameSub} numberOfLines={1}>{sub}</Text>
+      </View>
+      <View style={{ alignItems: "flex-end", gap: 1 }}>
+        <Text style={styles.gameTime}>{timeAgo(g.updated_at)}</Text>
+        <Text style={styles.gameInCount}>{g.alive}/{g.players} in</Text>
+        <Ionicons name="chevron-forward" size={18} color={colors.borderStrong} />
+      </View>
+    </Pressable>
   );
 }
 
@@ -416,6 +491,17 @@ const useStyles = makeStyles((c) => ({
     paddingHorizontal: spacing.md,
   },
   codeInput: { fontSize: 36, fontWeight: "700", letterSpacing: 10, textAlign: "center", color: c.brand, borderColor: c.brandSecondary, height: 80 },
+  listHead: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
+  listHeadText: { color: c.muted, fontSize: 13, letterSpacing: 1.5, textTransform: "uppercase", fontWeight: "700" },
+  gameRow: { flexDirection: "row", alignItems: "center", gap: spacing.md, backgroundColor: c.surfaceSecondary, borderRadius: radius.md, padding: spacing.md, borderWidth: 1, borderColor: c.border },
+  gameDot: { width: 28, height: 28, borderRadius: 14, alignItems: "center", justifyContent: "center" },
+  gameCode: { color: c.brand, fontSize: 20, fontWeight: "800", letterSpacing: 2 },
+  gameSub: { color: c.onSurfaceTertiary, fontSize: 14, marginTop: 1 },
+  gameTime: { color: c.muted, fontSize: 12, fontWeight: "600" },
+  gameInCount: { color: c.onSurfaceTertiary, fontSize: 12, fontWeight: "600" },
+  orRow: { flexDirection: "row", alignItems: "center", gap: spacing.md, marginTop: spacing.sm },
+  orLine: { flex: 1, height: 1, backgroundColor: c.divider },
+  orText: { color: c.muted, fontSize: 13 },
   topbar: {
     flexDirection: "row",
     alignItems: "center",

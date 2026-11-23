@@ -137,6 +137,7 @@ class Game(BaseModel):
     vote_log: List[dict] = []
     winner: Optional[str] = None
     created_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+    updated_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
 
     @classmethod
     def from_mongo(cls, doc: dict) -> "Game":
@@ -228,6 +229,7 @@ async def require_game(code: str) -> Game:
 
 
 async def save(g: Game):
+    g.updated_at = datetime.now(timezone.utc).isoformat()  # track last activity for the moderator list
     await db.games.replace_one({"code": g.code}, g.to_mongo(), upsert=True)
 
 
@@ -565,6 +567,36 @@ async def moderator_unlock(data: ModeratorIn):
     """Check the moderator passphrase alone, so the view can gate before a code is entered."""
     check_moderator(data.passphrase)
     return {"ok": True}
+
+
+@api_router.post("/moderator/games")
+async def moderator_games(data: ModeratorIn):
+    """List games for the moderator, most recently played first (live games on top)."""
+    check_moderator(data.passphrase)
+    docs = await db.games.find(
+        {"code": {"$exists": True}},
+        {"_id": 0, "code": 1, "phase": 1, "day": 1, "players": 1, "winner": 1, "updated_at": 1, "created_at": 1},
+    ).to_list(500)
+
+    def sort_key(d):
+        return d.get("updated_at") or d.get("created_at") or ""
+
+    out = []
+    for d in sorted(docs, key=sort_key, reverse=True):
+        players = d.get("players", [])
+        out.append({
+            "code": d.get("code"),
+            "phase": d.get("phase"),
+            "stage": STAGE_LABEL.get(d.get("phase"), d.get("phase")),
+            "day": d.get("day"),
+            "total_days": TOTAL_DAYS,
+            "players": len(players),
+            "alive": sum(1 for p in players if p.get("lives", 0) > 0),
+            "winner": d.get("winner"),
+            "live": d.get("phase") != "ended",
+            "updated_at": d.get("updated_at") or d.get("created_at"),
+        })
+    return {"games": out}
 
 
 @api_router.post("/games/{code}/moderator")

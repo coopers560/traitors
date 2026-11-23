@@ -141,6 +141,8 @@ function Dashboard({ game, refreshing, onRefresh }: { game: ActiveGame; refreshi
   const [invite, setInvite] = useState(false);
   const [confirmEnd, setConfirmEnd] = useState(false);
   const [confirmSkip, setConfirmSkip] = useState(false);
+  // Reconfirm the big "move the whole game on" taps so no one skips a stage by accident.
+  const [confirmGo, setConfirmGo] = useState<{ label: string; run: () => void } | null>(null);
   const [endPin, setEndPin] = useState("");
   const [peekMode, setPeekMode] = useState(false);
   const [confirmLeave, setConfirmLeave] = useState(false);
@@ -151,8 +153,10 @@ function Dashboard({ game, refreshing, onRefresh }: { game: ActiveGame; refreshi
     onSuccess: (s) => {
       qc.setQueryData(["game"], s);
       setConfirmSkip(false);
+      setConfirmGo(null);
       if (s.exists && (s.phase === "banished" || s.phase === "reveal")) router.push("/reveal");
     },
+    onError: () => setConfirmGo(null),
   });
   const endGame = useMutation({
     mutationFn: (pin: string) => api.deleteGame({ player_id: game.host_id ?? "", pin }),
@@ -252,18 +256,18 @@ function Dashboard({ game, refreshing, onRefresh }: { game: ActiveGame; refreshi
             ) : null}
             <ErrorText testID="advance-error" message={advance.error?.message} />
             {phase === "setup" ? (
-              <Button testID="advance-start-day-button" label="Begin Day 1" icon="sunny" disabled={!allDone} loading={advance.isPending} onPress={() => advance.mutate()} />
+              <Button testID="advance-start-day-button" label="Begin Day 1" icon="sunny" disabled={!allDone} loading={advance.isPending} onPress={() => setConfirmGo({ label: "Begin Day 1", run: () => advance.mutate() })} />
             ) : phase === "day" ? (
-              <Button testID="advance-round-table-button" label={game.endgame ? "Gather for the final vote" : "Gather at the Round Table"} icon="flame" loading={advance.isPending} onPress={() => advance.mutate()} />
+              <Button testID="advance-round-table-button" label={game.endgame ? "Gather for the final vote" : "Gather at the Round Table"} icon="flame" loading={advance.isPending} onPress={() => setConfirmGo({ label: game.endgame ? "Gather for the final vote" : "Gather at the Round Table", run: () => advance.mutate() })} />
             ) : phase === "roundtable" ? (
               <>
-                <Button testID="advance-reveal-button" label={allDone ? (game.endgame ? "Reveal the vote" : "Reveal the banishment") : "Waiting for votes…"} icon="mail-open" disabled={!allDone} loading={advance.isPending && allDone} onPress={() => advance.mutate()} />
+                <Button testID="advance-reveal-button" label={allDone ? (game.endgame ? "Reveal the vote" : "Reveal the banishment") : "Waiting for votes…"} icon="mail-open" disabled={!allDone} loading={advance.isPending && allDone} onPress={() => setConfirmGo({ label: game.endgame ? "Reveal the vote" : "Reveal the banishment", run: () => advance.mutate() })} />
                 {!allDone ? (
                   <Button testID="advance-skip-missing-button" label="Someone missing? Skip & reveal" variant="ghost" icon="play-skip-forward-outline" onPress={() => setConfirmSkip(true)} />
                 ) : null}
               </>
             ) : phase === "night" ? (
-              <Button testID="advance-murder-button" label={allDone ? "Reveal the murder" : "Waiting for the night…"} icon="moon" disabled={!allDone} loading={advance.isPending} onPress={() => advance.mutate()} />
+              <Button testID="advance-murder-button" label={allDone ? "Reveal the murder" : "Waiting for the night…"} icon="moon" disabled={!allDone} loading={advance.isPending} onPress={() => setConfirmGo({ label: "Reveal the murder", run: () => advance.mutate() })} />
             ) : phase === "banished" ? (
               <Button testID="open-banishment-button" label="Open the banishment" icon="mail" onPress={() => router.push("/reveal")} />
             ) : (
@@ -308,6 +312,16 @@ function Dashboard({ game, refreshing, onRefresh }: { game: ActiveGame; refreshi
       </ScrollView>
 
       <InviteSheet visible={invite} code={game.code} onClose={() => setInvite(false)} />
+
+      <ConfirmSheet
+        visible={!!confirmGo}
+        title="Move the game on?"
+        message={`This advances the game on every phone: "${confirmGo?.label}". Make sure everyone is together and ready — you can't go back a stage.`}
+        confirmLabel={confirmGo?.label ?? "Continue"}
+        loading={advance.isPending}
+        onConfirm={() => confirmGo?.run()}
+        onCancel={() => setConfirmGo(null)}
+      />
 
       <ConfirmSheet
         visible={confirmSkip}

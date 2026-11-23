@@ -78,6 +78,19 @@ export type PrivateView = {
   recruit?: { id: string; name: string } | null;
 };
 
+export type ModeratorGame = {
+  code: string;
+  phase: Phase;
+  stage: string;
+  day: number;
+  total_days: number;
+  players: number;
+  alive: number;
+  winner: "faithful" | "traitors" | null;
+  live: boolean;
+  updated_at: string;
+};
+
 export type VoteEdge = { voter_id: string; voter_name: string | null; target_id: string; target_name: string | null };
 
 export type VoteLogEntry = {
@@ -197,6 +210,7 @@ export const api = {
   advance: (expected: Phase, day: number, force?: boolean) =>
     request<GameState>(`/games/${currentCode}/advance?expected=${expected}&expected_day=${day}${force ? "&force=true" : ""}`, "POST"),
   moderatorUnlock: (passphrase: string) => request<{ ok: boolean }>("/moderator/unlock", "POST", { passphrase }),
+  moderatorGames: (passphrase: string) => request<{ games: ModeratorGame[] }>("/moderator/games", "POST", { passphrase }),
   moderatorView: (code: string, passphrase: string) =>
     request<ModeratorView>(`/games/${encodeURIComponent(code.trim().toUpperCase())}/moderator`, "POST", { passphrase }),
   getActions: () => request<ActionList>(`/games/${currentCode}/actions`),
