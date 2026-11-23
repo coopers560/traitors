@@ -550,3 +550,37 @@ class TestDelete:
         r = S.get(f"{G()}")
         assert r.status_code == 404 and r.json()["detail"] == "No game found with that code"
         assert S.post(f"{G()}/advance").status_code == 404
+
+
+class TestModeratorLog:
+    def test_event_log_is_moderator_only_and_detailed(self):
+        g, roles = setup_game_traitors(8, 1)
+        ps = g["players"]
+        tr = next(p for p in ps if roles[p["id"]] == "traitor")
+        fa = [p for p in ps if roles[p["id"]] == "faithful"]
+        finish_setup(ps)
+        assert S.post(f"{G()}/advance").json()["phase"] == "night"
+        do_night(roles, murder_target=fa[0]["id"])
+        assert S.post(f"{G()}/advance").json()["phase"] == "gather"
+        do_gather(roles, murder_done=True)
+        assert S.post(f"{G()}/advance").json()["phase"] == "reveal"
+        assert S.post(f"{G()}/advance").json()["phase"] == "roundtable"
+        cast_votes({p["id"]: (fa[1]["id"] if p["id"] != fa[1]["id"] else fa[2]["id"]) for p in ps})
+        pub = S.post(f"{G()}/advance").json()
+        # never in the player-facing state
+        assert "event_log" not in pub and "event_log" not in S.get(G()).json()
+        mod = S.post(f"{G()}/moderator", json={"passphrase": "!Uganda02!"}).json()
+        texts = [e["text"] for e in mod["event_log"]]
+        kinds = {e["kind"] for e in mod["event_log"]}
+        assert {"setup", "role", "stage", "victim", "murder", "pass", "plan", "checkin", "confirm", "reveal", "vote", "banish"} <= kinds
+        assert any(tr["name"] in t and "picked" in t for t in texts)
+        assert any("sealed the murder" in t for t in texts)
+        assert any(f"{fa[0]['name']}" in t and "was murdered" in t for t in texts)
+        # the role-neutral view never names a Traitor's secret choices
+        for e in mod["event_log"]:
+            if e["kind"] in ("victim", "confirm", "plan"):
+                assert e["neutral"] is None
+            if e["neutral"]:
+                assert "(Traitor)" not in e["neutral"] and "Traitors:" not in e["neutral"]
+        # every entry carries a timestamp, day and phase
+        assert all(e["t"] and e["day"] and e["phase"] for e in mod["event_log"])

@@ -359,6 +359,9 @@ function Breakdown({ code, passphrase, onChangeGame, onLock }: { code: string; p
           </View>
         ) : null}
 
+        {/* Claudia's log: every action, newest first */}
+        <EventLog events={m.event_log} currentDay={m.day} rolesShown={rolesShown} />
+
         {/* Roster — grouped by allegiance when revealed, one neutral list when hidden */}
         {rolesShown ? (
           <>
@@ -388,6 +391,80 @@ function Breakdown({ code, passphrase, onChangeGame, onLock }: { code: string; p
           <Button testID="moderator-lock-button" label="Lock and leave" variant="ghost" icon="lock-closed" onPress={() => { onLock(); router.back(); }} />
         </View>
       </ScrollView>
+    </View>
+  );
+}
+
+const EVENT_ICON: Record<string, { icon: React.ComponentProps<typeof Ionicons>["name"]; tone: "traitor" | "gold" | "muted" }> = {
+  setup: { icon: "flag", tone: "gold" },
+  role: { icon: "eye-outline", tone: "muted" },
+  stage: { icon: "time-outline", tone: "gold" },
+  victim: { icon: "skull-outline", tone: "traitor" },
+  murder: { icon: "skull", tone: "traitor" },
+  recruit: { icon: "person-add", tone: "traitor" },
+  lielow: { icon: "moon-outline", tone: "traitor" },
+  pass: { icon: "moon-outline", tone: "muted" },
+  plan: { icon: "document-text-outline", tone: "traitor" },
+  checkin: { icon: "checkmark-circle-outline", tone: "muted" },
+  confirm: { icon: "checkmark-done", tone: "traitor" },
+  reveal: { icon: "mail-open-outline", tone: "gold" },
+  vote: { icon: "hand-left-outline", tone: "muted" },
+  banish: { icon: "flame", tone: "gold" },
+  end: { icon: "trophy", tone: "gold" },
+  actions: { icon: "list-outline", tone: "muted" },
+};
+
+const SECRET_NIGHT_KINDS = new Set(["murder", "recruit", "lielow", "pass"]);
+
+function EventLog({ events, currentDay, rolesShown }: { events: ModeratorView["event_log"]; currentDay: number; rolesShown: boolean }) {
+  const styles = useStyles();
+  const { colors } = useTheme();
+  const [showAll, setShowAll] = useState(false);
+  // With roles hidden, show the role-neutral wording and drop events that would give a Traitor away.
+  const visible = events
+    .map((e) => ({ ...e, shown: rolesShown ? e.text : e.neutral }))
+    .filter((e): e is typeof e & { shown: string } => !!e.shown)
+    .reverse();
+  const rows = showAll ? visible : visible.filter((e) => e.day === currentDay);
+  const hiddenCount = visible.length - rows.length;
+  const byDay: { day: number; items: typeof rows }[] = [];
+  for (const e of rows) {
+    const last = byDay[byDay.length - 1];
+    if (last && last.day === e.day) last.items.push(e);
+    else byDay.push({ day: e.day, items: [e] });
+  }
+  const tone = (t: "traitor" | "gold" | "muted") => (t === "traitor" ? colors.traitor : t === "gold" ? colors.brand : colors.muted);
+  return (
+    <View style={styles.card} testID="moderator-log">
+      <View style={styles.logHead}>
+        <Text style={styles.cardLabel}>Everything that&apos;s happened</Text>
+        <Text style={styles.logCount}>{visible.length} events</Text>
+      </View>
+      {!rolesShown ? <Text style={styles.logHint}>Roles hidden: secret Traitor moves are left out. Tap “Reveal roles” for the full log.</Text> : null}
+      {byDay.map((d) => (
+        <View key={d.day} style={{ gap: 2 }}>
+          <Text style={styles.logDay}>Day {d.day}</Text>
+          {d.items.map((e, i) => {
+            // With roles hidden every night turn must look identical — a Traitor's move
+            // (murder / recruit / lying low) shows exactly like a Faithful's pass.
+            const kind = !rolesShown && SECRET_NIGHT_KINDS.has(e.kind) ? "pass" : e.kind;
+            const ic = EVENT_ICON[kind] ?? { icon: "ellipse-outline", tone: "muted" as const };
+            const time = new Date(e.t).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false });
+            return (
+              <View key={`${e.t}-${i}`} style={styles.logRow} testID={`moderator-log-${kind}`}>
+                <Text style={styles.logTime}>{time}</Text>
+                <Ionicons name={ic.icon} size={15} color={tone(ic.tone)} style={{ marginTop: 2 }} />
+                <Text style={[styles.logText, e.kind === "stage" && { color: colors.brand, fontWeight: "700" }]}>{e.shown}</Text>
+              </View>
+            );
+          })}
+        </View>
+      ))}
+      {hiddenCount > 0 || showAll ? (
+        <Pressable testID="moderator-log-toggle" onPress={() => setShowAll((v) => !v)} hitSlop={8}>
+          <Text style={styles.logMore}>{showAll ? "Show today only" : `Show earlier days (${hiddenCount} more)`}</Text>
+        </Pressable>
+      ) : null}
     </View>
   );
 }
@@ -574,6 +651,14 @@ const useStyles = makeStyles((c) => ({
   winCard: { backgroundColor: c.surfaceSecondary, borderRadius: radius.lg, padding: spacing.lg, gap: spacing.xs, borderWidth: 1, borderColor: c.border },
   winText: { color: c.onSurfaceSecondary, fontSize: 16, lineHeight: 23 },
   card: { backgroundColor: c.surfaceSecondary, borderRadius: radius.lg, padding: spacing.lg, gap: spacing.xs, borderWidth: 1, borderColor: c.border },
+  logHead: { flexDirection: "row", justifyContent: "space-between", alignItems: "baseline" },
+  logCount: { color: c.muted, fontSize: 12, fontWeight: "600" },
+  logHint: { color: c.muted, fontSize: 13, lineHeight: 18, marginBottom: spacing.xs },
+  logDay: { color: c.brand, fontSize: 12, letterSpacing: 1.5, textTransform: "uppercase", fontWeight: "800", marginTop: spacing.sm, marginBottom: 2 },
+  logRow: { flexDirection: "row", gap: spacing.sm, alignItems: "flex-start", paddingVertical: 3 },
+  logTime: { color: c.muted, fontSize: 12, width: 40, marginTop: 2, fontVariant: ["tabular-nums"] },
+  logText: { color: c.onSurfaceSecondary, fontSize: 14, lineHeight: 20, flex: 1 },
+  logMore: { color: c.brand, fontSize: 14, fontWeight: "700", marginTop: spacing.sm },
   cardLabel: { color: c.muted, fontSize: 12, letterSpacing: 2, textTransform: "uppercase", fontWeight: "700", marginBottom: spacing.xs },
   progressText: { color: c.onSurface, fontSize: 18, fontWeight: "600" },
   waiting: { color: c.onSurfaceTertiary, fontSize: 15, lineHeight: 21 },

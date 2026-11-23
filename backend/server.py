@@ -136,6 +136,10 @@ class Game(BaseModel):
     # Who voted for whom at each Round Table — kept for the moderator only and never
     # put in the public history, so secret ballots stay secret to the players.
     vote_log: List[dict] = []
+    # Everything that happens, in order — the moderator's ("Claudia's") log. Never sent to
+    # players. Each entry has a full `text` and a role-neutral `neutral` text (or None) so the
+    # moderator can follow along with roles hidden without anyone being given away.
+    event_log: List[dict] = []
     winner: Optional[str] = None
     created_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
     updated_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
@@ -308,6 +312,28 @@ STAGE_LABEL = {
 }
 
 
+EVENT_LOG_CAP = 2000
+
+
+def log(g: Game, kind: str, text: str, neutral: Optional[str] = "same") -> None:
+    """Record a moderator-only event. `neutral` is what to show while roles are hidden:
+    "same" reuses `text`; None means the event itself would give a Traitor away."""
+    g.event_log.append({
+        "t": datetime.now(timezone.utc).isoformat(),
+        "day": g.day,
+        "phase": g.phase,
+        "kind": kind,
+        "text": text,
+        "neutral": text if neutral == "same" else neutral,
+    })
+    if len(g.event_log) > EVENT_LOG_CAP:
+        del g.event_log[:-EVENT_LOG_CAP]
+
+
+def _role(p: Player) -> str:
+    return "Traitor" if p.role == "traitor" else "Faithful"
+
+
 def snapshot_votes(g: Game) -> dict:
     """Freeze who voted for whom this Round Table, for the moderator-only vote log."""
     return {
@@ -430,6 +456,7 @@ def moderator_state(g: Game) -> dict:
         "tonight": tonight,
         "round_table": round_table,
         "vote_log": g.vote_log,  # moderator-only: who voted for whom, each past Round Table
+        "event_log": g.event_log,  # moderator-only: every action, in order
         "history": g.history,  # the full record, murder methods included
     }
 
@@ -559,6 +586,7 @@ async def save_actions(code: str, data: ActionsIn):
     if len(cleaned) < 3:
         raise HTTPException(400, "Keep at least 3 actions so the Traitors have choices")
     g.actions = cleaned
+    log(g, "actions", f"Secret actions list edited ({len(cleaned)} actions)")
     await save(g)
     return actions_out(g)
 
@@ -568,6 +596,7 @@ async def save_actions(code: str, data: ActionsIn):
 async def reset_actions(code: str):
     g = await require_game(code)
     g.actions = list(ACTIONS)
+    log(g, "actions", "Secret actions list reset to the original")
     await save(g)
     return actions_out(g)
 
@@ -643,6 +672,9 @@ async def create_game(data: CreateGameIn):
     ]
     g = Game(code=await new_code(), players=players)
     g.host_id = players[0].id  # the first player entered is the host/creator
+    traitors = ", ".join(pl.name for pl in players if pl.role == "traitor")
+    log(g, "setup", f"Game created: {len(players)} players, host {players[0].name}. Traitors: {traitors}",
+        f"Game created: {len(players)} players, host {players[0].name}")
     await save(g)
     return public_state(g)
 
@@ -705,16 +737,26 @@ async def take_turn(code: str, data: TurnIn):
     g = await require_game(code)
     p = auth(g, data)
     is_traitor = p.role == "traitor"
+    first_turn = p.id not in g.turns_done
 
     if g.phase == "setup":
-        pass  # everyone just sees their role in private; nothing to choose yet
+        # everyone just sees their role in private; nothing to choose yet
+        again = "" if first_turn else " again"
+        log(g, "role", f"{p.name} saw their role{again} — {_role(p)}", f"{p.name} saw their role{again}")
     elif g.phase == "gather":
         # Everyone checks in before the murder is revealed. A Traitor also confirms whether
         # tonight's murder was carried out in plain sight; any Traitor's "yes" counts.
         if p.lives <= 0:
             raise HTTPException(400, "You have been eliminated")
-        if is_traitor and data.murder_done:
-            g.murder_done = True
+        if is_traitor and data.murder_done is not None:
+            victim = name_of(g, g.target_id) or "the victim"
+            if data.murder_done:
+                g.murder_done = True
+                log(g, "confirm", f"{p.name} (Traitor) confirmed the murder of {victim} WAS carried out", None)
+            else:
+                log(g, "confirm", f"{p.name} (Traitor) said the murder of {victim} was NOT carried out", None)
+        if first_turn:
+            log(g, "checkin", f"{p.name} checked in for the Round Table")
     elif g.phase == "roundtable":
         if p.lives <= 0:
             raise HTTPException(400, "You have been eliminated and cannot vote")
@@ -723,10 +765,16 @@ async def take_turn(code: str, data: TurnIn):
             g.votes.pop(p.id, None)
             if p.id not in g.end_votes:
                 g.end_votes.append(p.id)
+            log(g, "vote", f"{p.name} voted to END the game")
         else:
             tgt = g.player(data.vote_target_id)
             if not tgt or tgt.lives <= 0 or tgt.id == p.id:
                 raise HTTPException(400, "Choose someone to banish")
+            prev = g.votes.get(p.id)
+            if prev and prev != tgt.id:
+                log(g, "vote", f"{p.name} changed their vote from {name_of(g, prev)} to {tgt.name}")
+            elif prev != tgt.id:
+                log(g, "vote", f"{p.name} voted to banish {tgt.name}")
             g.votes[p.id] = tgt.id
             if p.id in g.end_votes:
                 g.end_votes.remove(p.id)
@@ -746,6 +794,8 @@ async def take_turn(code: str, data: TurnIn):
             g.target_id = g.action = None
             g.action_choices = []
             g.murder_confirmed = False
+            log(g, "recruit", f"{p.name} (Traitor) chose to recruit {r.name} instead of murdering",
+                f"{p.name} took their night turn" if first_turn else None)
         elif is_traitor and p.lives > 0 and data.target_id:
             # Step 1: choose the victim, get three action options (no turn taken yet)
             valid_victim(g, data.target_id)
@@ -754,6 +804,8 @@ async def take_turn(code: str, data: TurnIn):
             g.action = None
             g.murder_confirmed = False
             g.action_choices = g.pick_actions(g.actions, 3)
+            log(g, "victim", f"{p.name} (Traitor) picked {name_of(g, g.target_id)} as the victim — offered: "
+                + " · ".join(f"“{a}”" for a in g.action_choices), None)
             await save(g)
             return await private_view(code, AuthIn(player_id=data.player_id, pin=data.pin))
         elif is_traitor and p.lives > 0 and data.action:
@@ -767,6 +819,20 @@ async def take_turn(code: str, data: TurnIn):
                 g.used_actions.append(data.action)
             g.action_choices = []
             g.murder_confirmed = True
+            log(g, "murder", f"{p.name} (Traitor) sealed the murder of {name_of(g, g.target_id)}: “{data.action}”",
+                f"{p.name} took their night turn" if first_turn else None)
+        elif is_traitor and p.lives > 0:
+            # A Traitor passing: agreeing with a fellow Traitor's plan, or lying low
+            if g.murder_confirmed or g.recruit_id:
+                what = f"agreed to the plan ({'recruit ' + name_of(g, g.recruit_id) if g.recruit_id else 'murder ' + name_of(g, g.target_id)})"
+            elif g.target_id:
+                what = f"lay low after picking {name_of(g, g.target_id)} — nothing sealed"
+            else:
+                what = "lay low — no murder planned"
+            log(g, "lielow", f"{p.name} (Traitor) {what}", f"{p.name} took their night turn" if first_turn else None)
+        elif p.lives > 0:
+            log(g, "pass", f"{p.name} passed the phone on (nothing to do tonight)",
+                f"{p.name} took their night turn" if first_turn else None)
     else:
         raise HTTPException(400, "It is not time to take a turn")
 
@@ -788,6 +854,7 @@ async def advance(code: str, expected: Optional[str] = None, expected_day: Optio
             raise HTTPException(400, "Every player must see their role first")
         g.phase = "day"
         g.turns_done = []
+        log(g, "stage", "Day 1 began")
     elif g.phase == "day":
         # The Traitors now plot BEFORE the Round Table: each day opens with the night,
         # where they pick the victim and the plain-sight action (or recruit). In the
@@ -795,19 +862,29 @@ async def advance(code: str, expected: Optional[str] = None, expected_day: Optio
         if in_endgame(g):
             g.phase = "roundtable"
             g.turns_done, g.votes, g.end_votes = [], {}, []
+            log(g, "stage", "Endgame: straight to the final vote — banish one more, or end the game")
         else:
             g.phase = "night"
             g.turns_done, g.target_id, g.action, g.murder_confirmed, g.action_choices, g.recruit_id = [], None, None, False, [], None
             g.murder_done = False
+            log(g, "stage", "Night fell — the Traitors plot")
     elif g.phase == "night":
         # The Traitors have planned their victim and action. The murder itself is carried
         # out in plain sight during the day; the group then gathers to check in.
         alive_ids = {p.id for p in g.alive()}
         if not alive_ids.issubset(set(g.turns_done)):
             raise HTTPException(400, "Everyone must take their turn before the Round Table")
+        if g.recruit_id:
+            plan = f"Tonight's plan: recruit {name_of(g, g.recruit_id)}"
+        elif g.murder_confirmed:
+            plan = f"Tonight's plan: murder {name_of(g, g.target_id)} with “{g.action}”"
+        else:
+            plan = "Tonight's plan: no murder — the Traitors lay low"
+        log(g, "plan", plan, None)
         g.phase = "gather"
         g.turns_done = []
         g.murder_done = False
+        log(g, "stage", "Everyone to the Round Table — check-in opened")
     elif g.phase == "gather":
         # Everyone checks in (the Traitors privately confirm whether the murder was carried
         # out) — all of them, so the confirmation never singles a Traitor out. Then the
@@ -828,14 +905,27 @@ async def advance(code: str, expected: Optional[str] = None, expected_day: Optio
             murder = {"success": False}
         g.winner = winner_by_roles(g)  # the murder alone can win it for the Traitors
         g.history.append({"day": g.day, "murder": murder, "banish": None, "recruited": recruited, "winner": g.winner})
+        if recruited:
+            log(g, "reveal", f"No murder — {rp.name} was recruited and is now a Traitor", "Murder reveal: no murder — a Faithful was recruited")
+        elif murder.get("success"):
+            v = g.player(murder["victim_id"])
+            log(g, "reveal", f"Murder revealed: {v.name} ({_role(v)}) was murdered with “{murder.get('action')}”",
+                f"Murder revealed: {v.name} was murdered")
+        elif g.murder_confirmed:
+            log(g, "reveal", f"Murder reveal: nobody died — the murder of {name_of(g, g.target_id)} was not carried out",
+                "Murder reveal: nobody died")
+        else:
+            log(g, "reveal", "Murder reveal: nobody died — the Traitors lay low", "Murder reveal: nobody died")
         g.phase = "reveal"
     elif g.phase == "reveal":
         # The murder has been shown. If it won the game, stop; otherwise the table votes.
         if g.winner:
             g.phase = "ended"
+            log(g, "end", f"Game over — the {g.winner.capitalize()} win")
         else:
             g.phase = "roundtable"
             g.turns_done, g.votes, g.end_votes = [], {}, []
+            log(g, "stage", "Round Table voting opened")
     elif g.phase == "roundtable":
         alive_ids = {p.id for p in g.alive()}
         if not alive_ids.issubset(set(g.turns_done)):
@@ -850,6 +940,7 @@ async def advance(code: str, expected: Optional[str] = None, expected_day: Optio
             g.winner = "traitors" if any(p.role == "traitor" for p in g.alive()) else "faithful"
             g.history.append({"day": g.day, "murder": None, "banish": None, "ended_by_vote": True, "winner": g.winner})
             g.phase = "ended"
+            log(g, "end", f"Everyone voted to end the game — the {g.winner.capitalize()} win")
         else:
             banish = resolve_banish(g)
             g.winner = winner_by_roles(g)
@@ -861,23 +952,34 @@ async def advance(code: str, expected: Optional[str] = None, expected_day: Optio
                 h["winner"] = g.winner
             else:
                 g.history.append({"day": g.day, "murder": None, "banish": banish, "winner": g.winner})
+            tally = " · ".join(f"{t['name']} {t['votes']}" for t in banish["tally"])
+            if banish["tie"] or not banish["target_id"]:
+                log(g, "banish", f"Banishment: tied vote, nobody banished ({tally})")
+            else:
+                bp = g.player(banish["target_id"])
+                log(g, "banish", f"Banishment: {bp.name} was banished — {_role(bp)}"
+                    + (" (kept secret from players)" if banish.get("role_hidden") else "") + f" ({tally})",
+                    f"Banishment: {bp.name} was banished ({tally})")
             g.phase = "banished"
     elif g.phase == "banished":
         # The day is over. The game may be won; the Traitors also win if they survive to the
         # end of the final day. Otherwise a new day (and a new plot) begins.
         if g.winner:
             g.phase = "ended"
+            log(g, "end", f"Game over — the {g.winner.capitalize()} win")
         elif g.day >= TOTAL_DAYS:
             g.winner = "traitors"  # they survived to the final day
             if g.history:
                 g.history[-1]["winner"] = g.winner
             g.phase = "ended"
+            log(g, "end", f"Game over — the Traitors survived to the end of Day {TOTAL_DAYS} and win")
         else:
             g.day += 1
             g.target_id, g.action, g.murder_confirmed, g.action_choices, g.recruit_id = None, None, False, [], None
             g.murder_done = False
             g.turns_done, g.votes, g.end_votes = [], {}, []
             g.phase = "day"
+            log(g, "stage", f"Day {g.day} began")
     else:
         raise HTTPException(400, "The game is over")
     await save(g)

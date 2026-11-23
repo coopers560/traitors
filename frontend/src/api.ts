@@ -96,6 +96,15 @@ export type ModeratorGame = {
 
 export type VoteEdge = { voter_id: string; voter_name: string | null; target_id: string; target_name: string | null };
 
+export type ModeratorEvent = {
+  t: string;
+  day: number;
+  phase: Phase;
+  kind: string;
+  text: string;
+  neutral: string | null;
+};
+
 export type VoteLogEntry = {
   day: number;
   votes: VoteEdge[];
@@ -152,6 +161,7 @@ export type ModeratorView = {
     not_voted: string[];
   } | null;
   vote_log: VoteLogEntry[];
+  event_log: ModeratorEvent[];
   history: DayResult[];
 };
 
