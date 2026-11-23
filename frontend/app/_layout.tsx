@@ -8,6 +8,7 @@ import { KeyboardProvider } from "react-native-keyboard-controller";
 
 import { ErrorBoundary } from "@/src/components/error-boundary";
 import { GameCodeProvider } from "@/src/game-code";
+import { MeProvider } from "@/src/me";
 import { queryClient } from "@/src/query-client";
 import { colors } from "@/src/theme";
 
@@ -26,6 +27,7 @@ export default function RootLayout() {
       <ErrorBoundary>
         <QueryClientProvider client={queryClient}>
           <GameCodeProvider>
+          <MeProvider>
           <KeyboardProvider>
             <StatusBar style="light" />
             {loaded || error ? (
@@ -42,6 +44,7 @@ export default function RootLayout() {
               </View>
             )}
           </KeyboardProvider>
+          </MeProvider>
           </GameCodeProvider>
         </QueryClientProvider>
       </ErrorBoundary>

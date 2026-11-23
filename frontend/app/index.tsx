@@ -12,6 +12,7 @@ import { PinPad } from "@/src/components/pin-pad";
 import { QrCode } from "@/src/components/qr-code";
 import { Backdrop, Body, Button, ErrorText, Eyebrow, IMAGES, Title } from "@/src/components/ui";
 import { useGameCode } from "@/src/game-code";
+import { useMe } from "@/src/me";
 import { inviteLink, shareInvite, shareToWhatsApp } from "@/src/utils/invite";
 import { fonts, makeStyles, radius, spacing, useTheme } from "@/src/theme";
 
@@ -147,6 +148,8 @@ function Dashboard({ game, refreshing, onRefresh }: { game: ActiveGame; refreshi
   const [peekMode, setPeekMode] = useState(false);
   const [confirmLeave, setConfirmLeave] = useState(false);
   const { setCode } = useGameCode();
+  const { me: boundMe, clearMe } = useMe();
+  const boundPlayer = boundMe ? game.players.find((p) => p.id === boundMe.playerId) : null;
 
   const advance = useMutation({
     mutationFn: (force?: boolean) => api.advance(game.phase, game.day, force),
@@ -231,6 +234,9 @@ function Dashboard({ game, refreshing, onRefresh }: { game: ActiveGame; refreshi
           <Button testID="menu-history-button" label="Day history" variant="secondary" icon="time-outline" onPress={() => { setMenu(false); router.push("/history"); }} />
           <Button testID="menu-actions-button" label="Secret actions" variant="secondary" icon="list-outline" onPress={() => { setMenu(false); router.push("/actions"); }} />
           <Button testID="menu-share-code-button" label="Invite players (QR & link)" variant="secondary" icon="qr-code-outline" onPress={openInvite} />
+          {boundPlayer ? (
+            <Button testID="menu-forget-me-button" label={`Forget me on this phone (${boundPlayer.name})`} variant="secondary" icon="phone-portrait-outline" onPress={() => { setMenu(false); clearMe(); }} />
+          ) : null}
           <Button testID="menu-leave-game-button" label="Leave game on this phone" variant="secondary" icon="exit-outline" onPress={() => { setMenu(false); setConfirmLeave(true); }} />
           <Button testID="menu-end-game-button" label="End this game for everyone" variant="danger" icon="trash-outline" onPress={() => { setMenu(false); setEndPin(""); endGame.reset(); setConfirmEnd(true); }} />
         </View>
@@ -240,6 +246,31 @@ function Dashboard({ game, refreshing, onRefresh }: { game: ActiveGame; refreshi
         contentContainerStyle={[styles.scroll, { paddingBottom: insets.bottom + spacing.lg }]}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.brand} />}
       >
+        {boundPlayer ? (
+          <View style={styles.boundCard} testID="bound-banner">
+            <Ionicons name="phone-portrait" size={20} color={colors.brand} />
+            <View style={{ flex: 1, minWidth: 0 }}>
+              <Text style={styles.boundName} numberOfLines={1}>This phone: {boundPlayer.name}</Text>
+              <Text style={styles.boundSub} numberOfLines={1}>
+                {phase === "ended"
+                  ? "Game over"
+                  : !boundPlayer.alive
+                    ? "You're out — tap to peek"
+                    : takingTurns
+                      ? boundPlayer.turn_done ? "You've taken your turn" : "Your turn · no PIN"
+                      : "Tap to check your secret"}
+              </Text>
+            </View>
+            {takingTurns && boundPlayer.alive && !boundPlayer.turn_done ? (
+              <Button testID="bound-take-turn" label="Turn" icon="arrow-forward" onPress={() => onPlayer(boundPlayer)} style={{ minHeight: 44, paddingHorizontal: spacing.md }} />
+            ) : (
+              <Pressable testID="bound-peek" onPress={() => router.push({ pathname: "/player/[id]", params: { id: boundPlayer.id, mode: "peek" } })} style={styles.iconBtn} hitSlop={8}>
+                <Ionicons name="eye-outline" size={22} color={colors.brand} />
+              </Pressable>
+            )}
+          </View>
+        ) : null}
+
         {phase === "ended" ? (
           <EndedCard game={game} />
         ) : (
@@ -589,6 +620,9 @@ const useStyles = makeStyles((c) => ({
     justifyContent: "center",
     backgroundColor: c.surfaceSecondary,
   },
+  boundCard: { flexDirection: "row", alignItems: "center", gap: spacing.md, backgroundColor: c.brandTertiary, borderRadius: radius.lg, padding: spacing.md, borderWidth: 1, borderColor: c.brandSecondary },
+  boundName: { color: c.onSurface, fontSize: 17, fontWeight: "700" },
+  boundSub: { color: c.onBrandTertiary, fontSize: 13, marginTop: 1 },
   progress: { height: 3, backgroundColor: c.surfaceTertiary },
   progressFill: { height: 3, backgroundColor: c.brand },
   menu: { padding: spacing.md, gap: spacing.sm, backgroundColor: c.surfaceSecondary, borderBottomWidth: 1, borderBottomColor: c.border },

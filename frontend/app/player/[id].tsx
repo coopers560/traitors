@@ -1,7 +1,7 @@
 import Ionicons from "@react-native-vector-icons/ionicons";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useLocalSearchParams, useRouter } from "expo-router";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Pressable, ScrollView, Text, View } from "react-native";
 import Animated, { FadeIn, FadeInDown } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -10,6 +10,7 @@ import { api, PrivateView, PublicPlayer } from "@/src/api";
 import { HelpButton } from "@/src/components/help-button";
 import { PinPad } from "@/src/components/pin-pad";
 import { Backdrop, Body, Button, ErrorText, Eyebrow, IMAGES, Title } from "@/src/components/ui";
+import { useMe } from "@/src/me";
 import { fonts, makeStyles, radius, spacing, useTheme } from "@/src/theme";
 
 export default function PlayerTurn() {
@@ -20,13 +21,16 @@ export default function PlayerTurn() {
   const { id, mode } = useLocalSearchParams<{ id: string; mode: "turn" | "peek" }>();
   const { data: game } = useQuery({ queryKey: ["game"], queryFn: api.getGame });
   const qc = useQueryClient();
+  const { me: boundMe, setMe, clearMe } = useMe();
 
   const [pin, setPin] = useState("");
   const [view, setView] = useState<PrivateView | null>(null);
   const [sealed, setSealed] = useState(false);
+  const autoTried = useRef(false);
 
   const players = game?.exists ? game.players : [];
   const me = players.find((p) => p.id === id);
+  const boundHere = boundMe?.playerId === id;
 
   const verify = useMutation({
     mutationFn: () => api.privateView(id, pin),
@@ -38,6 +42,17 @@ export default function PlayerTurn() {
     if (pin.length === 4 && !verify.isPending && !view) verify.mutate();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pin]);
+
+  // This phone is bound to this player: unlock straight away, no PIN pad. If the
+  // saved PIN no longer works (e.g. it was changed), forget the binding and ask.
+  useEffect(() => {
+    if (view || autoTried.current || !boundMe || boundMe.playerId !== id) return;
+    autoTried.current = true;
+    api.privateView(id, boundMe.pin)
+      .then((v) => { setPin(boundMe.pin); setView(v); })
+      .catch(() => clearMe());
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [boundMe, id, view]);
 
   const leave = () => {
     qc.invalidateQueries({ queryKey: ["game"] });
@@ -75,6 +90,20 @@ export default function PlayerTurn() {
       ) : (
         <ScrollView contentContainerStyle={[styles.scroll, { paddingBottom: insets.bottom + spacing.lg }]}>
           <RoleCard view={view} />
+          {boundHere ? (
+            <Pressable testID="forget-me-button" onPress={() => clearMe()} style={styles.rememberOn}>
+              <Ionicons name="checkmark-circle" size={18} color={colors.brand} />
+              <Text style={styles.rememberOnText}>This is your phone — no PIN needed. Tap to forget.</Text>
+            </Pressable>
+          ) : (
+            <Pressable testID="remember-me-button" onPress={() => setMe(id, pin)} style={styles.remember}>
+              <Ionicons name="phone-portrait-outline" size={20} color={colors.brand} />
+              <View style={{ flex: 1 }}>
+                <Text style={styles.rememberText}>Remember me on this phone</Text>
+                <Text style={styles.rememberSub}>Skip the PIN on your turn next time. Only on your own phone.</Text>
+              </View>
+            </Pressable>
+          )}
           {mode === "turn" && view.phase === "setup" ? (
             <SetupTurn view={view} pin={pin} onSealed={() => setSealed(true)} />
           ) : mode === "turn" && view.phase === "roundtable" && view.alive ? (
@@ -425,4 +454,9 @@ const useStyles = makeStyles((c) => ({
   },
   pickOn: { backgroundColor: c.brandPrimary, borderColor: c.brandPrimary },
   pickText: { color: c.onSurface, fontSize: 19, fontWeight: "600" },
+  remember: { flexDirection: "row", alignItems: "center", gap: spacing.sm, backgroundColor: c.surfaceSecondary, borderWidth: 1, borderColor: c.brandSecondary, borderRadius: radius.md, padding: spacing.md },
+  rememberText: { color: c.onSurface, fontSize: 16, fontWeight: "700" },
+  rememberSub: { color: c.muted, fontSize: 13, lineHeight: 18, marginTop: 1 },
+  rememberOn: { flexDirection: "row", alignItems: "center", gap: spacing.sm, paddingVertical: spacing.xs },
+  rememberOnText: { color: c.onSurfaceTertiary, fontSize: 14, flex: 1 },
 }));
