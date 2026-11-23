@@ -1,3 +1,4 @@
+import Ionicons from "@react-native-vector-icons/ionicons";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useRouter } from "expo-router";
 import { useEffect, useRef, useState } from "react";
@@ -209,6 +210,7 @@ function Murder({ r }: { r: DayResult }) {
 
 function Banish({ r }: { r: DayResult }) {
   const styles = useStyles();
+  const { colors } = useTheme();
   const b = r.banish;
   if (!b) return null;
   return (
@@ -238,6 +240,18 @@ function Banish({ r }: { r: DayResult }) {
             <Text style={styles.tallyVotes}>{t.votes}</Text>
           </View>
         ))}
+        {b.votes && b.votes.length ? (
+          <View style={styles.whoVoted} testID="reveal-who-voted">
+            <Text style={styles.whoVotedLabel}>Who voted for whom</Text>
+            {b.votes.map((v) => (
+              <View key={v.voter_id} style={styles.voteRow}>
+                <Text style={styles.voterName} numberOfLines={1}>{v.voter_name}</Text>
+                <Ionicons name="arrow-forward" size={14} color={colors.muted} />
+                <Text style={styles.voteFor} numberOfLines={1}>{v.target_name}</Text>
+              </View>
+            ))}
+          </View>
+        ) : null}
       </View>
     </Animated.View>
   );
@@ -291,4 +305,9 @@ const useStyles = makeStyles((c) => ({
   tallyRow: { flexDirection: "row", justifyContent: "space-between", paddingVertical: 4 },
   tallyName: { color: c.onSurface, fontSize: 18 },
   tallyVotes: { color: c.brand, fontSize: 18, fontWeight: "700" },
+  whoVoted: { marginTop: spacing.sm, paddingTop: spacing.sm, borderTopWidth: 1, borderTopColor: c.divider, gap: 4 },
+  whoVotedLabel: { color: c.muted, fontSize: 12, letterSpacing: 1.5, textTransform: "uppercase", fontWeight: "600", marginBottom: 2 },
+  voteRow: { flexDirection: "row", alignItems: "center", gap: spacing.sm, paddingVertical: 2 },
+  voterName: { color: c.onSurface, fontSize: 16, fontWeight: "600", flex: 1 },
+  voteFor: { color: c.onSurfaceSecondary, fontSize: 16, flex: 1, textAlign: "right" },
 }));

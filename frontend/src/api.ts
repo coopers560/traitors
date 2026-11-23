@@ -25,6 +25,7 @@ export type DayResult = {
   } | null;
   banish: {
     tally: { player_id: string; name: string; votes: number }[];
+    votes?: { voter_id: string; voter_name: string | null; target_id: string; target_name: string | null }[];
     tie: boolean;
     target_id: string | null;
     name?: string;

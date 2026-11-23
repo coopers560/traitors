@@ -89,6 +89,18 @@ function DayCard({ h, index }: { h: DayResult; index: number }) {
               </View>
             ))}
           </View>
+          {b.votes && b.votes.length ? (
+            <View style={styles.whoVoted}>
+              <Text style={styles.whoVotedLabel}>Who voted for whom</Text>
+              {b.votes.map((v) => (
+                <View key={v.voter_id} style={styles.voteRow}>
+                  <Text style={styles.voterName} numberOfLines={1}>{v.voter_name}</Text>
+                  <Ionicons name="arrow-forward" size={13} color={colors.muted} />
+                  <Text style={styles.voteFor} numberOfLines={1}>{v.target_name}</Text>
+                </View>
+              ))}
+            </View>
+          ) : null}
         </View>
       ) : null}
     </Animated.View>
@@ -109,4 +121,9 @@ const useStyles = makeStyles((c) => ({
   tallyRow: { flexDirection: "row", justifyContent: "space-between" },
   tallyName: { color: c.onSurfaceSecondary, fontSize: 16 },
   tallyVotes: { color: c.onSurfaceTertiary, fontSize: 16 },
+  whoVoted: { marginTop: spacing.sm, paddingTop: spacing.sm, borderTopWidth: 1, borderTopColor: c.divider, gap: 2 },
+  whoVotedLabel: { color: c.muted, fontSize: 11, letterSpacing: 1.5, textTransform: "uppercase", fontWeight: "600", marginBottom: 2 },
+  voteRow: { flexDirection: "row", alignItems: "center", gap: spacing.sm, paddingVertical: 1 },
+  voterName: { color: c.onSurface, fontSize: 15, fontWeight: "600", flex: 1 },
+  voteFor: { color: c.onSurfaceSecondary, fontSize: 15, flex: 1, textAlign: "right" },
 }));
