@@ -17,6 +17,7 @@ import { fonts, makeStyles, radius, spacing, useTheme } from "@/src/theme";
 
 export default function Moderator() {
   const styles = useStyles();
+  const { colors } = useTheme();
   const insets = useSafeAreaInsets();
 
   const [pass, setPass] = useState("");
@@ -32,15 +33,15 @@ export default function Moderator() {
   if (!unlockedPass) {
     return (
       <View style={styles.root} testID="moderator-screen">
-        <ScreenHeader title="Moderator" testID="moderator" />
+        <ScreenHeader title="ClaudAI" testID="moderator" />
         <KeyboardAwareScrollView bottomOffset={24} keyboardShouldPersistTaps="handled" contentContainerStyle={[styles.scroll, { paddingBottom: insets.bottom + spacing.lg }]}>
           <View style={styles.lockIcon}>
             <Ionicons name="shield-half" size={40} color="#D4AF37" />
           </View>
           <View style={{ gap: spacing.sm }}>
-            <Eyebrow>Hosts only</Eyebrow>
-            <Title>The moderator&apos;s view</Title>
-            <Body>Enter the moderator passphrase. This view shows every player&apos;s role — never open it where players can see.</Body>
+            <Eyebrow>Hosts only · sees everything</Eyebrow>
+            <Title testID="claudai-title">Claud<Text style={{ color: colors.traitor }}>AI</Text></Title>
+            <Body>Like Claudia, but it never forgets. Enter the passphrase — ClaudAI sees every role and every move, so never open it where players can see.</Body>
           </View>
           <TextInput
             testID="moderator-pass-input"
@@ -101,7 +102,7 @@ function PickGame({ passphrase, codeInput, setCodeInput, onPick }: { passphrase:
 
   return (
     <View style={styles.root} testID="moderator-screen">
-      <ScreenHeader title="Moderator" testID="moderator" />
+      <ScreenHeader title="ClaudAI" testID="moderator" />
       <KeyboardAwareScrollView bottomOffset={24} keyboardShouldPersistTaps="handled" contentContainerStyle={[styles.scroll, { paddingBottom: insets.bottom + spacing.lg }]}>
         <View style={{ gap: spacing.sm }}>
           <Eyebrow>Unlocked</Eyebrow>
@@ -203,7 +204,7 @@ function Breakdown({ code, passphrase, onChangeGame, onLock }: { code: string; p
   if (error || !data) {
     return (
       <View style={styles.root} testID="moderator-screen">
-        <ScreenHeader title="Moderator" testID="moderator" />
+        <ScreenHeader title="ClaudAI" testID="moderator" />
         <View style={[styles.scroll, { gap: spacing.md }]}>
           <ErrorText testID="moderator-view-error" message={`No game found with the code ${code}. Check the letters and try again.`} />
           <Button testID="moderator-change-game-button" label="Try another code" icon="arrow-back" onPress={onChangeGame} />
@@ -222,7 +223,7 @@ function Breakdown({ code, passphrase, onChangeGame, onLock }: { code: string; p
     <View style={styles.root} testID="moderator-screen">
       <View style={[styles.topbar, { paddingTop: insets.top + spacing.sm }]}>
         <Ionicons name="shield-half" size={20} color="#D4AF37" />
-        <Text style={styles.topbarText}>Moderator · game {m.code}</Text>
+        <Text style={styles.topbarText}>Claud<Text style={{ color: colors.traitor }}>AI</Text> · game {m.code}</Text>
         <Text style={styles.live}>{isRefetching ? "…" : "● live"}</Text>
       </View>
 
