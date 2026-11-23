@@ -6,7 +6,7 @@ import { Pressable, ScrollView, Text, View } from "react-native";
 import Animated, { FadeIn, FadeInDown } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-import { api, PrivateView, PublicPlayer } from "@/src/api";
+import { api, exitOf, PrivateView, PublicPlayer } from "@/src/api";
 import { HelpButton } from "@/src/components/help-button";
 import { PinPad } from "@/src/components/pin-pad";
 import { Backdrop, Body, Button, ErrorText, Eyebrow, IMAGES, Title } from "@/src/components/ui";
@@ -89,7 +89,7 @@ export default function PlayerTurn() {
         <Sealed onDone={leave} />
       ) : (
         <ScrollView contentContainerStyle={[styles.scroll, { paddingBottom: insets.bottom + spacing.lg }]}>
-          <RoleCard view={view} />
+          <RoleCard view={view} exit={game?.exists ? exitOf(game.history, view.player_id) : null} />
           {boundHere ? (
             <Pressable testID="forget-me-button" onPress={() => clearMe()} style={styles.rememberOn}>
               <Ionicons name="checkmark-circle" size={18} color={colors.brand} />
@@ -106,6 +106,8 @@ export default function PlayerTurn() {
           )}
           {mode === "turn" && view.phase === "setup" ? (
             <SetupTurn view={view} pin={pin} onSealed={() => setSealed(true)} />
+          ) : mode === "turn" && view.phase === "gather" && view.alive ? (
+            <GatherTurn view={view} pin={pin} onSealed={() => setSealed(true)} />
           ) : mode === "turn" && view.phase === "roundtable" && view.alive ? (
             <RoundTableTurn view={view} pin={pin} players={players} onSealed={() => setSealed(true)} />
           ) : mode === "turn" && view.phase === "night" && view.alive ? (
@@ -122,7 +124,7 @@ export default function PlayerTurn() {
   );
 }
 
-function RoleCard({ view }: { view: PrivateView }) {
+function RoleCard({ view, exit }: { view: PrivateView; exit: { how: "murdered" | "banished"; day: number } | null }) {
   const styles = useStyles();
   const { colors } = useTheme();
   const traitor = view.role === "traitor";
@@ -141,7 +143,21 @@ function RoleCard({ view }: { view: PrivateView }) {
       ) : !traitor ? (
         <Body>Find the Traitors and banish them at the Round Table.</Body>
       ) : null}
-      {!view.alive ? <Body style={{ color: colors.muted }}>You have been eliminated, but please keep the secrets.</Body> : null}
+      {!view.alive ? (
+        <View style={styles.outBox} testID="eliminated-how">
+          <Text style={[styles.outTitle, { color: exit?.how === "murdered" ? colors.traitor : colors.brand }]}>
+            {exit?.how === "murdered" ? "You were murdered" : exit?.how === "banished" ? "You were banished" : "You are out of the game"}
+          </Text>
+          <Body style={{ fontSize: 15, lineHeight: 21 }}>
+            {exit?.how === "murdered"
+              ? `The Traitors murdered you in plain sight on Day ${exit.day}.`
+              : exit?.how === "banished"
+                ? `The Round Table voted you out on Day ${exit.day}.`
+                : "You have been eliminated."}{" "}
+            Please keep the secrets — no hints to anyone still playing.
+          </Body>
+        </View>
+      ) : null}
     </Animated.View>
   );
 }
@@ -381,48 +397,71 @@ function SetupTurn({ view, pin, onSealed }: { view: PrivateView; pin: string; on
 }
 
 function RoundTableTurn({ view, pin, players, onSealed }: { view: PrivateView; pin: string; players: PublicPlayer[]; onSealed: () => void }) {
-  const styles = useStyles();
-  const { colors } = useTheme();
-  const planned = view.role === "traitor" && !!view.planned_murder;
   const [vote, setVote] = useState<string | null>(view.my_vote_id);
-  const [carried, setCarried] = useState<boolean | null>(view.murder_done ? true : null);
-  const murderDone = planned ? carried ?? false : undefined;
   const banish = useMutation({
-    mutationFn: () => api.takeTurn({ player_id: view.player_id, pin, vote_target_id: vote ?? undefined, murder_done: murderDone }),
+    mutationFn: () => api.takeTurn({ player_id: view.player_id, pin, vote_target_id: vote ?? undefined }),
     onSuccess: onSealed,
   });
   const end = useMutation({
-    mutationFn: () => api.takeTurn({ player_id: view.player_id, pin, end_vote: true, murder_done: murderDone }),
+    mutationFn: () => api.takeTurn({ player_id: view.player_id, pin, end_vote: true }),
     onSuccess: onSealed,
   });
-  const needCarried = planned && carried === null;
   return (
     <>
-      {planned ? (
-        <View style={styles.carriedCard} testID="carried-card">
-          <Eyebrow style={{ color: colors.traitor }}>Your murder in plain sight</Eyebrow>
-          <Text style={styles.carriedVictim} testID="carried-victim">{view.target?.name}</Text>
-          <Text style={styles.carriedAction}>{view.action}</Text>
-          <Text style={styles.carriedQ}>Did you carry it out — in plain sight, without being caught?</Text>
-          <View style={{ flexDirection: "row", gap: spacing.sm }}>
-            <Pressable testID="carried-yes" onPress={() => setCarried(true)} style={[styles.pick, { flex: 1, justifyContent: "center" }, carried === true && styles.pickOn]}>
-              <Text style={[styles.pickText, carried === true && { color: colors.onBrandPrimary }]}>Yes — it&apos;s done</Text>
-            </Pressable>
-            <Pressable testID="carried-no" onPress={() => setCarried(false)} style={[styles.pick, { flex: 1, justifyContent: "center" }, carried === false && styles.pickOn]}>
-              <Text style={[styles.pickText, carried === false && { color: colors.onBrandPrimary }]}>No — I couldn&apos;t</Text>
-            </Pressable>
-          </View>
-        </View>
-      ) : null}
       {view.endgame ? (
         <Body>Few of you remain. Vote to banish one more player, or vote to end the game now. If everyone votes to end and a Traitor is still among you, the Traitors win.</Body>
       ) : null}
       <VictimPicker label="Who do you vote to banish?" prefix="vote-option" players={players} selected={vote} onSelect={setVote} excludeId={view.player_id} />
       <ErrorText testID="turn-error" message={banish.error?.message || end.error?.message} />
-      <Button testID="vote-submit-button" label="Seal my vote to banish" icon="lock-closed" disabled={!vote || needCarried} loading={banish.isPending} onPress={() => banish.mutate()} />
+      <Button testID="vote-submit-button" label="Seal my vote to banish" icon="lock-closed" disabled={!vote} loading={banish.isPending} onPress={() => banish.mutate()} />
       {view.endgame ? (
-        <Button testID="vote-end-button" label="Vote to end the game" variant="secondary" icon="flag" disabled={needCarried} loading={end.isPending} onPress={() => end.mutate()} />
+        <Button testID="vote-end-button" label="Vote to end the game" variant="secondary" icon="flag" loading={end.isPending} onPress={() => end.mutate()} />
       ) : null}
+    </>
+  );
+}
+
+function GatherTurn({ view, pin, onSealed }: { view: PrivateView; pin: string; onSealed: () => void }) {
+  // Everyone checks in before the murder is revealed. A Traitor who planned a murder also
+  // confirms, privately, whether it was carried out — every turn looks the same from outside.
+  const styles = useStyles();
+  const { colors } = useTheme();
+  const traitor = view.role === "traitor";
+  const needsAnswer = traitor && !!view.planned_murder && !view.murder_done;
+  const [carried, setCarried] = useState<boolean | null>(null);
+  const checkIn = useMutation({
+    mutationFn: () => api.takeTurn({ player_id: view.player_id, pin, murder_done: needsAnswer ? carried ?? false : undefined }),
+    onSuccess: onSealed,
+  });
+  return (
+    <>
+      {needsAnswer ? (
+        <View style={styles.carriedCard} testID="carried-card">
+          <Eyebrow style={{ color: colors.traitor }}>Your murder in plain sight</Eyebrow>
+          <Text style={styles.carriedVictim} testID="carried-victim">{view.target?.name}</Text>
+          <Text style={styles.carriedAction}>{view.action}</Text>
+          <Text style={styles.carriedQ}>Was it carried out — in plain sight, without being caught?</Text>
+          <View style={{ flexDirection: "row", gap: spacing.sm }}>
+            <Pressable testID="carried-yes" onPress={() => setCarried(true)} style={[styles.pick, { flex: 1, justifyContent: "center" }, carried === true && styles.pickOn]}>
+              <Text style={[styles.pickText, carried === true && { color: colors.onBrandPrimary }]}>Yes — it&apos;s done</Text>
+            </Pressable>
+            <Pressable testID="carried-no" onPress={() => setCarried(false)} style={[styles.pick, { flex: 1, justifyContent: "center" }, carried === false && styles.pickOn]}>
+              <Text style={[styles.pickText, carried === false && { color: colors.onBrandPrimary }]}>No — it wasn&apos;t</Text>
+            </Pressable>
+          </View>
+        </View>
+      ) : traitor && view.murder_done ? (
+        <Body testID="gather-already-confirmed">A fellow Traitor has already confirmed tonight&apos;s murder. Just check in.</Body>
+      ) : traitor ? (
+        <Body testID="gather-no-murder">No murder to confirm tonight. Just check in, like everyone else.</Body>
+      ) : (
+        <Body testID="gather-faithful-note">
+          The Round Table gathers. Check in so the murder can be revealed — everyone does this, so nobody can tell who
+          the Traitors are.
+        </Body>
+      )}
+      <ErrorText testID="turn-error" message={checkIn.error?.message} />
+      <Button testID="gather-checkin-button" label="Check in" icon="checkmark-circle" disabled={needsAnswer && carried === null} loading={checkIn.isPending} onPress={() => checkIn.mutate()} />
     </>
   );
 }
@@ -481,6 +520,8 @@ const useStyles = makeStyles((c) => ({
   rememberSub: { color: c.muted, fontSize: 13, lineHeight: 18, marginTop: 1 },
   rememberOn: { flexDirection: "row", alignItems: "center", gap: spacing.sm, paddingVertical: spacing.xs },
   rememberOnText: { color: c.onSurfaceTertiary, fontSize: 14, flex: 1 },
+  outBox: { marginTop: spacing.sm, paddingTop: spacing.sm, borderTopWidth: 1, borderTopColor: c.divider, gap: 4 },
+  outTitle: { fontFamily: fonts.display, fontSize: 28, lineHeight: 32 },
   carriedCard: { gap: spacing.sm, padding: spacing.lg, borderRadius: radius.lg, backgroundColor: c.surfaceSecondary, borderWidth: 1, borderColor: c.traitor },
   carriedVictim: { fontFamily: fonts.display, fontSize: 34, lineHeight: 38, color: c.onSurface },
   carriedAction: { fontFamily: fonts.displaySemi, fontSize: 22, lineHeight: 26, color: c.brand },

@@ -6,7 +6,7 @@ import { ActivityIndicator, Modal, Pressable, RefreshControl, ScrollView, Text, 
 import Animated, { FadeInDown } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-import { api, GameState, PublicPlayer } from "@/src/api";
+import { api, exitOf, GameState, PublicPlayer } from "@/src/api";
 import { ConfirmSheet } from "@/src/components/confirm-sheet";
 import { PinPad } from "@/src/components/pin-pad";
 import { QrCode } from "@/src/components/qr-code";
@@ -125,8 +125,13 @@ const PHASE_COPY: Record<string, { eyebrow: string; title: string; body: string 
     title: "The Traitors move",
     body: "Everyone taps their name in private. The Traitors secretly choose their victim and a plain-sight action; everyone else simply passes the phone on — so no one can tell who acted. The murder is carried out during the day.",
   },
+  gather: {
+    eyebrow: "This evening",
+    title: "Check in for the Round Table",
+    body: "Everyone taps their name to check in. The Traitors also confirm, in secret, whether the murder was carried out. Once everyone has checked in, the murder is revealed — before anyone votes.",
+  },
   reveal: {
-    eyebrow: "The morning after",
+    eyebrow: "This evening",
     title: "Who did the Traitors take?",
     body: "Gather everyone together before you open the envelope.",
   },
@@ -186,7 +191,7 @@ function Dashboard({ game, refreshing, onRefresh }: { game: ActiveGame; refreshi
           body: "Only a few of you remain. Each player votes to banish one more — or to end the game now. If everyone votes to end while a Traitor is still among you, the Traitors win.",
         }
       : PHASE_COPY[phase];
-  const takingTurns = phase === "setup" || phase === "roundtable" || phase === "night";
+  const takingTurns = phase === "setup" || phase === "night" || phase === "gather" || phase === "roundtable";
   const alive = game.players.filter((p) => p.alive);
   const out = game.players.filter((p) => !p.alive);
 
@@ -253,7 +258,7 @@ function Dashboard({ game, refreshing, onRefresh }: { game: ActiveGame; refreshi
                 {phase === "ended"
                   ? "Game over"
                   : !boundPlayer.alive
-                    ? "You're out — tap to peek"
+                    ? (() => { const e = exitOf(game.history, boundPlayer.id); return e ? `${e.how === "murdered" ? "Murdered" : "Banished"} on Day ${e.day} — tap to peek` : "You're out — tap to peek"; })()
                     : takingTurns
                       ? boundPlayer.turn_done ? "You've taken your turn" : "Your turn · no PIN"
                       : "Tap to check your secret"}
@@ -290,13 +295,20 @@ function Dashboard({ game, refreshing, onRefresh }: { game: ActiveGame; refreshi
               <Button testID="advance-round-table-button" label={game.endgame ? "Gather for the final vote" : "Night falls — the Traitors move"} icon={game.endgame ? "flame" : "moon"} loading={advance.isPending} onPress={() => setConfirmGo({ label: game.endgame ? "Gather for the final vote" : "Night falls — the Traitors move", run: () => advance.mutate() })} />
             ) : phase === "roundtable" ? (
               <>
-                <Button testID="advance-reveal-button" label={allDone ? (game.endgame ? "Reveal the vote" : "Reveal the Round Table") : "Everyone must check in first…"} icon="mail-open" disabled={!allDone} loading={advance.isPending && allDone} onPress={() => setConfirmGo({ label: game.endgame ? "Reveal the vote" : "Reveal the Round Table", run: () => advance.mutate() })} />
+                <Button testID="advance-reveal-button" label={allDone ? (game.endgame ? "Reveal the vote" : "Reveal the banishment") : "Everyone must vote first…"} icon="mail-open" disabled={!allDone} loading={advance.isPending && allDone} onPress={() => setConfirmGo({ label: game.endgame ? "Reveal the vote" : "Reveal the banishment", run: () => advance.mutate() })} />
                 {!allDone ? (
                   <Text style={styles.waitNote} testID="roundtable-wait-note">Everyone still in must vote before the reveal — otherwise the Traitors could be given away.</Text>
                 ) : null}
               </>
             ) : phase === "night" ? (
-              <Button testID="advance-murder-button" label={allDone ? "Gather at the Round Table" : "Waiting for the Traitors…"} icon="flame" disabled={!allDone} loading={advance.isPending} onPress={() => setConfirmGo({ label: "Gather at the Round Table", run: () => advance.mutate() })} />
+              <Button testID="advance-murder-button" label={allDone ? "Everyone to the Round Table" : "Waiting for the Traitors…"} icon="flame" disabled={!allDone} loading={advance.isPending} onPress={() => setConfirmGo({ label: "Everyone to the Round Table", run: () => advance.mutate() })} />
+            ) : phase === "gather" ? (
+              <>
+                <Button testID="advance-gather-button" label={allDone ? "Reveal the murder" : "Everyone must check in first…"} icon="mail-open" disabled={!allDone} loading={advance.isPending && allDone} onPress={() => setConfirmGo({ label: "Reveal the murder", run: () => advance.mutate() })} />
+                {!allDone ? (
+                  <Text style={styles.waitNote} testID="gather-wait-note">Everyone still in must check in before the murder is revealed — otherwise the Traitors could be given away.</Text>
+                ) : null}
+              </>
             ) : phase === "banished" ? (
               <Button testID="open-banishment-button" label="Open the banishment" icon="mail" onPress={() => router.push("/reveal")} />
             ) : (
@@ -333,7 +345,7 @@ function Dashboard({ game, refreshing, onRefresh }: { game: ActiveGame; refreshi
             <Text style={[styles.sectionTitle, { marginTop: spacing.lg }]}>Eliminated</Text>
             <View style={{ gap: spacing.sm }}>
               {out.map((p, i) => (
-                <PlayerRow key={p.id} p={p} index={i} showTurn={false} onPress={() => onPlayer(p)} disabled={!peekMode} />
+                <PlayerRow key={p.id} p={p} index={i} showTurn={false} onPress={() => onPlayer(p)} disabled={!peekMode} exit={exitOf(game.history, p.id)} />
               ))}
             </View>
           </>
@@ -373,7 +385,7 @@ function Dashboard({ game, refreshing, onRefresh }: { game: ActiveGame; refreshi
   );
 }
 
-function PlayerRow({ p, index, showTurn, onPress, disabled }: { p: PublicPlayer; index: number; showTurn: boolean; onPress: () => void; disabled?: boolean }) {
+function PlayerRow({ p, index, showTurn, onPress, disabled, exit }: { p: PublicPlayer; index: number; showTurn: boolean; onPress: () => void; disabled?: boolean; exit?: { how: "murdered" | "banished"; day: number } | null }) {
   const styles = useStyles();
   const { colors } = useTheme();
   return (
@@ -391,7 +403,16 @@ function PlayerRow({ p, index, showTurn, onPress, disabled }: { p: PublicPlayer;
           <Text style={[styles.rowName, !p.alive && { textDecorationLine: "line-through", color: colors.muted }]} numberOfLines={1}>
             {p.name}
           </Text>
-          {p.role ? (
+          {!p.alive && exit ? (
+            <Text style={styles.rowExit} testID={`player-exit-${p.id}`}>
+              {exit.how === "murdered" ? "Murdered" : "Banished"} · Day {exit.day}
+              {p.role ? (
+                <Text style={{ color: p.role === "traitor" ? colors.traitor : colors.brand }} testID={`player-role-${p.id}`}>
+                  {" · "}{p.role === "traitor" ? "Traitor" : "Faithful"}
+                </Text>
+              ) : null}
+            </Text>
+          ) : p.role ? (
             <Text style={[styles.rowRole, { color: p.role === "traitor" ? colors.traitor : colors.brand }]} testID={`player-role-${p.id}`}>
               {p.role === "traitor" ? "Traitor" : "Faithful"}
             </Text>
@@ -668,4 +689,5 @@ const useStyles = makeStyles((c) => ({
   avatarText: { fontFamily: fonts.display, fontSize: 24, color: c.brand },
   rowName: { fontSize: 19, fontWeight: "600", color: c.onSurface },
   rowRole: { fontSize: 13, fontWeight: "700", letterSpacing: 1.5, textTransform: "uppercase" },
+  rowExit: { fontSize: 13, fontWeight: "700", letterSpacing: 1, textTransform: "uppercase", color: c.muted },
 }));

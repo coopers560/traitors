@@ -50,7 +50,7 @@ def run_setup_and_day1(code, g):
         else:
             assert S.post(f"{G(code)}/turn", json={"player_id": p["id"], "pin": pin_of(p["name"])}).status_code == 200
     res = S.post(f"{G(code)}/advance?expected=night&expected_day=1").json()
-    assert res["phase"] == "roundtable"  # night -> Round Table; the murder is revealed later
+    assert res["phase"] == "gather"  # night -> check-in; the murder is revealed after it
     return action, res
 
 

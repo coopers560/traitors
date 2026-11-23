@@ -33,7 +33,14 @@ def vote_all():
     target = next(p for p in alive if r[p["id"]] == "faithful")
     for p in alive:
         vt = target["id"] if p["id"] != target["id"] else next(x["id"] for x in alive if x["id"] != p["id"])
-        body = {"player_id": p["id"], "pin": pin_of(p["name"]), "vote_target_id": vt}
+        assert S.post(f"{G()}/turn", json={"player_id": p["id"], "pin": pin_of(p["name"]), "vote_target_id": vt}).status_code == 200
+
+
+def gather_all():
+    # Everyone checks in; the Traitor confirms the planned murder was carried out.
+    r = roles_now()
+    for p in [x for x in state()["players"] if x["alive"]]:
+        body = {"player_id": p["id"], "pin": pin_of(p["name"])}
         if r[p["id"]] == "traitor":
             body["murder_done"] = True
         assert S.post(f"{G()}/turn", json=body).status_code == 200
@@ -80,13 +87,27 @@ class TestAdvanceExpected:
         assert s["phase"] == "night" and s["turns_done"] == 0
 
     def test_night_double_tap(self):
-        night_all()  # the Traitors plan their murder; nothing is revealed at night now
+        night_all()  # the Traitors plan their murder; nothing is revealed at night
         a = adv("night")
-        assert a.status_code == 200 and a.json()["phase"] == "roundtable"
+        assert a.status_code == 200 and a.json()["phase"] == "gather"
         b = adv("night")
-        assert b.json()["phase"] == "roundtable" and len(b.json()["history"]) == 0
+        assert b.json()["phase"] == "gather" and len(b.json()["history"]) == 0
         s = state()
-        assert s["phase"] == "roundtable" and s["turns_done"] == 0
+        assert s["phase"] == "gather" and s["turns_done"] == 0
+
+    def test_gather_double_tap(self):
+        gather_all()
+        a = adv("gather")
+        assert a.status_code == 200 and a.json()["phase"] == "reveal"
+        b = adv("gather")
+        assert b.json()["phase"] == "reveal" and len(b.json()["history"]) == 1
+
+    def test_reveal_double_tap(self):
+        a = adv("reveal")
+        assert a.json()["phase"] == "roundtable"
+        b = adv("reveal")
+        assert b.json()["phase"] == "roundtable"
+        assert state()["turns_done"] == 0
 
     def test_roundtable_double_tap(self):
         vote_all()

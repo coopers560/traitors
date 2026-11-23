@@ -62,22 +62,30 @@ class TestActions:
         for p in ps:
             if p["id"] != tr["id"]:
                 assert S.post(f"{G()}/turn", json={"player_id": p["id"], "pin": pin_of(p["name"])}).status_code == 200
-        # night -> roundtable; the murder isn't revealed yet and fa[0] still votes
+        # night -> gather: everyone checks in, the Traitor confirms the murder
+        assert S.post(f"{G()}/advance").json()["phase"] == "gather"
+        for p in ps:
+            body = {"player_id": p["id"], "pin": pin_of(p["name"])}
+            if p["id"] == tr["id"]:
+                body["murder_done"] = True
+            assert S.post(f"{G()}/turn", json=body).status_code == 200
+        # gather -> reveal: the murder is revealed before the vote (secret action hidden)
+        r = S.post(f"{G()}/advance").json()
+        assert r["phase"] == "reveal"
+        h = r["history"][-1]
+        assert h["day"] == 1 and h["murder"]["success"] and "action" not in h["murder"]
+        assert h["murder"]["victim_name"] == fa[0]["name"] and h["banish"] is None
+        # the Round Table: fa[0] is dead, so 5 alive vote to banish fa[1]
         assert S.post(f"{G()}/advance").json()["phase"] == "roundtable"
         for p in S.get(f"{G()}").json()["players"]:
             if not p["alive"]:
                 continue
-            body = {"player_id": p["id"], "pin": pin_of(p["name"]), "vote_target_id": fa[1]["id"] if p["id"] != fa[1]["id"] else fa[2]["id"]}
-            if p["id"] == tr["id"]:
-                body["murder_done"] = True  # the Traitor confirms the murder was carried out
-            assert S.post(f"{G()}/turn", json=body).status_code == 200
+            vt = fa[1]["id"] if p["id"] != fa[1]["id"] else fa[2]["id"]
+            assert S.post(f"{G()}/turn", json={"player_id": p["id"], "pin": pin_of(p["name"]), "vote_target_id": vt}).status_code == 200
         r = S.post(f"{G()}/advance").json()
         assert r["phase"] == "banished"
         h = r["history"][-1]
-        # the Round Table reveal holds the murder (secret action hidden) and the banishment
-        assert h["day"] == 1 and h["murder"]["success"] and "action" not in h["murder"]
-        assert h["murder"]["victim_name"] == fa[0]["name"]
-        assert h["banish"]["name"] == fa[1]["name"] and h["banish"]["tally"][0]["votes"] == 5
+        assert h["banish"]["name"] == fa[1]["name"] and h["banish"]["tally"][0]["votes"] == 4
         r = S.post(f"{G()}/advance").json()
         assert r["day"] == 2 and r["phase"] == "day"
         # a fresh day clears the victim and action until the next night
