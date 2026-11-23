@@ -3,10 +3,11 @@ import { useRouter } from "expo-router";
 import { Pressable, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
+import { HelpButton } from "@/src/components/help-button";
 import { makeStyles, radius, spacing, useTheme } from "@/src/theme";
 
-/** Sticky screen header with a back button. */
-export function ScreenHeader({ title, testID }: { title: string; testID: string }) {
+/** Sticky screen header with a back button. Pass `help` to add the "?" that opens that screen's help. */
+export function ScreenHeader({ title, testID, help }: { title: string; testID: string; help?: string }) {
   const styles = useStyles();
   const { colors } = useTheme();
   const router = useRouter();
@@ -17,6 +18,7 @@ export function ScreenHeader({ title, testID }: { title: string; testID: string 
         <Ionicons name="chevron-back" size={26} color={colors.onSurface} />
       </Pressable>
       <Text style={styles.headerText}>{title}</Text>
+      {help ? <HelpButton from={help} testID={`${testID}-help-button`} /> : null}
     </View>
   );
 }
@@ -32,6 +34,6 @@ const useStyles = makeStyles((c) => ({
     borderBottomColor: c.divider,
     backgroundColor: c.surface,
   },
-  headerText: { color: c.onSurface, fontSize: 18, fontWeight: "700" },
+  headerText: { color: c.onSurface, fontSize: 18, fontWeight: "700", flex: 1 },
   iconBtn: { width: 48, height: 48, borderRadius: radius.pill, alignItems: "center", justifyContent: "center", backgroundColor: c.surfaceSecondary },
 }));

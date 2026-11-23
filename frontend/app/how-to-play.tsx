@@ -3,44 +3,51 @@ import { useRouter } from "expo-router";
 import { Pressable, ScrollView, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-import { Body, Eyebrow, Title } from "@/src/components/ui";
+import { Body, Button, Eyebrow, Title } from "@/src/components/ui";
 import { fonts, makeStyles, radius, spacing, useTheme } from "@/src/theme";
 
+// Rules only, and nothing that would spoil a game: no examples of the secret
+// actions, and none of the late-game twists (the app announces those itself).
 const STEPS: { icon: React.ComponentProps<typeof Ionicons>["name"]; title: string; body: string }[] = [
   {
     icon: "people",
     title: "1. The Gathering",
-    body: "Everyone adds their name and a secret 4-digit PIN. The app secretly picks a random number of Traitors (always a minority). Pass the phone round so each person sees their role in private.",
+    body: "Everyone adds their name and a secret 4-digit PIN. The app secretly picks a random number of Traitors (always a minority). Each person then taps their name and sees their role in private.",
   },
   {
     icon: "sunny",
     title: "2. During the day",
-    body: "Each victim comes with a simple secret action, like \"Offer them some sun cream\" or \"Ask if they've been in the pool yet\". Any Traitor does it to the victim, naturally, in front of everyone. That is the murder!",
+    body: "Enjoy the holiday and watch each other closely. There is nothing to do on the phone until the evening.",
   },
   {
     icon: "flame",
     title: "3. The Round Table (evening)",
-    body: "Gather together, discuss and accuse. Then pass the phone round: everyone votes in private for who to banish. Traitors also confirm whether the murder was done and choose tomorrow's victim — so their turn looks just like everyone else's.",
+    body: "Gather together, discuss and accuse. Then everyone votes in private for who to banish. The player with the most votes is out. A tied vote banishes nobody.",
+  },
+  {
+    icon: "moon",
+    title: "4. The night",
+    body: "Everyone taps their name once more, in private. The Traitors plan in secret; everyone else simply passes the phone on, so every turn looks the same. Then the Traitors murder in plain sight: a small, ordinary-looking action done to their victim in front of everyone. Could you spot it?",
   },
   {
     icon: "mail-open",
-    title: "4. The Reveal",
-    body: "The app reveals who was murdered (but never the secret action, so keep guessing who did it), then who the table banished. One hit — a murder or a banishment — puts you out, and your role is revealed.",
+    title: "5. The morning",
+    body: "Open the envelope together to learn whether the Traitors struck, and who they took. How it was done stays secret until the game is over. One hit, a banishment or a murder, and you are out.",
   },
   {
     icon: "trophy",
     title: "Winning",
-    body: "The Faithful win if every Traitor is out. The Traitors win if they equal the number of Faithful, or if any Traitor survives until the end of Day 12.",
+    body: "The Faithful win if every Traitor is out. The Traitors win if they are no longer outnumbered by the Faithful, or if any Traitor survives to the end of Day 12. The castle keeps a few surprises for late in the game; the app explains each one when it arrives.",
   },
   {
     icon: "phone-portrait-outline",
     title: "Playing on several phones",
-    body: "Open the app on as many phones as you like, for example one per couple. The phone that starts the game shows a 5-character join code at the top. On the other phones tap \"Join with a code\" and enter it. Every phone then shows the same game and updates by itself. Anyone can take their turn on any phone: tap your own name and enter your PIN, then tap \"Hide\" before handing it back. Other families can run their own game with their own code. You need an internet connection.",
+    body: "Open the app on as many phones as you like, for example one per couple. The phone that starts the game shows a 5-character join code at the top. On the other phones tap \"Join with a code\" and enter it. Every phone then shows the same game and updates by itself. Anyone can take their turn on any phone: tap your own name and enter your PIN, then hide the screen before handing it back. Other families can run their own game with their own code. You need an internet connection.",
   },
   {
     icon: "eye-off",
     title: "Forgot your secret?",
-    body: "Tap \"Check my secret\" on the main screen, then your name, to see your role (and, for Traitors, today's victim and action).",
+    body: "Tap \"Check my secret\" on the main screen, then your name, to see your role again in private.",
   },
 ];
 
@@ -71,6 +78,13 @@ export default function HowToPlay() {
             <Body>{s.body}</Body>
           </View>
         ))}
+        <Button
+          testID="how-to-play-help-button"
+          label="Help · what do I tap?"
+          variant="ghost"
+          icon="help-circle-outline"
+          onPress={() => router.push("/help")}
+        />
       </ScrollView>
     </View>
   );

@@ -6,6 +6,7 @@ import Animated, { FadeIn, FadeInDown } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { api, DayResult } from "@/src/api";
+import { HelpButton } from "@/src/components/help-button";
 import { Backdrop, Body, Button, ErrorText, Eyebrow, IMAGES, Title } from "@/src/components/ui";
 import { fonts, makeStyles, radius, spacing, useTheme } from "@/src/theme";
 
@@ -59,6 +60,7 @@ export default function Reveal() {
   return (
     <View style={styles.root} testID="reveal-screen">
       <Backdrop image={IMAGES.seal} strong={step > 0} />
+      <HelpButton from="reveal" testID="reveal-help-button" style={{ position: "absolute", top: insets.top + spacing.sm, right: spacing.md, zIndex: 1 }} />
       <ScrollView contentContainerStyle={[styles.scroll, { paddingTop: insets.top + spacing.xl, paddingBottom: insets.bottom + spacing.lg }]}>
         <View style={{ flex: 1, justifyContent: "center", gap: spacing.lg }}>
           {steps[step] === "intro" ? <Intro day={result.day} kind={isBanish ? "banish" : "murder"} /> : null}

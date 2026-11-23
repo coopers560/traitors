@@ -84,6 +84,13 @@ function Welcome({ gone }: { gone: boolean }) {
             icon="book-outline"
             onPress={() => router.push("/how-to-play")}
           />
+          <Button
+            testID="welcome-help-button"
+            label="Help · what do I tap?"
+            variant="ghost"
+            icon="help-circle-outline"
+            onPress={() => router.push({ pathname: "/help", params: { from: "welcome" } })}
+          />
         </Animated.View>
       </View>
     </View>
@@ -214,6 +221,7 @@ function Dashboard({ game, refreshing, onRefresh }: { game: ActiveGame; refreshi
 
       {menu ? (
         <View style={styles.menu} testID="dashboard-menu">
+          <Button testID="menu-help-button" label="Help · what do I tap?" variant="secondary" icon="help-circle-outline" onPress={() => { setMenu(false); router.push({ pathname: "/help", params: { from: "main" } }); }} />
           <Button testID="menu-how-to-play-button" label="How to play" variant="secondary" icon="book-outline" onPress={() => { setMenu(false); router.push("/how-to-play"); }} />
           <Button testID="menu-history-button" label="Day history" variant="secondary" icon="time-outline" onPress={() => { setMenu(false); router.push("/history"); }} />
           <Button testID="menu-actions-button" label="Secret actions" variant="secondary" icon="list-outline" onPress={() => { setMenu(false); router.push("/actions"); }} />
@@ -262,6 +270,11 @@ function Dashboard({ game, refreshing, onRefresh }: { game: ActiveGame; refreshi
             )}
           </Animated.View>
         )}
+
+        <Pressable testID="dashboard-help-button" accessibilityRole="button" onPress={() => router.push({ pathname: "/help", params: { from: "main" } })} style={styles.helpLink} hitSlop={6}>
+          <Ionicons name="help-circle-outline" size={20} color={colors.brand} />
+          <Text style={styles.helpLinkText}>Not sure what to tap? Help</Text>
+        </Pressable>
 
         <View style={styles.sectionHead}>
           <Text style={styles.sectionTitle}>
@@ -574,6 +587,8 @@ const useStyles = makeStyles((c) => ({
     borderColor: c.brandTertiary,
   },
   phaseTitle: { fontSize: 36, lineHeight: 40, color: c.brand },
+  helpLink: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: spacing.sm, minHeight: 44 },
+  helpLinkText: { color: c.brand, fontSize: 15, fontWeight: "700" },
   turnRow: { flexDirection: "row", alignItems: "center", gap: spacing.sm },
   turnText: { color: c.onSurfaceSecondary, fontSize: 16, fontWeight: "600" },
   sectionHead: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginTop: spacing.sm, gap: spacing.sm },
