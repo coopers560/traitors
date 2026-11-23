@@ -6,7 +6,7 @@ import { ActivityIndicator, ScrollView, Text, View } from "react-native";
 import Animated, { FadeIn, FadeInDown, ZoomIn } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-import { api, DayResult } from "@/src/api";
+import { api, DayResult, Phase } from "@/src/api";
 import { ConfirmSheet } from "@/src/components/confirm-sheet";
 import { HelpButton } from "@/src/components/help-button";
 import { Backdrop, Body, Button, ErrorText, Eyebrow, IMAGES, Title } from "@/src/components/ui";
@@ -23,29 +23,34 @@ export default function Reveal() {
   // A 5-4-3-2-1 beat plays before the name is shown; we remember which step it finished on.
   const [revealedStep, setRevealedStep] = useState<number | null>(null);
   const [confirmFinish, setConfirmFinish] = useState(false);
+  // Freeze the reveal the moment it opens: the game keeps polling and another phone may
+  // move it on, but this screen must stay put so everyone can read it in their own time.
+  const snap = useRef<{ phase: Phase; day: number; result: DayResult } | null>(null);
+  if (!snap.current && data?.exists && data.history.length) {
+    snap.current = { phase: data.phase, day: data.day, result: data.history[data.history.length - 1] };
+  }
 
   const advance = useMutation({
-    mutationFn: () => api.advance(data?.exists ? data.phase : "reveal", data?.exists ? data.day : 0),
+    mutationFn: () => api.advance(snap.current?.phase ?? "banished", snap.current?.day ?? 0),
     onSuccess: (s) => {
       qc.setQueryData(["game"], s);
       router.dismissTo("/");
     },
   });
 
-  if (!data?.exists) {
+  if (!snap.current) {
     return (
       <View style={[styles.root, { alignItems: "center", justifyContent: "center" }]}>
         <ActivityIndicator color={colors.brand} />
       </View>
     );
   }
-  const result: DayResult | undefined = data.history[data.history.length - 1];
-  if (!result) return null;
+  const result: DayResult = snap.current.result;
 
-  // The banishment and the murder are now revealed in two separate visits:
-  // "banished" after the Round Table, "reveal" after the night.
-  const isBanish = data.phase === "banished";
-  const isMurder = data.phase === "reveal";
+  // The banishment and the murder are revealed in two separate visits:
+  // "banished" after the Round Table, "reveal" after the night. Frozen on open.
+  const isBanish = snap.current.phase === "banished";
+  const isMurder = snap.current.phase === "reveal";
   const inFlow = isBanish || isMurder;
   const steps = isBanish
     ? ["intro", "banish", ...(result.winner ? ["winner"] : [])]
