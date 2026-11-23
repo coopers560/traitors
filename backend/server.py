@@ -480,7 +480,13 @@ def resolve_banish(g: Game) -> dict:
     alive_before = len(g.alive())  # roles stay secret once few players remain
     tally = Counter(v for k, v in g.votes.items() if g.player(k))
     counts = [{"player_id": pid, "name": name_of(g, pid), "votes": n} for pid, n in tally.most_common()]
-    banish = {"tally": counts, "tie": False, "target_id": None}
+    # Who voted for whom — shown to everyone when the banishment is revealed.
+    votes = [
+        {"voter_id": vid, "voter_name": name_of(g, vid), "target_id": tid, "target_name": name_of(g, tid)}
+        for vid, tid in g.votes.items()
+        if g.player(vid)
+    ]
+    banish = {"tally": counts, "votes": votes, "tie": False, "target_id": None}
     if counts:
         top = counts[0]["votes"]
         leaders = [c for c in counts if c["votes"] == top]
