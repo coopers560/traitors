@@ -25,35 +25,37 @@ export default function Reveal() {
   const [confirmFinish, setConfirmFinish] = useState(false);
   // Freeze the reveal the moment it opens: the game keeps polling and another phone may
   // move it on, but this screen must stay put so everyone can read it in their own time.
-  const snap = useRef<{ phase: Phase; day: number; result: DayResult } | null>(null);
-  if (!snap.current && data?.exists && data.history.length) {
-    snap.current = { phase: data.phase, day: data.day, result: data.history[data.history.length - 1] };
+  // Captured once, on the first render where the game data is available.
+  const [snap, setSnap] = useState<{ phase: Phase; day: number; result: DayResult } | null>(null);
+  if (!snap && data?.exists && data.history.length) {
+    setSnap({ phase: data.phase, day: data.day, result: data.history[data.history.length - 1] });
   }
 
   const advance = useMutation({
-    mutationFn: () => api.advance(snap.current?.phase ?? "banished", snap.current?.day ?? 0),
+    mutationFn: () => api.advance(snap?.phase ?? "banished", snap?.day ?? 0),
     onSuccess: (s) => {
       qc.setQueryData(["game"], s);
       router.dismissTo("/");
     },
   });
 
-  if (!snap.current) {
+  if (!snap) {
     return (
       <View style={[styles.root, { alignItems: "center", justifyContent: "center" }]}>
         <ActivityIndicator color={colors.brand} />
       </View>
     );
   }
-  const result: DayResult = snap.current.result;
+  const result: DayResult = snap.result;
 
-  // The banishment and the murder are revealed in two separate visits:
-  // "banished" after the Round Table, "reveal" after the night. Frozen on open.
-  const isBanish = snap.current.phase === "banished";
-  const isMurder = snap.current.phase === "reveal";
+  // The reveal is frozen on open: the Round Table shows the murder then the banishment.
+  const isBanish = snap.phase === "banished";
+  const isMurder = snap.phase === "reveal";
   const inFlow = isBanish || isMurder;
+  // The Round Table reveal now shows the murder first (carried out in plain sight), then
+  // the banishment — all at the table, in their own time.
   const steps = isBanish
-    ? ["intro", "banish", ...(result.winner ? ["winner"] : [])]
+    ? ["intro", ...(result.murder ? ["murder"] : []), "banish", ...(result.winner ? ["winner"] : [])]
     : isMurder
       ? ["intro", "murder", ...(result.winner ? ["winner"] : [])]
       : ["banish", ...(result.murder ? ["murder"] : []), ...(result.winner ? ["winner"] : [])];
@@ -84,9 +86,9 @@ export default function Reveal() {
       <HelpButton from="reveal" testID="reveal-help-button" style={{ position: "absolute", top: insets.top + spacing.sm, right: spacing.md, zIndex: 1 }} />
       <ScrollView contentContainerStyle={[styles.scroll, { paddingTop: insets.top + spacing.xl, paddingBottom: insets.bottom + spacing.lg }]}>
         <View style={{ flex: 1, justifyContent: "center", gap: spacing.lg }}>
-          {current === "intro" ? <Intro day={result.day} kind={isBanish ? "banish" : "murder"} /> : null}
+          {current === "intro" ? <Intro day={result.day} kind={isBanish ? "roundtable" : "murder"} /> : null}
           {counting ? (
-            <Countdown kind={isBanish ? "banish" : "murder"} onDone={() => setRevealedStep(step)} />
+            <Countdown kind={current === "banish" ? "banish" : "murder"} onDone={() => setRevealedStep(step)} />
           ) : (
             <>
               {current === "murder" ? <Murder r={result} /> : null}
@@ -157,20 +159,20 @@ function Countdown({ kind, onDone }: { kind: "banish" | "murder"; onDone: () => 
   );
 }
 
-function Intro({ day, kind }: { day: number; kind: "banish" | "murder" }) {
+function Intro({ day, kind }: { day: number; kind: "roundtable" | "murder" }) {
   return (
     <Animated.View entering={FadeIn.duration(1200)} style={{ gap: spacing.md }} testID="reveal-intro">
-      {kind === "banish" ? (
+      {kind === "roundtable" ? (
         <>
           <Eyebrow>The end of Day {day}</Eyebrow>
-          <Title style={{ fontSize: 52, lineHeight: 56 }}>The Round Table has spoken…</Title>
-          <Body>Gather everyone round. First, we learn who the table has banished.</Body>
+          <Title style={{ fontSize: 52, lineHeight: 56 }}>The Round Table gathers…</Title>
+          <Body>Take your time. First, did the Traitors strike today? Then, who the table has banished.</Body>
         </>
       ) : (
         <>
-          <Eyebrow>Night falls on Day {day}</Eyebrow>
+          <Eyebrow>Day {day}</Eyebrow>
           <Title style={{ fontSize: 52, lineHeight: 56 }}>The candles flicker…</Title>
-          <Body>While the castle slept, did the Traitors strike?</Body>
+          <Body>Did the Traitors strike today, in plain sight?</Body>
         </>
       )}
     </Animated.View>

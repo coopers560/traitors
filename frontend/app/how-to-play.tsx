@@ -15,19 +15,19 @@ const STEPS: { icon: React.ComponentProps<typeof Ionicons>["name"]; title: strin
     body: "Everyone adds their name and a secret 4-digit PIN. The app secretly picks a random number of Traitors (always a minority). Each person then taps their name and sees their role in private.",
   },
   {
-    icon: "sunny",
-    title: "2. The Traitors move",
-    body: "Each day opens with the Traitors. On the phone they secretly pick their victim and a method; everyone else just passes the phone on, so every turn looks the same. The chosen Traitor then murders in plain sight: a small, ordinary-looking action done to their victim during the day, in front of everyone. Could you spot it?",
+    icon: "moon",
+    title: "2. The Traitors plot (night)",
+    body: "Each day opens with the Traitors. On the phone they secretly pick their victim and a method; everyone else just passes the phone on, so every turn looks the same.",
   },
   {
-    icon: "mail-open",
-    title: "3. The reveal",
-    body: "Open the envelope together to learn who was murdered. How it was done stays secret, so keep guessing who did it.",
+    icon: "sunny",
+    title: "3. Murder in plain sight (day)",
+    body: "During the day the chosen Traitor carries out the murder: a small, ordinary-looking action done to their victim in front of everyone. Could you spot it?",
   },
   {
     icon: "flame",
     title: "4. The Round Table (evening)",
-    body: "Now gather together, discuss and accuse. Everyone votes in private for who to banish. The player with the most votes is out — and a tied vote banishes nobody. One hit, a banishment or a murder, and you are out.",
+    body: "The Traitors confirm whether they pulled it off. Then everyone gathers: first the app reveals who was murdered (the method stays secret), then you discuss, accuse, and vote in private to banish someone. Most votes is out; a tie banishes nobody. One hit, a banishment or a murder, and you are out.",
   },
   {
     icon: "trophy",

@@ -62,24 +62,22 @@ class TestActions:
         for p in ps:
             if p["id"] != tr["id"]:
                 assert S.post(f"{G()}/turn", json={"player_id": p["id"], "pin": pin_of(p["name"])}).status_code == 200
-        r = S.post(f"{G()}/advance").json()
-        assert r["phase"] == "reveal"
-        h = r["history"][-1]
-        # history contains the murder (but never the secret action); banishment not yet
-        assert h["day"] == 1 and h["murder"]["success"] and "action" not in h["murder"]
-        assert h["murder"]["victim_name"] == fa[0]["name"] and h["banish"] is None
-        # now the Round Table: fa[0] is dead, so 5 alive vote to banish fa[1]
+        # night -> roundtable; the murder isn't revealed yet and fa[0] still votes
         assert S.post(f"{G()}/advance").json()["phase"] == "roundtable"
         for p in S.get(f"{G()}").json()["players"]:
             if not p["alive"]:
                 continue
-            vt = fa[1]["id"] if p["id"] != fa[1]["id"] else fa[2]["id"]
-            assert S.post(f"{G()}/turn", json={"player_id": p["id"], "pin": pin_of(p["name"]), "vote_target_id": vt}).status_code == 200
+            body = {"player_id": p["id"], "pin": pin_of(p["name"]), "vote_target_id": fa[1]["id"] if p["id"] != fa[1]["id"] else fa[2]["id"]}
+            if p["id"] == tr["id"]:
+                body["murder_done"] = True  # the Traitor confirms the murder was carried out
+            assert S.post(f"{G()}/turn", json=body).status_code == 200
         r = S.post(f"{G()}/advance").json()
         assert r["phase"] == "banished"
         h = r["history"][-1]
-        assert h["day"] == 1 and h["murder"]["victim_name"] == fa[0]["name"] and "action" not in h["murder"]
-        assert h["banish"]["name"] == fa[1]["name"] and h["banish"]["tally"][0]["votes"] == 4
+        # the Round Table reveal holds the murder (secret action hidden) and the banishment
+        assert h["day"] == 1 and h["murder"]["success"] and "action" not in h["murder"]
+        assert h["murder"]["victim_name"] == fa[0]["name"]
+        assert h["banish"]["name"] == fa[1]["name"] and h["banish"]["tally"][0]["votes"] == 5
         r = S.post(f"{G()}/advance").json()
         assert r["day"] == 2 and r["phase"] == "day"
         # a fresh day clears the victim and action until the next night

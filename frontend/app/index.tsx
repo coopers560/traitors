@@ -121,9 +121,9 @@ const PHASE_COPY: Record<string, { eyebrow: string; title: string; body: string 
     body: "Gather everyone together to see who the table has banished. That closes the day.",
   },
   night: {
-    eyebrow: "After dark",
+    eyebrow: "The plot",
     title: "The Traitors move",
-    body: "Everyone taps their name in private. The Traitors secretly choose who to murder; everyone else simply passes the phone on — so no one can tell who acted.",
+    body: "Everyone taps their name in private. The Traitors secretly choose their victim and a plain-sight action; everyone else simply passes the phone on — so no one can tell who acted. The murder is carried out during the day.",
   },
   reveal: {
     eyebrow: "The morning after",
@@ -292,13 +292,13 @@ function Dashboard({ game, refreshing, onRefresh }: { game: ActiveGame; refreshi
               <Button testID="advance-round-table-button" label={game.endgame ? "Gather for the final vote" : "Night falls — the Traitors move"} icon={game.endgame ? "flame" : "moon"} loading={advance.isPending} onPress={() => setConfirmGo({ label: game.endgame ? "Gather for the final vote" : "Night falls — the Traitors move", run: () => advance.mutate() })} />
             ) : phase === "roundtable" ? (
               <>
-                <Button testID="advance-reveal-button" label={allDone ? (game.endgame ? "Reveal the vote" : "Reveal the banishment") : "Waiting for votes…"} icon="mail-open" disabled={!allDone} loading={advance.isPending && allDone} onPress={() => setConfirmGo({ label: game.endgame ? "Reveal the vote" : "Reveal the banishment", run: () => advance.mutate() })} />
+                <Button testID="advance-reveal-button" label={allDone ? (game.endgame ? "Reveal the vote" : "Reveal the Round Table") : "Waiting for votes…"} icon="mail-open" disabled={!allDone} loading={advance.isPending && allDone} onPress={() => setConfirmGo({ label: game.endgame ? "Reveal the vote" : "Reveal the Round Table", run: () => advance.mutate() })} />
                 {!allDone ? (
                   <Button testID="advance-skip-missing-button" label="Someone missing? Skip & reveal" variant="ghost" icon="play-skip-forward-outline" onPress={() => setConfirmSkip(true)} />
                 ) : null}
               </>
             ) : phase === "night" ? (
-              <Button testID="advance-murder-button" label={allDone ? "Reveal the murder" : "Waiting for the night…"} icon="moon" disabled={!allDone} loading={advance.isPending} onPress={() => setConfirmGo({ label: "Reveal the murder", run: () => advance.mutate() })} />
+              <Button testID="advance-murder-button" label={allDone ? "Gather at the Round Table" : "Waiting for the Traitors…"} icon="flame" disabled={!allDone} loading={advance.isPending} onPress={() => setConfirmGo({ label: "Gather at the Round Table", run: () => advance.mutate() })} />
             ) : phase === "banished" ? (
               <Button testID="open-banishment-button" label="Open the banishment" icon="mail" onPress={() => router.push("/reveal")} />
             ) : (

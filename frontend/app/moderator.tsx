@@ -345,7 +345,13 @@ function Breakdown({ code, passphrase, onChangeGame, onLock }: { code: string; p
                 <Text style={styles.planText}>
                   Method: <Text style={styles.planMethod}>{m.tonight.action ?? "not chosen yet"}</Text>
                 </Text>
-                <Text style={styles.planStatus}>{m.tonight.murder_confirmed ? "✓ Murder sealed" : "Not yet sealed"}</Text>
+                <Text style={styles.planStatus}>
+                  {!m.tonight.murder_confirmed
+                    ? "Not yet planned"
+                    : m.tonight.murder_done
+                      ? "✓ Carried out in plain sight"
+                      : "Planned — not yet confirmed carried out"}
+                </Text>
               </>
             ) : (
               <Text style={styles.planText}>No victim chosen yet.</Text>
