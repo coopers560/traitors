@@ -69,6 +69,7 @@ export default function Moderator() {
 
   return (
     <Breakdown
+      key={code}
       code={code}
       passphrase={unlockedPass}
       onChangeGame={() => { setCode(null); setCodeInput(""); }}
@@ -183,6 +184,8 @@ function Breakdown({ code, passphrase, onChangeGame, onLock }: { code: string; p
   const insets = useSafeAreaInsets();
   const router = useRouter();
 
+  // Roles start hidden so you can follow the game without being spoiled; tap to unmask.
+  const [rolesShown, setRolesShown] = useState(false);
   const { data, isLoading, error, refetch, isRefetching } = useQuery({
     queryKey: ["moderator", code],
     queryFn: () => api.moderatorView(code, passphrase),
@@ -226,8 +229,18 @@ function Breakdown({ code, passphrase, onChangeGame, onLock }: { code: string; p
       <ScrollView contentContainerStyle={[styles.scroll, { paddingBottom: insets.bottom + spacing.lg }]}>
         <View style={styles.warn} testID="moderator-warn">
           <Ionicons name="eye-off" size={16} color={colors.onWarning} />
-          <Text style={styles.warnText}>Every role is shown. Keep this screen to yourself.</Text>
+          <Text style={styles.warnText}>
+            {rolesShown ? "Roles are showing. Keep this screen to yourself." : "Roles are hidden. You can follow the game without being spoiled."}
+          </Text>
         </View>
+
+        <Button
+          testID="moderator-roles-toggle"
+          label={rolesShown ? "Hide roles" : "Reveal roles"}
+          icon={rolesShown ? "eye-off" : "eye"}
+          variant={rolesShown ? "secondary" : "primary"}
+          onPress={() => setRolesShown((v) => !v)}
+        />
 
         {/* Stage */}
         <View style={styles.stageCard}>
@@ -247,16 +260,24 @@ function Breakdown({ code, passphrase, onChangeGame, onLock }: { code: string; p
           ) : null}
           <View style={styles.countRow}>
             <Count label="Still in" value={m.counts.alive} color={colors.onSurface} />
-            <Count label="Traitors" value={m.counts.traitors_alive} color={colors.traitor} />
-            <Count label="Faithful" value={m.counts.faithful_alive} color={colors.brand} />
+            {rolesShown ? (
+              <>
+                <Count label="Traitors" value={m.counts.traitors_alive} color={colors.traitor} />
+                <Count label="Faithful" value={m.counts.faithful_alive} color={colors.brand} />
+              </>
+            ) : null}
             <Count label="Out" value={m.counts.out} color={colors.muted} />
           </View>
         </View>
 
-        {/* Win tracker */}
+        {/* Win tracker — reveals the traitor count, so only when roles are shown */}
         <View style={styles.winCard} testID="moderator-win-note">
           <Text style={styles.cardLabel}>The race to win</Text>
-          <Text style={styles.winText}>{m.win_note}</Text>
+          {rolesShown ? (
+            <Text style={styles.winText}>{m.win_note}</Text>
+          ) : (
+            <Text style={[styles.winText, { color: colors.muted }]}>Tap “Reveal roles” to see the race to win and how many Traitors remain.</Text>
+          )}
         </View>
 
         {/* Where it's up to — only while turns are actually being taken */}
@@ -332,11 +353,20 @@ function Breakdown({ code, passphrase, onChangeGame, onLock }: { code: string; p
           </View>
         ) : null}
 
-        {/* Roster */}
-        <Text style={styles.sectionTitle}>Traitors ({traitors.length})</Text>
-        {traitors.map((p) => <PlayerRow key={p.id} p={p} />)}
-        <Text style={[styles.sectionTitle, { marginTop: spacing.md }]}>Faithful ({faithful.length})</Text>
-        {faithful.map((p) => <PlayerRow key={p.id} p={p} />)}
+        {/* Roster — grouped by allegiance when revealed, one neutral list when hidden */}
+        {rolesShown ? (
+          <>
+            <Text style={styles.sectionTitle}>Traitors ({traitors.length})</Text>
+            {traitors.map((p) => <PlayerRow key={p.id} p={p} masked={false} />)}
+            <Text style={[styles.sectionTitle, { marginTop: spacing.md }]}>Faithful ({faithful.length})</Text>
+            {faithful.map((p) => <PlayerRow key={p.id} p={p} masked={false} />)}
+          </>
+        ) : (
+          <>
+            <Text style={styles.sectionTitle}>Players ({m.counts.alive}/{m.counts.total} in)</Text>
+            {m.players.map((p) => <PlayerRow key={p.id} p={p} masked />)}
+          </>
+        )}
 
         {/* Day-by-day timeline */}
         {m.history.length ? (
@@ -380,22 +410,31 @@ function VoteBar({ name, votes, max }: { name: string; votes: number; max: numbe
   );
 }
 
-function PlayerRow({ p }: { p: ModeratorView["players"][number] }) {
+function PlayerRow({ p, masked }: { p: ModeratorView["players"][number]; masked: boolean }) {
   const styles = useStyles();
   const { colors } = useTheme();
   const traitor = p.role === "traitor";
+  const badgeBg = masked ? colors.surfaceTertiary : traitor ? colors.traitor : colors.brandTertiary;
   return (
     <View style={[styles.playerRow, !p.alive && styles.playerOut]} testID={`moderator-player-${p.id}`}>
-      <View style={[styles.badge, { backgroundColor: traitor ? colors.traitor : colors.brandTertiary }]}>
-        <Ionicons name={traitor ? "skull" : "shield-checkmark"} size={16} color={traitor ? "#FFFFFF" : colors.brand} />
+      <View style={[styles.badge, { backgroundColor: badgeBg }]}>
+        <Ionicons
+          name={masked ? "help" : traitor ? "skull" : "shield-checkmark"}
+          size={16}
+          color={masked ? colors.muted : traitor ? "#FFFFFF" : colors.brand}
+        />
       </View>
       <View style={{ flex: 1, minWidth: 0 }}>
         <Text style={[styles.playerName, !p.alive && styles.struck]} numberOfLines={1}>
           {p.name}{p.is_host ? " · host" : ""}
         </Text>
-        <Text style={[styles.playerRole, { color: traitor ? colors.traitor : colors.brand }]}>
-          {traitor ? "Traitor" : "Faithful"} · {p.alive ? "in the game" : "out"}
-        </Text>
+        {masked ? (
+          <Text style={[styles.playerRole, { color: colors.muted }]}>Role hidden · {p.alive ? "in the game" : "out"}</Text>
+        ) : (
+          <Text style={[styles.playerRole, { color: traitor ? colors.traitor : colors.brand }]}>
+            {traitor ? "Traitor" : "Faithful"} · {p.alive ? "in the game" : "out"}
+          </Text>
+        )}
       </View>
       <Ionicons
         name={p.turn_done ? "checkmark-circle" : "ellipse-outline"}
