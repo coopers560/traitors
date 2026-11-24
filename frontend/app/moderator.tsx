@@ -1,5 +1,5 @@
 import Ionicons from "@react-native-vector-icons/ionicons";
-import { useMutation, useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useRouter } from "expo-router";
 import { useState, type ComponentProps } from "react";
 import { ActivityIndicator, Pressable, ScrollView, Text, TextInput, View } from "react-native";
@@ -7,6 +7,7 @@ import { KeyboardAwareScrollView } from "react-native-keyboard-controller";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { api, ModeratorView, VoteLogEntry } from "@/src/api";
+import { ConfirmSheet } from "@/src/components/confirm-sheet";
 import { ScreenHeader } from "@/src/components/screen-header";
 import { Body, Button, ErrorText, Eyebrow, Title } from "@/src/components/ui";
 import { fonts, makeStyles, radius, spacing, useTheme } from "@/src/theme";
@@ -208,6 +209,16 @@ function Breakdown({ code, passphrase, onChangeGame, onLock }: { code: string; p
     refetchInterval: 4000,
     retry: false,
   });
+  // Re-run the last tied Round Table as a revote (also for ties settled before revotes existed).
+  const qc = useQueryClient();
+  const [confirmRevote, setConfirmRevote] = useState(false);
+  const revote = useMutation({
+    mutationFn: () => api.moderatorRevote(code, passphrase),
+    onSuccess: (v) => {
+      qc.setQueryData(["moderator", code], v);
+      setConfirmRevote(false);
+    },
+  });
 
   if (isLoading) {
     return (
@@ -229,6 +240,9 @@ function Breakdown({ code, passphrase, onChangeGame, onLock }: { code: string; p
   }
 
   const m: ModeratorView = data;
+  const lastEntry = m.history.length ? m.history[m.history.length - 1] : null;
+  const lastTie = lastEntry?.banish?.tie ? lastEntry.banish : null;
+  const lastDay = lastEntry?.day;
   const traitors = m.players.filter((p) => p.role === "traitor");
   const faithful = m.players.filter((p) => p.role === "faithful");
   const voteByDay = new Map<number, VoteLogEntry>(m.vote_log.map((v) => [v.day, v]));
@@ -257,6 +271,19 @@ function Breakdown({ code, passphrase, onChangeGame, onLock }: { code: string; p
           ) : null}
           <NowRow icon="arrow-forward-circle" label="Next" text={m.now.next} testID="moderator-now-next" />
         </View>
+
+        {m.revote_available ? (
+          <View style={styles.revoteCard} testID="moderator-revote-card">
+            <Text style={[styles.cardLabel, { color: colors.brand }]}>The last Round Table was a tie</Text>
+            <Text style={styles.planText}>
+              Re-run it as a revote: everyone votes again, only between the tied players
+              {lastTie ? ` (${lastTie.tally.filter((t) => t.votes === lastTie.tally[0].votes).map((t) => t.name).join(" and ")})` : ""}.
+              {lastDay && m.day > lastDay ? ` This takes the game back to Day ${lastDay}'s Round Table — nothing has happened on Day ${m.day} yet.` : ""}
+            </Text>
+            <ErrorText testID="moderator-revote-error" message={revote.error?.message} />
+            <Button testID="moderator-revote-button" label="Re-run the tie as a revote" icon="refresh" onPress={() => setConfirmRevote(true)} />
+          </View>
+        ) : null}
 
         <View style={styles.warn} testID="moderator-warn">
           <Ionicons name="eye-off" size={16} color={colors.onWarning} />
@@ -323,7 +350,7 @@ function Breakdown({ code, passphrase, onChangeGame, onLock }: { code: string; p
         {/* Live Round Table */}
         {m.round_table ? (
           <View style={styles.card} testID="moderator-votes">
-            <Text style={styles.cardLabel}>Round Table — live</Text>
+            <Text style={styles.cardLabel}>{m.revote?.active ? "Tie-break revote — live" : "Round Table — live"}</Text>
             {m.round_table.tally.length === 0 && m.round_table.end_votes.length === 0 ? (
               <Text style={styles.planText}>No votes cast yet.</Text>
             ) : (
@@ -420,6 +447,16 @@ function Breakdown({ code, passphrase, onChangeGame, onLock }: { code: string; p
           <Button testID="moderator-lock-button" label="Lock and leave" variant="ghost" icon="lock-closed" onPress={() => { onLock(); router.back(); }} />
         </View>
       </ScrollView>
+
+      <ConfirmSheet
+        visible={confirmRevote}
+        title="Start the revote?"
+        message="Everyone goes back to the Round Table and votes again, only between the tied players. Make sure the group is ready."
+        confirmLabel="Start the revote"
+        loading={revote.isPending}
+        onConfirm={() => revote.mutate()}
+        onCancel={() => setConfirmRevote(false)}
+      />
     </View>
   );
 }
@@ -596,8 +633,23 @@ function DayCard({ h, votes, rolesShown }: { h: ModeratorView["history"][number]
             <Ionicons name="flame" size={15} color={colors.brand} />
             <Text style={styles.dayLabel}>Round Table</Text>
           </View>
+          {h.tie_vote ? (
+            <View style={{ gap: 2 }} testID={`moderator-day-${h.day}-tie`}>
+              <Text style={styles.dayTally}>First vote tied: {h.tie_vote.tally.map((t) => `${t.name} ${t.votes}`).join("  ·  ")}</Text>
+              {h.tie_vote.votes?.map((v) => (
+                <View key={v.voter_id} style={styles.voteRow}>
+                  <Text style={styles.voteNameSm}>{v.voter_name}</Text>
+                  <Ionicons name="arrow-forward" size={12} color={colors.muted} />
+                  <Text style={styles.voteTargetSm}>{v.target_name}</Text>
+                </View>
+              ))}
+              <Text style={[styles.dayTally, { marginTop: spacing.xs }]}>Revote:</Text>
+            </View>
+          ) : null}
           <Text style={styles.dayLine}>
-            {b.tie || !b.target_id
+            {b.tie && b.revote_ids?.length && b.round !== 2
+              ? "Tied — revote next."
+              : b.tie || !b.target_id
               ? "Tied — nobody banished."
               : b.already_dead
                 ? `${b.name} got the most votes (already out).`
@@ -629,6 +681,7 @@ function DayCard({ h, votes, rolesShown }: { h: ModeratorView["history"][number]
 const useStyles = makeStyles((c) => ({
   root: { flex: 1, backgroundColor: c.surface },
   center: { alignItems: "center", justifyContent: "center" },
+  revoteCard: { backgroundColor: c.surfaceSecondary, borderRadius: radius.lg, padding: spacing.lg, gap: spacing.sm, borderWidth: 2, borderColor: c.brand },
   scroll: { padding: spacing.lg, gap: spacing.md },
   lockIcon: { alignSelf: "center", width: 80, height: 80, borderRadius: 40, alignItems: "center", justifyContent: "center", backgroundColor: c.surfaceSecondary, borderWidth: 1, borderColor: c.brandSecondary, marginBottom: spacing.sm },
   input: {

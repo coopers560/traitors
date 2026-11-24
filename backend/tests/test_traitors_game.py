@@ -302,6 +302,11 @@ class TestFlow:
         cast_votes({fa[0]["id"]: fa[1]["id"], fa[1]["id"]: fa[0]["id"], fa[2]["id"]: fa[0]["id"], tr["id"]: fa[1]["id"]})
         rb = S.post(f"{G()}/advance").json()
         assert rb["phase"] == "banished" and rb["history"][-1]["banish"]["tie"] is True
+        # The tie goes to a revote between fa[0] and fa[1] — tied again, so nobody is banished
+        assert S.post(f"{G()}/advance").json()["phase"] == "roundtable"
+        cast_votes({fa[0]["id"]: fa[1]["id"], fa[1]["id"]: fa[0]["id"], fa[2]["id"]: fa[0]["id"], tr["id"]: fa[1]["id"]})
+        rb = S.post(f"{G()}/advance").json()
+        assert rb["phase"] == "banished" and rb["history"][-1]["banish"]["round"] == 2 and rb["history"][-1]["banish"]["tie"]
         assert S.post(f"{G()}/advance").json()["phase"] == "day"  # straight to the next vote (no night)
         # Round 2: banish the Traitor -> Faithful win
         assert S.post(f"{G()}/advance").json()["phase"] == "roundtable"
@@ -623,3 +628,104 @@ class TestModeratorNow:
         log = self._mod()["event_log"]
         assert any(e["kind"] == "recruit" and "CHANGED the plan" in e["text"] and fa[0]["name"] in e["text"] for e in log)
         assert sum(1 for e in log if e["kind"] == "pass" and fa[2]["name"] in e["text"]) == 1
+
+
+class TestTieRevote:
+    """A tied Round Table goes to a revote: everyone votes again, only between the tied players."""
+
+    def _tie(self):
+        g, roles = setup_game_traitors(8, 1)
+        ps = g["players"]
+        fa = [p for p in ps if roles[p["id"]] == "faithful"]
+        a, b = fa[0], fa[1]
+        finish_setup(ps)
+        to_roundtable(roles)
+        others = [p for p in ps if p["id"] not in (a["id"], b["id"])]
+        votes = {a["id"]: b["id"], b["id"]: a["id"]}
+        for i, p in enumerate(others):
+            votes[p["id"]] = a["id"] if i % 2 == 0 else b["id"]
+        cast_votes(votes)  # a 4, b 4
+        return ps, roles, a, b, others
+
+    def test_tie_then_revote_banishes_and_keeps_both_rounds(self):
+        ps, roles, a, b, others = self._tie()
+        st = S.post(f"{G()}/advance").json()
+        assert st["phase"] == "banished"
+        tie = st["history"][-1]["banish"]
+        assert tie["tie"] and set(tie["revote_ids"]) == {a["id"], b["id"]}
+        assert len(tie["votes"]) == 8  # who voted for whom is shown at the tie reveal
+        assert st["revote"] and not st["revote"]["active"]
+        # the tie reveal leads to the revote, not the next day
+        st = S.post(f"{G()}/advance").json()
+        assert st["phase"] == "roundtable" and st["day"] == 1 and st["revote"]["active"]
+        assert st["turns_done"] == 0
+        v = private(others[0]["id"], pin_of(others[0]["name"])).json()
+        assert set(v["revote_ids"]) == {a["id"], b["id"]} and v["my_vote_id"] is None
+        # only the tied players can be chosen, and nobody can vote to end
+        r = S.post(f"{G()}/turn", json={"player_id": a["id"], "pin": pin_of(a["name"]), "vote_target_id": others[0]["id"]})
+        assert r.status_code == 400
+        r = S.post(f"{G()}/turn", json={"player_id": a["id"], "pin": pin_of(a["name"]), "end_vote": True})
+        assert r.status_code == 400
+        # can't reveal until everyone has voted again
+        cast_votes({a["id"]: b["id"]})
+        assert S.post(f"{G()}/advance").status_code == 400
+        cast_votes({p["id"]: a["id"] for p in others} | {b["id"]: a["id"]})
+        st = S.post(f"{G()}/advance").json()
+        assert st["phase"] == "banished" and st["revote"] is None
+        h = st["history"][-1]
+        assert h["banish"]["round"] == 2 and h["banish"]["target_id"] == a["id"] and h["banish"]["eliminated"]
+        assert len(h["banish"]["votes"]) == 8  # the revote's votes are shown too
+        assert h["tie_vote"]["tie"] and len(h["tie_vote"]["votes"]) == 8
+        st = S.post(f"{G()}/advance").json()
+        assert st["phase"] == "day" and st["day"] == 2
+        mod = S.post(f"{G()}/moderator", json={"passphrase": "!Uganda02!"}).json()
+        assert [v["round"] for v in mod["vote_log"]] == [1, 2]
+        assert mod["revote_available"] is False
+
+    def test_tied_again_nobody_banished(self):
+        ps, roles, a, b, others = self._tie()
+        S.post(f"{G()}/advance")
+        assert S.post(f"{G()}/advance").json()["phase"] == "roundtable"
+        votes = {a["id"]: b["id"], b["id"]: a["id"]}
+        for i, p in enumerate(others):
+            votes[p["id"]] = a["id"] if i % 2 == 0 else b["id"]
+        cast_votes(votes)
+        st = S.post(f"{G()}/advance").json()
+        h = st["history"][-1]
+        assert st["phase"] == "banished" and h["banish"]["tie"] and h["banish"]["round"] == 2
+        assert st["revote"] is None and all(p["alive"] for p in st["players"])
+        assert S.post(f"{G()}/advance").json()["phase"] == "day"  # no third round
+
+    def test_moderator_revote_needs_passphrase_and_a_tie(self):
+        ps, roles, a, b, others = self._tie()
+        assert S.post(f"{G()}/moderator/revote", json={"passphrase": "nope"}).status_code == 403
+        S.post(f"{G()}/advance")  # tie reveal: the revote is already pending
+        r = S.post(f"{G()}/moderator/revote", json={"passphrase": "!Uganda02!"})
+        assert r.status_code == 400 and "already pending" in r.json()["detail"]
+
+
+class TestRecruitedNow:
+    def test_only_the_recruit_is_told_and_only_after_the_reveal(self):
+        g, roles = setup_game_traitors(8, 1)
+        ps = g["players"]
+        tr = next(p for p in ps if roles[p["id"]] == "traitor")
+        fa = [p for p in ps if roles[p["id"]] == "faithful"]
+        finish_setup(ps)
+        assert S.post(f"{G()}/advance").json()["phase"] == "night"
+        r = S.post(f"{G()}/turn", json={"player_id": tr["id"], "pin": pin_of(tr["name"]), "recruit_id": fa[0]["id"]})
+        assert r.status_code == 200, r.text
+        for p in ps:
+            if p["id"] != tr["id"]:
+                S.post(f"{G()}/turn", json={"player_id": p["id"], "pin": pin_of(p["name"])})
+        # during the night the target is still Faithful and must not be told anything
+        assert private(fa[0]["id"], pin_of(fa[0]["name"])).json()["recruited_now"] is False
+        assert S.post(f"{G()}/advance").json()["phase"] == "gather"
+        do_gather(roles)
+        assert private(fa[0]["id"], pin_of(fa[0]["name"])).json()["recruited_now"] is False
+        assert S.post(f"{G()}/advance").json()["phase"] == "reveal"
+        v = private(fa[0]["id"], pin_of(fa[0]["name"])).json()
+        assert v["role"] == "traitor" and v["recruited_now"] is True
+        assert private(fa[1]["id"], pin_of(fa[1]["name"])).json()["recruited_now"] is False
+        assert private(tr["id"], pin_of(tr["name"])).json()["recruited_now"] is False
+        assert S.post(f"{G()}/advance").json()["phase"] == "roundtable"
+        assert private(fa[0]["id"], pin_of(fa[0]["name"])).json()["recruited_now"] is True

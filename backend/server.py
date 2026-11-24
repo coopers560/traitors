@@ -125,6 +125,10 @@ class Game(BaseModel):
     murder_confirmed: bool = False  # the Traitors have planned & sealed tonight's murder
     murder_done: bool = False  # the murder was confirmed carried out in plain sight, at the Round Table
     end_votes: List[str] = []  # endgame: players who voted to end the game instead of banishing
+    # Tie-break: the players tied on the most votes. Set when a Round Table ties; while the
+    # tie is being revealed ("banished") a revote is pending, and during "roundtable" everyone
+    # votes again but may only choose between these players. Cleared once the revote resolves.
+    revote_ids: List[str] = []
     target_id: Optional[str] = None
     action: Optional[str] = None
     action_choices: List[str] = []  # the three options a Traitor picks tonight's action from
@@ -274,12 +278,32 @@ def public_state(g: Game) -> dict:
             }
             for p in g.players
         ],
+        "revote": _revote_info(g),
         "turns_needed": len(g.players) if g.phase == "setup" else len(g.alive()),
         "turns_done": len(g.turns_done),
         # never reveal which secret action was used (strip from older records too);
         # a day's murder is None until the night step has resolved it
         "history": [_public_history(h, ended) for h in g.history],
     }
+
+
+def _revote_info(g: Game) -> Optional[dict]:
+    """The tie-break, if one is pending (tie being revealed) or under way (revote voting)."""
+    if not g.revote_ids or g.phase not in ("banished", "roundtable"):
+        return None
+    return {
+        "ids": list(g.revote_ids),
+        "names": [name_of(g, pid) for pid in g.revote_ids],
+        "active": g.phase == "roundtable",
+    }
+
+
+def _tie_leaders(banish: Optional[dict]) -> List[str]:
+    """The player ids tied on the most votes in a resolved Round Table."""
+    if not banish or not banish.get("tie") or not banish.get("tally"):
+        return []
+    top = banish["tally"][0]["votes"]
+    return [t["player_id"] for t in banish["tally"] if t["votes"] == top]
 
 
 def _public_history(h: dict, reveal_actions: bool = False) -> dict:
@@ -349,12 +373,21 @@ def snapshot_votes(g: Game) -> dict:
     """Freeze who voted for whom this Round Table, for the moderator-only vote log."""
     return {
         "day": g.day,
+        "round": 2 if g.revote_ids else 1,
         "votes": [
             {"voter_id": vid, "voter_name": name_of(g, vid), "target_id": tid, "target_name": name_of(g, tid)}
             for vid, tid in g.votes.items()
         ],
         "end_votes": [name_of(g, pid) for pid in g.end_votes],
     }
+
+
+def _stage(g: Game) -> str:
+    if g.revote_ids and g.phase == "roundtable":
+        return "Tie-break revote between " + " and ".join(n for n in (name_of(g, i) for i in g.revote_ids) if n)
+    if g.revote_ids and g.phase == "banished":
+        return "The tie is being revealed — a revote follows"
+    return STAGE_LABEL.get(g.phase, g.phase)
 
 
 def _next_step(g: Game) -> str:
@@ -368,7 +401,8 @@ def _next_step(g: Game) -> str:
         "gather": "Reveal the murder." if alive_done else "Waiting for everyone to check in.",
         "reveal": "Show the murder, then the table votes." if not g.winner else "Show the murder — the game is won.",
         "roundtable": "Reveal the banishment." if alive_done else "Waiting for everyone to vote.",
-        "banished": "Show the banishment, then begin the next day." if not g.winner else "Show the banishment — the game is won.",
+        "banished": ("Show the tie, then start the revote." if g.revote_ids
+                     else "Show the banishment, then begin the next day." if not g.winner else "Show the banishment — the game is won."),
         "ended": "The game is over.",
     }.get(g.phase, "")
 
@@ -397,11 +431,14 @@ def _now(g: Game) -> dict:
         doing, what, waiting = "The murder reveal is on screen", "", []
         nxt = "Game over after this reveal" if g.winner else "Read the reveal together, then tap “On to the vote”"
     elif g.phase == "roundtable":
-        doing, what = "Round Table — everyone votes to banish", "to vote"
+        doing, what = ("Tie-break revote — everyone votes again, only between "
+                       + " and ".join(n for n in (name_of(g, i) for i in g.revote_ids) if n)
+                       if g.revote_ids else "Round Table — everyone votes to banish"), "to vote"
         nxt = tap("Reveal the vote" if in_endgame(g) else "Reveal the banishment") if ready else "Everyone still listed casts their vote"
     elif g.phase == "banished":
-        doing, what, waiting = "The banishment reveal is on screen", "", []
-        nxt = "Game over after this reveal" if g.winner else f"Read the reveal together, then tap “Begin Day {g.day + 1}”"
+        doing, what, waiting = ("The tie is on screen — a revote follows" if g.revote_ids else "The banishment reveal is on screen"), "", []
+        nxt = ("Read the reveal together, then tap “Start the revote”" if g.revote_ids
+               else "Game over after this reveal" if g.winner else f"Read the reveal together, then tap “Begin Day {g.day + 1}”")
     else:
         doing, what, waiting, nxt = "The game is over", "", [], "Nothing — the game has ended"
     return {"doing": doing, "waiting_on": waiting, "waiting_for": what, "next": nxt, "ready": ready}
@@ -467,7 +504,9 @@ def moderator_state(g: Game) -> dict:
         "day": g.day,
         "total_days": TOTAL_DAYS,
         "phase": g.phase,
-        "stage": STAGE_LABEL.get(g.phase, g.phase),
+        "stage": _stage(g),
+        "revote": _revote_info(g),
+        "revote_available": _revote_available(g)[0],
         "next_step": _next_step(g),
         "now": _now(g),
         "win_note": _win_note(g),
@@ -691,6 +730,59 @@ async def moderator_view(code: str, data: ModeratorIn):
     return moderator_state(await require_game(code))
 
 
+def _open_revote(g: Game) -> None:
+    g.phase = "roundtable"
+    g.turns_done, g.votes, g.end_votes = [], {}, []
+    log(g, "stage", "Tie-break revote opened — everyone votes again, only between "
+        + " and ".join(n for n in (name_of(g, i) for i in g.revote_ids) if n))
+
+
+def _revote_available(g: Game) -> tuple:
+    """Can the host re-run the most recent tied Round Table as a revote? (ok, reason)"""
+    h = g.history[-1] if g.history else None
+    b = h.get("banish") if h else None
+    if not b or not b.get("tie"):
+        return False, "The last Round Table was not a tie"
+    if h.get("tie_vote") or b.get("round") == 2:
+        return False, "That tie has already been revoted"
+    if g.revote_ids:
+        return False, "A revote is already pending"
+    leaders = [pid for pid in _tie_leaders(b) if (pl := g.player(pid)) and pl.lives > 0]
+    if len(leaders) < 2:
+        return False, "Fewer than two of the tied players are still in"
+    if g.phase == "banished" and g.day == h["day"]:
+        return True, ""
+    # The next day has begun but nothing has happened in it yet
+    if g.day == h["day"] + 1 and (g.phase == "day" or (g.phase == "night" and not g.turns_done)):
+        return True, ""
+    return False, "Too late — the next day is already under way"
+
+
+@api_router.post("/games/{code}/moderator/revote")
+@locked
+async def moderator_revote(code: str, data: ModeratorIn):
+    """Re-run the most recent tied Round Table as a tie-break revote (for a tie that was
+    resolved before revotes existed, or the host wants it now). Rewinds an untouched next day."""
+    check_moderator(data.passphrase)
+    g = await require_game(code)
+    ok, why = _revote_available(g)
+    if not ok:
+        raise HTTPException(400, why)
+    h = g.history[-1]
+    g.revote_ids = [pid for pid in _tie_leaders(h["banish"]) if g.player(pid).lives > 0]
+    h["banish"]["revote_ids"] = list(g.revote_ids)
+    h["banish"]["revote_names"] = [name_of(g, pid) for pid in g.revote_ids]
+    if g.day != h["day"]:
+        # Step back into the tied day: the new day had not started anything yet.
+        g.day = h["day"]
+        g.target_id, g.action, g.murder_confirmed, g.action_choices, g.recruit_id = None, None, False, [], None
+        g.murder_done = False
+    log(g, "stage", "Host re-ran the tied Round Table as a revote")
+    _open_revote(g)
+    await save(g)
+    return moderator_state(g)
+
+
 @api_router.get("/games/{code}")
 async def get_game(code: str):
     return public_state(await require_game(code))
@@ -762,6 +854,12 @@ async def private_view(code: str, data: AuthIn):
         "turn_done": p.id in g.turns_done,
         "my_vote_id": g.votes.get(p.id),
         "my_end_vote": p.id in g.end_votes,
+        "revote_ids": list(g.revote_ids) if g.phase == "roundtable" else [],
+        # Recruited into the Traitors today (resolved at the murder reveal). Only ever sent to
+        # that player, and only once they really are a Traitor — never during the night plan.
+        "recruited_now": bool(
+            p.role == "traitor" and g.recruit_id == p.id and g.phase in ("reveal", "roundtable", "banished")
+        ),
         "endgame": in_endgame(g),
     }
     if p.role == "traitor":
@@ -806,6 +904,8 @@ async def take_turn(code: str, data: TurnIn):
     elif g.phase == "roundtable":
         if p.lives <= 0:
             raise HTTPException(400, "You have been eliminated and cannot vote")
+        if g.revote_ids and data.end_vote:
+            raise HTTPException(400, "This is a tie-break revote — choose one of the tied players")
         if in_endgame(g) and data.end_vote:
             # Endgame: this player votes to end the game now rather than banish
             g.votes.pop(p.id, None)
@@ -816,6 +916,8 @@ async def take_turn(code: str, data: TurnIn):
             tgt = g.player(data.vote_target_id)
             if not tgt or tgt.lives <= 0 or tgt.id == p.id:
                 raise HTTPException(400, "Choose someone to banish")
+            if g.revote_ids and tgt.id not in g.revote_ids:
+                raise HTTPException(400, "This is a tie-break revote — choose one of the tied players")
             prev = g.votes.get(p.id)
             if prev and prev != tgt.id:
                 log(g, "vote", f"{p.name} changed their vote from {name_of(g, prev)} to {tgt.name}")
@@ -989,25 +1091,46 @@ async def advance(code: str, expected: Optional[str] = None, expected_day: Optio
             g.phase = "ended"
             log(g, "end", f"Everyone voted to end the game — the {g.winner.capitalize()} win")
         else:
+            revote = bool(g.revote_ids)
             banish = resolve_banish(g)
             g.winner = winner_by_roles(g)
-            # The gather/reveal opened this day's entry with the murder; add the banishment.
-            # Endgame days have no murder, so they start their entry here.
+            tally = " · ".join(f"{t['name']} {t['votes']}" for t in banish["tally"])
             h = g.history[-1] if g.history else None
-            if h and h.get("day") == g.day and h.get("banish") is None and not h.get("ended_by_vote"):
+            if revote and h and h.get("day") == g.day and h.get("banish"):
+                # The tie-break: keep the tied first vote for the record, show this one.
+                banish["round"] = 2
+                h["tie_vote"] = h["banish"]
                 h["banish"] = banish
                 h["winner"] = g.winner
+                g.revote_ids = []
             else:
-                g.history.append({"day": g.day, "murder": None, "banish": banish, "winner": g.winner})
-            tally = " · ".join(f"{t['name']} {t['votes']}" for t in banish["tally"])
-            if banish["tie"] or not banish["target_id"]:
-                log(g, "banish", f"Banishment: tied vote, nobody banished ({tally})")
+                if banish["tie"]:
+                    # A first-round tie: everyone votes again, only between the tied players.
+                    leaders = _tie_leaders(banish)
+                    g.revote_ids = leaders
+                    banish["revote_ids"] = leaders
+                    banish["revote_names"] = [name_of(g, pid) for pid in leaders]
+                # The gather/reveal opened this day's entry with the murder; add the banishment.
+                # Endgame days have no murder, so they start their entry here.
+                if h and h.get("day") == g.day and h.get("banish") is None and not h.get("ended_by_vote"):
+                    h["banish"] = banish
+                    h["winner"] = g.winner
+                else:
+                    g.history.append({"day": g.day, "murder": None, "banish": banish, "winner": g.winner})
+            if banish["tie"] and g.revote_ids:
+                log(g, "banish", f"Round Table tied ({tally}) — revote between "
+                    + " and ".join(banish["revote_names"]))
+            elif banish["tie"] or not banish["target_id"]:
+                log(g, "banish", f"{'Revote tied again' if revote else 'Banishment: tied vote'}, nobody banished ({tally})")
             else:
                 bp = g.player(banish["target_id"])
-                log(g, "banish", f"Banishment: {bp.name} was banished — {_role(bp)}"
+                log(g, "banish", f"{'Revote' if revote else 'Banishment'}: {bp.name} was banished — {_role(bp)}"
                     + (" (kept secret from players)" if banish.get("role_hidden") else "") + f" ({tally})",
-                    f"Banishment: {bp.name} was banished ({tally})")
+                    f"{'Revote' if revote else 'Banishment'}: {bp.name} was banished ({tally})")
             g.phase = "banished"
+    elif g.phase == "banished" and g.revote_ids:
+        # The tie has been shown: everyone votes again, only between the tied players.
+        _open_revote(g)
     elif g.phase == "banished":
         # The day is over. The game may be won; the Traitors also win if they survive to the
         # end of the final day. Otherwise a new day (and a new plot) begins.
