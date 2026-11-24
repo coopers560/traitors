@@ -358,7 +358,11 @@ function Breakdown({ code, passphrase, onChangeGame, onLock }: { code: string; p
         {m.tonight ? (
           <View style={[styles.card, { borderColor: colors.traitor }]} testID="moderator-tonight">
             <Text style={[styles.cardLabel, { color: colors.traitor }]}>Tonight&apos;s plan</Text>
-            {m.tonight.recruit_name ? (
+            {!rolesShown ? (
+              <Text style={[styles.planText, { color: colors.muted }]} testID="moderator-tonight-hidden">
+                Hidden. Tap “Reveal roles” to see who the Traitors are after tonight.
+              </Text>
+            ) : m.tonight.recruit_name ? (
               <Text style={styles.planText}>
                 Recruiting <Text style={styles.planName}>{m.tonight.recruit_name}</Text> — no murder.
               </Text>
@@ -406,7 +410,7 @@ function Breakdown({ code, passphrase, onChangeGame, onLock }: { code: string; p
         {m.history.length ? (
           <>
             <Text style={[styles.sectionTitle, { marginTop: spacing.md }]}>Day by day</Text>
-            {m.history.map((h) => <DayCard key={h.day} h={h} votes={voteByDay.get(h.day)} />)}
+            {m.history.map((h) => <DayCard key={h.day} h={h} votes={voteByDay.get(h.day)} rolesShown={rolesShown} />)}
           </>
         ) : null}
 
@@ -553,7 +557,7 @@ function PlayerRow({ p, masked }: { p: ModeratorView["players"][number]; masked:
   );
 }
 
-function DayCard({ h, votes }: { h: ModeratorView["history"][number]; votes?: VoteLogEntry }) {
+function DayCard({ h, votes, rolesShown }: { h: ModeratorView["history"][number]; votes?: VoteLogEntry; rolesShown: boolean }) {
   const styles = useStyles();
   const { colors } = useTheme();
   const b = h.banish;
@@ -575,7 +579,7 @@ function DayCard({ h, votes }: { h: ModeratorView["history"][number]; votes?: Vo
           </View>
           {mu.success ? (
             <Text style={styles.dayLine}>
-              {mu.victim_name} was murdered{mu.action ? ` — ${mu.action}` : ""}.
+              {mu.victim_name} was murdered{rolesShown && mu.action ? ` — ${mu.action}` : ""}.
             </Text>
           ) : h.recruited ? (
             <Text style={styles.dayLine}>No murder — a Faithful was recruited into the Traitors.</Text>
