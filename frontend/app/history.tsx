@@ -5,6 +5,7 @@ import Animated, { FadeInDown } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { api, DayResult } from "@/src/api";
+import { HoldRole } from "@/src/components/hold-reveal";
 import { ScreenHeader } from "@/src/components/screen-header";
 import { Body, Eyebrow, Title } from "@/src/components/ui";
 import { makeStyles, radius, spacing, useTheme } from "@/src/theme";
@@ -38,7 +39,6 @@ function DayCard({ h, index }: { h: DayResult; index: number }) {
   const { colors } = useTheme();
   const m = h.murder;
   const b = h.banish;
-  const roleText = (role?: string | null) => (role === "traitor" ? "a Traitor" : "Faithful");
   const banishText = (bb: NonNullable<DayResult["banish"]>) =>
     bb.tie && bb.revote_ids?.length && bb.round !== 2
       ? "Tied vote — a revote follows"
@@ -47,7 +47,7 @@ function DayCard({ h, index }: { h: DayResult; index: number }) {
       : bb.already_dead
         ? `${bb.name} got the most votes (already murdered)`
         : bb.eliminated
-          ? `${bb.name} was banished${bb.role_hidden ? " — allegiance kept secret" : ` — ${roleText(bb.role)}`}`
+          ? `${bb.name} was banished${bb.role_hidden ? " — allegiance kept secret" : ""}`
           : `${bb.name} lost a life`;
 
   return (
@@ -86,6 +86,9 @@ function DayCard({ h, index }: { h: DayResult; index: number }) {
             </Text>
           ) : null}
           <Text style={styles.main} testID={`history-banish-${h.day}`}>{banishText(b)}</Text>
+          {b.eliminated && !b.already_dead && !b.tie && b.target_id && !b.role_hidden ? (
+            <HoldRole role={b.role} testID={`history-banish-role-${h.day}`} />
+          ) : null}
           <View style={styles.tally}>
             {b.tally.map((t) => (
               <View key={t.player_id} style={styles.tallyRow}>

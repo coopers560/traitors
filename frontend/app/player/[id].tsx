@@ -8,6 +8,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { api, DayResult, exitOf, PrivateView, PublicPlayer } from "@/src/api";
 import { HelpButton } from "@/src/components/help-button";
+import { HoldToReveal } from "@/src/components/hold-reveal";
 import { PinPad } from "@/src/components/pin-pad";
 import { VoteBoard } from "@/src/components/vote-board";
 import { Backdrop, Body, Button, ErrorText, Eyebrow, IMAGES, Title } from "@/src/components/ui";
@@ -31,6 +32,7 @@ export default function PlayerTurn() {
   // Traitors may have recruited someone. Everyone does exactly the same taps, so a recruit
   // looking at their phone never stands out.
   const [roleChecked, setRoleChecked] = useState(false);
+  const [roleSeen, setRoleSeen] = useState(false);
   const autoTried = useRef(false);
 
   const players = game?.exists ? game.players : [];
@@ -64,6 +66,14 @@ export default function PlayerTurn() {
     router.back();
   };
 
+  // Not taking a turn (peeking, or nothing to do this phase): the brief shows in the held card.
+  const isPeek =
+    !!view &&
+    !(
+      mode === "turn" &&
+      (view.phase === "setup" || (view.alive && (view.phase === "gather" || view.phase === "roundtable" || view.phase === "night")))
+    );
+
   // Always the same backdrop, whatever the role: a glance from across the room
   // must not reveal who is a Traitor. The role is shown only in text, up close.
   const bg = IMAGES.candle;
@@ -96,7 +106,19 @@ export default function PlayerTurn() {
         <RoleCheck view={view} onDone={() => setRoleChecked(true)} />
       ) : (
         <ScrollView contentContainerStyle={[styles.scroll, { paddingBottom: insets.bottom + spacing.lg }]}>
-          <RoleCard view={view} exit={game?.exists ? exitOf(game.history, view.player_id) : null} />
+          <RoleCard view={view} exit={game?.exists ? exitOf(game.history, view.player_id) : null} onReveal={() => setRoleSeen(true)}>
+            {mode === "turn" && view.phase === "setup" ? (
+              view.role === "traitor" ? (
+                <Body testID="setup-traitor-note">
+                  Remember your fellow Traitors. Each day you&apos;ll choose a victim at night, carry out the murder in plain sight during the day, then confirm it at the Round Table.
+                </Body>
+              ) : (
+                <FaithfulBrief view={view} />
+              )
+            ) : isPeek ? (
+              view.role === "traitor" ? <TraitorBrief view={view} /> : <FaithfulBrief view={view} />
+            ) : null}
+          </RoleCard>
           {boundHere ? (
             <Pressable testID="forget-me-button" onPress={() => clearMe()} style={styles.rememberOn}>
               <Ionicons name="checkmark-circle" size={18} color={colors.brand} />
@@ -112,7 +134,7 @@ export default function PlayerTurn() {
             </Pressable>
           )}
           {mode === "turn" && view.phase === "setup" ? (
-            <SetupTurn view={view} pin={pin} onSealed={() => setSealed(true)} />
+            <SetupTurn view={view} pin={pin} seen={roleSeen} onSealed={() => setSealed(true)} />
           ) : mode === "turn" && view.phase === "gather" && view.alive ? (
             <GatherTurn view={view} pin={pin} onSealed={() => setSealed(true)} />
           ) : mode === "turn" && view.phase === "roundtable" && view.alive ? (
@@ -120,10 +142,7 @@ export default function PlayerTurn() {
           ) : mode === "turn" && view.phase === "night" && view.alive ? (
             <NightTurn view={view} pin={pin} players={players} onSealed={() => setSealed(true)} />
           ) : (
-            <>
-              {view.role === "traitor" ? <TraitorBrief view={view} /> : <FaithfulBrief view={view} />}
-              <Button testID="player-hide-button" label="Hide & pass the phone back" icon="eye-off" onPress={leave} />
-            </>
+            <Button testID="player-hide-button" label="Hide & pass the phone back" icon="eye-off" onPress={leave} />
           )}
         </ScrollView>
       )}
@@ -135,7 +154,7 @@ function RoleCheck({ view, onDone }: { view: PrivateView; onDone: () => void }) 
   const styles = useStyles();
   const { colors } = useTheme();
   const insets = useSafeAreaInsets();
-  const [shown, setShown] = useState(false);
+  const [shown, setShown] = useState(false); // held at least once
   const traitor = view.role === "traitor";
   const fellows = view.fellow_traitors ?? [];
   return (
@@ -148,13 +167,8 @@ function RoleCheck({ view, onDone }: { view: PrivateView; onDone: () => void }) 
           nobody can see your screen.
         </Body>
       </Animated.View>
-      {!shown ? (
-        <Pressable testID="role-check-reveal" onPress={() => setShown(true)} style={styles.checkCover} accessibilityRole="button">
-          <Ionicons name="eye" size={34} color={colors.brand} />
-          <Text style={styles.checkCoverText}>Tap to see who you are</Text>
-        </Pressable>
-      ) : (
-        <Animated.View entering={FadeIn.duration(400)} style={[styles.roleCard, traitor && { borderColor: colors.traitor }]} testID="role-check-card">
+      <HoldToReveal testID="role-check-reveal" label="Press and hold to see who you are" minHeight={190} onReveal={() => setShown(true)}>
+        <View style={[styles.roleCard, { borderColor: traitor ? colors.traitor : colors.brand }]} testID="role-check-card">
           {view.recruited_now ? (
             <>
               <Eyebrow style={{ color: colors.traitor }}>You have been recruited</Eyebrow>
@@ -178,32 +192,49 @@ function RoleCheck({ view, onDone }: { view: PrivateView; onDone: () => void }) 
           ) : (
             <Body>Nothing has changed for you. Find the Traitors.</Body>
           )}
-        </Animated.View>
-      )}
-      <Button testID="role-check-done" label="Got it — hide it and vote" icon="eye-off" disabled={!shown} onPress={onDone} />
+        </View>
+      </HoldToReveal>
+      <Button testID="role-check-done" label="Got it — on to my vote" icon="arrow-forward" disabled={!shown} onPress={onDone} />
     </ScrollView>
   );
 }
 
-function RoleCard({ view, exit }: { view: PrivateView; exit: { how: "murdered" | "banished"; day: number } | null }) {
+function RoleCard({
+  view,
+  exit,
+  onReveal,
+  children,
+}: {
+  view: PrivateView;
+  exit: { how: "murdered" | "banished"; day: number } | null;
+  onReveal?: () => void;
+  children?: React.ReactNode;
+}) {
   const styles = useStyles();
   const { colors } = useTheme();
   const traitor = view.role === "traitor";
+  // The card itself looks the same for everyone; the role (and anything that hints at it)
+  // shows only while a finger is held on it.
   return (
-    <Animated.View entering={FadeIn.duration(800)} style={[styles.roleCard, traitor && { borderColor: colors.traitor }]} testID="role-card">
+    <Animated.View entering={FadeIn.duration(800)} style={styles.roleCard} testID="role-card">
       <Eyebrow>{view.name}, you are</Eyebrow>
-      <Text testID="role-title" style={[styles.roleTitle, { color: traitor ? colors.traitor : colors.brand }]}>
-        {traitor ? "A Traitor" : "Faithful"}
-      </Text>
-      {traitor && view.fellow_traitors ? (
-        <Body testID="fellow-traitors">
-          {view.fellow_traitors.length
-            ? `Your fellow Traitor${view.fellow_traitors.length > 1 ? "s" : ""}: ${view.fellow_traitors.join(", ")}`
-            : "You are the only Traitor."}
-        </Body>
-      ) : !traitor ? (
-        <Body>Find the Traitors and banish them at the Round Table.</Body>
-      ) : null}
+      <HoldToReveal testID="role-hold" label="Press and hold to see your role" minHeight={children ? 220 : 150} onReveal={onReveal}>
+        <View style={{ gap: spacing.sm }}>
+          <Text testID="role-title" style={[styles.roleTitle, { color: traitor ? colors.traitor : colors.brand }]}>
+            {traitor ? "A Traitor" : "Faithful"}
+          </Text>
+          {traitor && view.fellow_traitors ? (
+            <Body testID="fellow-traitors">
+              {view.fellow_traitors.length
+                ? `Your fellow Traitor${view.fellow_traitors.length > 1 ? "s" : ""}: ${view.fellow_traitors.join(", ")}`
+                : "You are the only Traitor."}
+            </Body>
+          ) : !traitor ? (
+            <Body>Find the Traitors and banish them at the Round Table.</Body>
+          ) : null}
+          {children}
+        </View>
+      </HoldToReveal>
       {!view.alive ? (
         <View style={styles.outBox} testID="eliminated-how">
           <Text style={[styles.outTitle, { color: exit?.how === "murdered" ? colors.traitor : colors.brand }]}>
@@ -437,22 +468,16 @@ function NightTurn({ view, pin, players, onSealed }: { view: PrivateView; pin: s
   );
 }
 
-function SetupTurn({ view, pin, onSealed }: { view: PrivateView; pin: string; onSealed: () => void }) {
+function SetupTurn({ view, pin, seen, onSealed }: { view: PrivateView; pin: string; seen: boolean; onSealed: () => void }) {
   const submit = useMutation({
     mutationFn: () => api.takeTurn({ player_id: view.player_id, pin }),
     onSuccess: () => onSealed(),
   });
   return (
     <>
-      {view.role === "traitor" ? (
-        <Body testID="setup-traitor-note">
-          Remember your fellow Traitors. Each day you&apos;ll choose a victim at night, carry out the murder in plain sight during the day, then confirm it at the Round Table.
-        </Body>
-      ) : (
-        <FaithfulBrief view={view} />
-      )}
+      {!seen ? <Body testID="setup-hold-note">Press and hold the card above to see your role, then confirm.</Body> : null}
       <ErrorText testID="turn-error" message={submit.error?.message} />
-      <Button testID="setup-turn-confirm-button" label="I understand — hide it" icon="eye-off" loading={submit.isPending} onPress={() => submit.mutate()} />
+      <Button testID="setup-turn-confirm-button" label="I understand — hide it" icon="eye-off" disabled={!seen} loading={submit.isPending} onPress={() => submit.mutate()} />
     </>
   );
 }
