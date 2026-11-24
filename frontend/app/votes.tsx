@@ -41,11 +41,6 @@ function revealedRounds(game: Game): { rounds: Round[]; revealing: boolean } {
   return { rounds, revealing };
 }
 
-const topIds = (b: BanishResult) => {
-  const top = b.tally[0]?.votes ?? 0;
-  return b.tally.filter((t) => t.votes === top).map((t) => t.player_id);
-};
-
 export default function Votes() {
   const styles = useStyles();
   const { colors } = useTheme();
@@ -92,7 +87,7 @@ export default function Votes() {
                 ) : null}
               </View>
               <Outcome b={r.vote} testID={`votes-outcome-${r.key}`} />
-              <VoteBoard vote={r.vote} title="How the table voted" highlight={topIds(r.vote)} collapsible={i > 0} testID={`votes-board-${r.key}`} />
+              <VoteBoard vote={r.vote} title="The votes" testID={`votes-board-${r.key}`} />
             </Animated.View>
           ))
         )}
