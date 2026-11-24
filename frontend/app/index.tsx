@@ -11,6 +11,7 @@ import { api, exitOf, GameState, PublicPlayer } from "@/src/api";
 import { ConfirmSheet } from "@/src/components/confirm-sheet";
 import { PinPad } from "@/src/components/pin-pad";
 import { QrCode } from "@/src/components/qr-code";
+import { VoteBoard } from "@/src/components/vote-board";
 import { Backdrop, Body, Button, ErrorText, Eyebrow, IMAGES, Title } from "@/src/components/ui";
 import { useGameCode } from "@/src/game-code";
 import { useMe } from "@/src/me";
@@ -191,6 +192,9 @@ function Dashboard({ game, refreshing, onRefresh }: { game: ActiveGame; refreshi
   const { phase } = game;
   const allDone = game.turns_done >= game.turns_needed;
   const tied = (game.revote?.names ?? []).filter(Boolean).join(" and ");
+  // During a revote everyone can see the tied first vote (it was already revealed to all).
+  const lastResult = game.history.length ? game.history[game.history.length - 1] : null;
+  const firstVote = phase === "roundtable" && game.revote?.active && lastResult?.day === game.day && lastResult.banish?.tie ? lastResult.banish : null;
   const copy =
     phase === "roundtable" && game.revote?.active
       ? {
@@ -307,6 +311,9 @@ function Dashboard({ game, refreshing, onRefresh }: { game: ActiveGame; refreshi
                   {game.turns_done} of {game.turns_needed} have taken their turn
                 </Text>
               </View>
+            ) : null}
+            {firstVote ? (
+              <VoteBoard vote={firstVote} title="The first vote — tied" highlight={game.revote?.ids} collapsible testID="first-vote" />
             ) : null}
             <ErrorText testID="advance-error" message={advance.error?.message} />
             {phase === "setup" ? (
