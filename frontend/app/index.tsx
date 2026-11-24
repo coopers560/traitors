@@ -259,6 +259,7 @@ function Dashboard({ game, refreshing, onRefresh }: { game: ActiveGame; refreshi
           <Button testID="menu-help-button" label="Help · what do I tap?" variant="secondary" icon="help-circle-outline" onPress={() => { setMenu(false); router.push({ pathname: "/help", params: { from: "main" } }); }} />
           <Button testID="menu-how-to-play-button" label="How to play" variant="secondary" icon="book-outline" onPress={() => { setMenu(false); router.push("/how-to-play"); }} />
           <Button testID="menu-history-button" label="Day history" variant="secondary" icon="time-outline" onPress={() => { setMenu(false); router.push("/history"); }} />
+          <Button testID="menu-votes-button" label="Votes so far" variant="secondary" icon="podium-outline" onPress={() => { setMenu(false); router.push("/votes"); }} />
           <Button testID="menu-actions-button" label="Secret actions" variant="secondary" icon="list-outline" onPress={() => { setMenu(false); router.push("/actions"); }} />
           <Button testID="menu-share-code-button" label="Invite players (QR & link)" variant="secondary" icon="qr-code-outline" onPress={openInvite} />
           {boundPlayer ? (
@@ -343,6 +344,10 @@ function Dashboard({ game, refreshing, onRefresh }: { game: ActiveGame; refreshi
             )}
           </Animated.View>
         )}
+
+        {game.history.some((h) => h.banish || h.tie_vote) ? (
+          <Button testID="votes-so-far-button" label="Votes so far" variant="secondary" icon="podium-outline" onPress={() => router.push("/votes")} />
+        ) : null}
 
         <Pressable testID="dashboard-help-button" accessibilityRole="button" onPress={() => router.push({ pathname: "/help", params: { from: "main" } })} style={styles.helpLink} hitSlop={6}>
           <Ionicons name="help-circle-outline" size={20} color={colors.brand} />
