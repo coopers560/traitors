@@ -9,6 +9,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { api, exitOf, GameState, PublicPlayer } from "@/src/api";
 import { ConfirmSheet } from "@/src/components/confirm-sheet";
+import { HoldRole } from "@/src/components/hold-reveal";
 import { PinPad } from "@/src/components/pin-pad";
 import { QrCode } from "@/src/components/qr-code";
 import { VoteBoard } from "@/src/components/vote-board";
@@ -377,7 +378,7 @@ function Dashboard({ game, refreshing, onRefresh }: { game: ActiveGame; refreshi
             <Text style={[styles.sectionTitle, { marginTop: spacing.lg }]}>Eliminated</Text>
             <View style={{ gap: spacing.sm }}>
               {out.map((p, i) => (
-                <PlayerRow key={p.id} p={p} index={i} showTurn={false} onPress={() => onPlayer(p)} disabled={!peekMode} exit={exitOf(game.history, p.id)} />
+                <PlayerRow key={p.id} p={p} index={i} showTurn={false} onPress={() => onPlayer(p)} disabled={!peekMode} exit={exitOf(game.history, p.id)} holdRole={phase !== "ended"} />
               ))}
             </View>
           </>
@@ -417,7 +418,24 @@ function Dashboard({ game, refreshing, onRefresh }: { game: ActiveGame; refreshi
   );
 }
 
-function PlayerRow({ p, index, showTurn, onPress, disabled, exit }: { p: PublicPlayer; index: number; showTurn: boolean; onPress: () => void; disabled?: boolean; exit?: { how: "murdered" | "banished"; day: number } | null }) {
+function PlayerRow({
+  p,
+  index,
+  showTurn,
+  onPress,
+  disabled,
+  exit,
+  holdRole,
+}: {
+  p: PublicPlayer;
+  index: number;
+  showTurn: boolean;
+  onPress: () => void;
+  disabled?: boolean;
+  exit?: { how: "murdered" | "banished"; day: number } | null;
+  /** During the game an out player's allegiance shows only while held. */
+  holdRole?: boolean;
+}) {
   const styles = useStyles();
   const { colors } = useTheme();
   return (
@@ -435,7 +453,14 @@ function PlayerRow({ p, index, showTurn, onPress, disabled, exit }: { p: PublicP
           <Text style={[styles.rowName, !p.alive && { textDecorationLine: "line-through", color: colors.muted }]} numberOfLines={1}>
             {p.name}
           </Text>
-          {!p.alive && exit ? (
+          {!p.alive && exit && holdRole ? (
+            <>
+              <Text style={styles.rowExit} testID={`player-exit-${p.id}`}>
+                {exit.how === "murdered" ? "Murdered" : "Banished"} · Day {exit.day}
+              </Text>
+              {p.role ? <HoldRole role={p.role} testID={`player-role-${p.id}`} /> : null}
+            </>
+          ) : !p.alive && exit ? (
             <Text style={styles.rowExit} testID={`player-exit-${p.id}`}>
               {exit.how === "murdered" ? "Murdered" : "Banished"} · Day {exit.day}
               {p.role ? (
