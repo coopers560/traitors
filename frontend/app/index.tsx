@@ -1,5 +1,6 @@
 import Ionicons from "@react-native-vector-icons/ionicons";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { Image } from "expo-image";
 import { useRouter } from "expo-router";
 import { useEffect, useState } from "react";
 import { ActivityIndicator, Modal, Pressable, RefreshControl, ScrollView, Text, View } from "react-native";
@@ -67,8 +68,14 @@ function Welcome({ gone }: { gone: boolean }) {
       <Backdrop image={IMAGES.castle} />
       <View style={[styles.welcome, { paddingTop: insets.top + spacing.xl, paddingBottom: insets.bottom + spacing.lg }]}>
         <Animated.View entering={FadeInDown.duration(700)} style={{ gap: spacing.sm }}>
-          <Eyebrow>Holiday edition · Egypt</Eyebrow>
-          <Title style={styles.heroTitle}>The Traitors</Title>
+          <Image
+            testID="welcome-logo"
+            source={require("../assets/images/logo-transparent.png")}
+            style={styles.heroLogo}
+            contentFit="contain"
+            accessibilityLabel="The Traitors"
+          />
+          <Eyebrow style={{ textAlign: "center" }}>Holiday edition · Egypt</Eyebrow>
           <Body>
             Twelve days. Hidden among the family are Traitors who murder in plain sight. Find them
             before it&apos;s too late.
@@ -596,7 +603,7 @@ const useStyles = makeStyles((c) => ({
     borderColor: c.brandSecondary,
   },
   welcome: { flex: 1, paddingHorizontal: spacing.lg, justifyContent: "space-between" },
-  heroTitle: { fontSize: 64, lineHeight: 68, color: c.onSurface },
+  heroLogo: { width: "100%", aspectRatio: 592 / 400, maxHeight: 240, alignSelf: "center" },
   header: {
     flexDirection: "row",
     alignItems: "center",
