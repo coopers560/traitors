@@ -119,6 +119,7 @@ export type ModeratorView = {
   phase: Phase;
   stage: string;
   next_step: string;
+  now: { doing: string; waiting_on: string[]; waiting_for: string; next: string; ready: boolean };
   win_note: string;
   endgame: boolean;
   winner: "faithful" | "traitors" | null;

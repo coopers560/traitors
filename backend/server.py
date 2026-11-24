@@ -330,6 +330,17 @@ def log(g: Game, kind: str, text: str, neutral: Optional[str] = "same") -> None:
         del g.event_log[:-EVENT_LOG_CAP]
 
 
+def _plan_text(g: Game) -> str:
+    """Tonight's plan so far, for flagging when a Traitor overrides it ('' if none yet)."""
+    if g.recruit_id:
+        return f"recruit {name_of(g, g.recruit_id)}"
+    if g.murder_confirmed and g.target_id:
+        return f"murder {name_of(g, g.target_id)}"
+    if g.target_id:
+        return f"{name_of(g, g.target_id)} picked, not sealed"
+    return ""
+
+
 def _role(p: Player) -> str:
     return "Traitor" if p.role == "traitor" else "Faithful"
 
@@ -360,6 +371,40 @@ def _next_step(g: Game) -> str:
         "banished": "Show the banishment, then begin the next day." if not g.winner else "Show the banishment — the game is won.",
         "ended": "The game is over.",
     }.get(g.phase, "")
+
+
+def _now(g: Game) -> dict:
+    """The dead-simple 'what's happening / who are we waiting for / what's next' for the
+    moderator. Spoiler-free: during the night everyone takes a turn, so the waiting list
+    never singles out a Traitor."""
+    pool = g.players if g.phase == "setup" else g.alive()
+    waiting = [p.name for p in pool if p.id not in g.turns_done]
+    ready = not waiting
+    tap = lambda label: f"Host taps “{label}” on the main screen"
+    if g.phase == "setup":
+        doing, what = "Everyone is looking at their secret role", "to see their role"
+        nxt = tap("Begin Day 1") if ready else "Pass the phone round until everyone has seen their role"
+    elif g.phase == "day":
+        doing, what, waiting = f"Day {g.day} — enjoy the holiday", "", []
+        nxt = tap("Gather for the final vote") if in_endgame(g) else tap("Night falls — the Traitors move")
+    elif g.phase == "night":
+        doing, what = "Night — everyone takes a turn while the Traitors secretly plot", "to take their night turn"
+        nxt = tap("Everyone to the Round Table") if ready else "Everyone still listed takes their night turn"
+    elif g.phase == "gather":
+        doing, what = "Heading to the Round Table — everyone checks in", "to check in"
+        nxt = tap("Reveal the murder") if ready else "Everyone still listed checks in"
+    elif g.phase == "reveal":
+        doing, what, waiting = "The murder reveal is on screen", "", []
+        nxt = "Game over after this reveal" if g.winner else "Read the reveal together, then tap “On to the vote”"
+    elif g.phase == "roundtable":
+        doing, what = "Round Table — everyone votes to banish", "to vote"
+        nxt = tap("Reveal the vote" if in_endgame(g) else "Reveal the banishment") if ready else "Everyone still listed casts their vote"
+    elif g.phase == "banished":
+        doing, what, waiting = "The banishment reveal is on screen", "", []
+        nxt = "Game over after this reveal" if g.winner else f"Read the reveal together, then tap “Begin Day {g.day + 1}”"
+    else:
+        doing, what, waiting, nxt = "The game is over", "", [], "Nothing — the game has ended"
+    return {"doing": doing, "waiting_on": waiting, "waiting_for": what, "next": nxt, "ready": ready}
 
 
 def _win_note(g: Game) -> str:
@@ -424,6 +469,7 @@ def moderator_state(g: Game) -> dict:
         "phase": g.phase,
         "stage": STAGE_LABEL.get(g.phase, g.phase),
         "next_step": _next_step(g),
+        "now": _now(g),
         "win_note": _win_note(g),
         "endgame": in_endgame(g),
         "winner": g.winner,
@@ -790,21 +836,23 @@ async def take_turn(code: str, data: TurnIn):
             r = g.player(data.recruit_id)
             if not r or r.lives <= 0 or r.role != "faithful":
                 raise HTTPException(400, "Choose a Faithful to recruit")
+            before = _plan_text(g)
             g.recruit_id = data.recruit_id
             g.target_id = g.action = None
             g.action_choices = []
             g.murder_confirmed = False
-            log(g, "recruit", f"{p.name} (Traitor) chose to recruit {r.name} instead of murdering",
+            log(g, "recruit", f"{p.name} (Traitor) {'CHANGED the plan (was: ' + before + ') — now ' if before else 'chose to '}recruit {r.name} instead of murdering",
                 f"{p.name} took their night turn" if first_turn else None)
         elif is_traitor and p.lives > 0 and data.target_id:
             # Step 1: choose the victim, get three action options (no turn taken yet)
             valid_victim(g, data.target_id)
+            before = _plan_text(g)
             g.recruit_id = None
             g.target_id = data.target_id
             g.action = None
             g.murder_confirmed = False
             g.action_choices = g.pick_actions(g.actions, 3)
-            log(g, "victim", f"{p.name} (Traitor) picked {name_of(g, g.target_id)} as the victim — offered: "
+            log(g, "victim", f"{p.name} (Traitor) {'CHANGED the plan (was: ' + before + ') — now picking ' if before else 'picked '}{name_of(g, g.target_id)} as the victim — offered: "
                 + " · ".join(f"“{a}”" for a in g.action_choices), None)
             await save(g)
             return await private_view(code, AuthIn(player_id=data.player_id, pin=data.pin))
@@ -829,10 +877,9 @@ async def take_turn(code: str, data: TurnIn):
                 what = f"lay low after picking {name_of(g, g.target_id)} — nothing sealed"
             else:
                 what = "lay low — no murder planned"
-            log(g, "lielow", f"{p.name} (Traitor) {what}", f"{p.name} took their night turn" if first_turn else None)
-        elif p.lives > 0:
-            log(g, "pass", f"{p.name} passed the phone on (nothing to do tonight)",
-                f"{p.name} took their night turn" if first_turn else None)
+            log(g, "lielow", f"{p.name} (Traitor) {what}" + ("" if first_turn else " (again)"), f"{p.name} took their night turn" if first_turn else None)
+        elif p.lives > 0 and first_turn:
+            log(g, "pass", f"{p.name} passed the phone on (nothing to do tonight)", f"{p.name} took their night turn")
     else:
         raise HTTPException(400, "It is not time to take a turn")
 
