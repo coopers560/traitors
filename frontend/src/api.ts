@@ -138,6 +138,8 @@ export type ModeratorView = {
   stage: string;
   revote: Revote | null;
   revote_available: boolean;
+  /** What re-running the tie will undo (e.g. night turns already taken), if anything. */
+  revote_note?: string;
   next_step: string;
   now: { doing: string; waiting_on: string[]; waiting_for: string; next: string; ready: boolean };
   win_note: string;

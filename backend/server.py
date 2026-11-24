@@ -507,6 +507,7 @@ def moderator_state(g: Game) -> dict:
         "stage": _stage(g),
         "revote": _revote_info(g),
         "revote_available": _revote_available(g)[0],
+        "revote_note": _revote_available(g)[1],
         "next_step": _next_step(g),
         "now": _now(g),
         "win_note": _win_note(g),
@@ -752,10 +753,15 @@ def _revote_available(g: Game) -> tuple:
         return False, "Fewer than two of the tied players are still in"
     if g.phase == "banished" and g.day == h["day"]:
         return True, ""
-    # The next day has begun but nothing has happened in it yet
-    if g.day == h["day"] + 1 and (g.phase == "day" or (g.phase == "night" and not g.turns_done)):
+    # The next day has begun. Up to the end of its night nothing real has happened yet (the
+    # murder is only carried out after the night), so it can be rewound; night turns are cleared.
+    if g.day == h["day"] + 1 and g.phase == "day":
         return True, ""
-    return False, "Too late — the next day is already under way"
+    if g.day == h["day"] + 1 and g.phase == "night":
+        n = len(g.turns_done)
+        return True, (f"The {n} night turn{'s' if n != 1 else ''} taken so far will be cleared — everyone retakes "
+                      "their night turn after the revote, and the Traitors plan again." if n else "")
+    return False, "Too late — the murder may already have been carried out"
 
 
 @api_router.post("/games/{code}/moderator/revote")
@@ -773,7 +779,10 @@ async def moderator_revote(code: str, data: ModeratorIn):
     h["banish"]["revote_ids"] = list(g.revote_ids)
     h["banish"]["revote_names"] = [name_of(g, pid) for pid in g.revote_ids]
     if g.day != h["day"]:
-        # Step back into the tied day: the new day had not started anything yet.
+        # Step back into the tied day. Any night plan is discarded (the murder had not been
+        # carried out yet); its action goes back into the pool so it can be offered again.
+        if g.action and g.action in g.used_actions:
+            g.used_actions.remove(g.action)
         g.day = h["day"]
         g.target_id, g.action, g.murder_confirmed, g.action_choices, g.recruit_id = None, None, False, [], None
         g.murder_done = False

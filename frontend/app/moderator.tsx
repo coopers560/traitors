@@ -278,8 +278,11 @@ function Breakdown({ code, passphrase, onChangeGame, onLock }: { code: string; p
             <Text style={styles.planText}>
               Re-run it as a revote: everyone votes again, only between the tied players
               {lastTie ? ` (${lastTie.tally.filter((t) => t.votes === lastTie.tally[0].votes).map((t) => t.name).join(" and ")})` : ""}.
-              {lastDay && m.day > lastDay ? ` This takes the game back to Day ${lastDay}'s Round Table — nothing has happened on Day ${m.day} yet.` : ""}
+              {lastDay && m.day > lastDay ? ` This takes the game back to Day ${lastDay}'s Round Table.` : ""}
             </Text>
+            {m.revote_note ? (
+              <Text style={[styles.planText, { color: colors.traitor }]} testID="moderator-revote-note">{m.revote_note}</Text>
+            ) : null}
             <ErrorText testID="moderator-revote-error" message={revote.error?.message} />
             <Button testID="moderator-revote-button" label="Re-run the tie as a revote" icon="refresh" onPress={() => setConfirmRevote(true)} />
           </View>

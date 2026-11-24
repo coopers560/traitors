@@ -89,10 +89,25 @@ def test_rewind_refused_once_the_night_has_started():
         assert c.post(f"/api/games/{code}/moderator/revote", json=PASS).status_code == 200  # nobody has moved yet
 
 
-def test_rewind_refused_after_night_turns():
+def test_rewind_during_the_night_clears_night_turns():
     with TestClient(server.app) as c:
         code, ids, pin, a, b, rest, adv, turn = _legacy_tie(c)
         adv(); adv()  # night 2
-        turn(rest[0])
+        for n in rest[:3]:
+            turn(n)
+        mod = c.post(f"/api/games/{code}/moderator", json=PASS).json()
+        assert mod["revote_available"] is True and "3 night turns" in mod["revote_note"]
+        mod = c.post(f"/api/games/{code}/moderator/revote", json=PASS).json()
+        assert mod["phase"] == "roundtable" and mod["day"] == 1 and mod["turns_done"] == 0
+        assert mod["tonight"] is None
+
+
+def test_rewind_refused_once_the_round_table_gathers():
+    with TestClient(server.app) as c:
+        code, ids, pin, a, b, rest, adv, turn = _legacy_tie(c)
+        adv(); adv()  # night 2
+        for n in NAMES:
+            turn(n)
+        adv()  # gather: the murder may have been carried out for real
         r = c.post(f"/api/games/{code}/moderator/revote", json=PASS)
         assert r.status_code == 400 and "Too late" in r.json()["detail"]
