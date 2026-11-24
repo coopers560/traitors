@@ -243,6 +243,10 @@ function Breakdown({ code, passphrase, onChangeGame, onLock }: { code: string; p
   const lastEntry = m.history.length ? m.history[m.history.length - 1] : null;
   const lastTie = lastEntry?.banish?.tie ? lastEntry.banish : null;
   const lastDay = lastEntry?.day;
+  // The players with the most votes in that tie: the only ones who can be chosen in the revote.
+  const topVotes = lastTie?.tally[0]?.votes ?? 0;
+  const topList = (lastTie?.tally ?? []).filter((t) => t.votes === topVotes).map((t) => t.name);
+  const topNames = topList.join(" and ");
   const traitors = m.players.filter((p) => p.role === "traitor");
   const faithful = m.players.filter((p) => p.role === "faithful");
   const voteByDay = new Map<number, VoteLogEntry>(m.vote_log.map((v) => [v.day, v]));
@@ -275,9 +279,10 @@ function Breakdown({ code, passphrase, onChangeGame, onLock }: { code: string; p
         {m.revote_available ? (
           <View style={styles.revoteCard} testID="moderator-revote-card">
             <Text style={[styles.cardLabel, { color: colors.brand }]}>The last Round Table was a tie</Text>
-            <Text style={styles.planText}>
-              Re-run it as a revote: everyone votes again, only between the tied players
-              {lastTie ? ` (${lastTie.tally.filter((t) => t.votes === lastTie.tally[0].votes).map((t) => t.name).join(" and ")})` : ""}.
+            <Text style={styles.planText} testID="moderator-revote-desc">
+              Re-run it as a revote between the top-voted players only:{" "}
+              <Text style={{ color: colors.onSurface, fontWeight: "700" }}>{topNames}</Text>
+              {topVotes ? ` (${topVotes} vote${topVotes === 1 ? "" : "s"} each)` : ""}. Everyone votes again and can only choose one of them.
               {lastDay && m.day > lastDay ? ` This takes the game back to Day ${lastDay}'s Round Table.` : ""}
             </Text>
             {m.revote_note ? (
@@ -454,7 +459,7 @@ function Breakdown({ code, passphrase, onChangeGame, onLock }: { code: string; p
       <ConfirmSheet
         visible={confirmRevote}
         title="Start the revote?"
-        message="Everyone goes back to the Round Table and votes again, only between the tied players. Make sure the group is ready."
+        message={`Everyone goes back to the Round Table and votes again — only ${topList.join(" or ")} can be chosen. Make sure the group is ready.`}
         confirmLabel="Start the revote"
         loading={revote.isPending}
         onConfirm={() => revote.mutate()}

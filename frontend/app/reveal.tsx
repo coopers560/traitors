@@ -238,7 +238,7 @@ function Banish({ r }: { r: DayResult }) {
         <>
           <Title testID="reveal-banish-tie">The table is divided.</Title>
           <Text style={styles.tiedNames} testID="reveal-revote-names">{(b.revote_names ?? []).join("  ·  ")}</Text>
-          <Body>The votes are tied. Everyone votes again — and this time you can only choose between them.</Body>
+          <Body>The top votes are tied. Everyone votes again — and this time you can only choose between them.</Body>
         </>
       ) : b.tie || !b.target_id ? (
         <>
