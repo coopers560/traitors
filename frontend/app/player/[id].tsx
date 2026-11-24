@@ -6,9 +6,10 @@ import { Pressable, ScrollView, Text, View } from "react-native";
 import Animated, { FadeIn, FadeInDown } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-import { api, exitOf, PrivateView, PublicPlayer } from "@/src/api";
+import { api, DayResult, exitOf, PrivateView, PublicPlayer } from "@/src/api";
 import { HelpButton } from "@/src/components/help-button";
 import { PinPad } from "@/src/components/pin-pad";
+import { VoteBoard } from "@/src/components/vote-board";
 import { Backdrop, Body, Button, ErrorText, Eyebrow, IMAGES, Title } from "@/src/components/ui";
 import { useMe } from "@/src/me";
 import { fonts, makeStyles, radius, spacing, useTheme } from "@/src/theme";
@@ -115,7 +116,7 @@ export default function PlayerTurn() {
           ) : mode === "turn" && view.phase === "gather" && view.alive ? (
             <GatherTurn view={view} pin={pin} onSealed={() => setSealed(true)} />
           ) : mode === "turn" && view.phase === "roundtable" && view.alive ? (
-            <RoundTableTurn view={view} pin={pin} players={players} onSealed={() => setSealed(true)} />
+            <RoundTableTurn view={view} pin={pin} players={players} history={game?.exists ? game.history : []} onSealed={() => setSealed(true)} />
           ) : mode === "turn" && view.phase === "night" && view.alive ? (
             <NightTurn view={view} pin={pin} players={players} onSealed={() => setSealed(true)} />
           ) : (
@@ -456,7 +457,19 @@ function SetupTurn({ view, pin, onSealed }: { view: PrivateView; pin: string; on
   );
 }
 
-function RoundTableTurn({ view, pin, players, onSealed }: { view: PrivateView; pin: string; players: PublicPlayer[]; onSealed: () => void }) {
+function RoundTableTurn({
+  view,
+  pin,
+  players,
+  history,
+  onSealed,
+}: {
+  view: PrivateView;
+  pin: string;
+  players: PublicPlayer[];
+  history: DayResult[];
+  onSealed: () => void;
+}) {
   const styles = useStyles();
   const { colors } = useTheme();
   const [vote, setVote] = useState<string | null>(view.my_vote_id);
@@ -465,6 +478,8 @@ function RoundTableTurn({ view, pin, players, onSealed }: { view: PrivateView; p
   const revote = revoteIds.length > 0;
   const choices = revote ? players.filter((p) => revoteIds.includes(p.id)) : players;
   const tiedNames = players.filter((p) => revoteIds.includes(p.id)).map((p) => p.name);
+  const last = history.length ? history[history.length - 1] : null;
+  const firstVote = revote && last?.day === view.day && last.banish?.tie ? last.banish : null;
   const banish = useMutation({
     mutationFn: () => api.takeTurn({ player_id: view.player_id, pin, vote_target_id: vote ?? undefined }),
     onSuccess: onSealed,
@@ -481,7 +496,11 @@ function RoundTableTurn({ view, pin, players, onSealed }: { view: PrivateView; p
           <Text style={styles.revoteNames}>{tiedNames.join(" or ")}</Text>
           <Text style={styles.carriedQ}>The vote was tied. Everyone votes again — this time you can only choose between them.</Text>
         </View>
-      ) : view.endgame ? (
+      ) : null}
+      {firstVote ? (
+        <VoteBoard vote={firstVote} title="The first vote — tied" highlight={revoteIds} collapsible testID="revote-first-vote" />
+      ) : null}
+      {view.endgame && !revote ? (
         <Body>Few of you remain. Vote to banish one more player, or vote to end the game now. If everyone votes to end and a Traitor is still among you, the Traitors win.</Body>
       ) : null}
       <VictimPicker label="Who do you vote to banish?" prefix="vote-option" players={choices} selected={vote} onSelect={setVote} excludeId={view.player_id} />
