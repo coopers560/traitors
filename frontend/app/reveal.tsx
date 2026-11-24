@@ -60,8 +60,12 @@ export default function Reveal() {
       ? ["intro", "murder", ...(result.winner ? ["winner"] : [])]
       : ["banish", ...(result.murder ? ["murder"] : []), ...(result.winner ? ["winner"] : [])];
   const last = step >= steps.length - 1;
+  // A first-round tie: the reveal leads to a revote, not the next day.
+  const revoteNext = isBanish && !!result.banish?.tie && !!result.banish.revote_ids?.length && result.banish.round !== 2;
 
-  const finishLabel = isBanish
+  const finishLabel = revoteNext
+    ? "Start the revote"
+    : isBanish
     ? result.winner
       ? "See all the roles"
       : `Begin Day ${result.day + 1}`
@@ -86,7 +90,7 @@ export default function Reveal() {
       <HelpButton from="reveal" testID="reveal-help-button" style={{ position: "absolute", top: insets.top + spacing.sm, right: spacing.md, zIndex: 1 }} />
       <ScrollView contentContainerStyle={[styles.scroll, { paddingTop: insets.top + spacing.xl, paddingBottom: insets.bottom + spacing.lg }]}>
         <View style={{ flex: 1, justifyContent: "center", gap: spacing.lg }}>
-          {current === "intro" ? <Intro day={result.day} kind={isBanish ? "banish" : "murder"} /> : null}
+          {current === "intro" ? <Intro day={result.day} kind={isBanish ? "banish" : "murder"} revote={result.banish?.round === 2} /> : null}
           {counting ? (
             <Countdown kind={current === "banish" ? "banish" : "murder"} onDone={() => setRevealedStep(step)} />
           ) : (
@@ -106,7 +110,7 @@ export default function Reveal() {
               <Button
                 testID="reveal-finish-button"
                 label={finishLabel}
-                icon={result.winner ? "trophy" : isBanish ? "sunny" : "flame"}
+                icon={result.winner ? "trophy" : revoteNext ? "refresh" : isBanish ? "sunny" : "flame"}
                 loading={advance.isPending}
                 onPress={finish}
               />
@@ -119,7 +123,7 @@ export default function Reveal() {
 
       <ConfirmSheet
         visible={confirmFinish}
-        title={isBanish ? `Begin Day ${result.day + 1}?` : "Start the vote?"}
+        title={revoteNext ? "Start the revote?" : isBanish ? `Begin Day ${result.day + 1}?` : "Start the vote?"}
         message="This moves the game on for everyone. Make sure the whole group has seen the reveal — you can't come back to this screen."
         confirmLabel={finishLabel}
         loading={advance.isPending}
@@ -159,10 +163,16 @@ function Countdown({ kind, onDone }: { kind: "banish" | "murder"; onDone: () => 
   );
 }
 
-function Intro({ day, kind }: { day: number; kind: "banish" | "murder" }) {
+function Intro({ day, kind, revote }: { day: number; kind: "banish" | "murder"; revote?: boolean }) {
   return (
     <Animated.View entering={FadeIn.duration(1200)} style={{ gap: spacing.md }} testID="reveal-intro">
-      {kind === "banish" ? (
+      {kind === "banish" && revote ? (
+        <>
+          <Eyebrow>The revote · Day {day}</Eyebrow>
+          <Title style={{ fontSize: 52, lineHeight: 56 }}>The table has voted again…</Title>
+          <Body>Take your time. Here is who the revote has banished — and how everyone voted this time.</Body>
+        </>
+      ) : kind === "banish" ? (
         <>
           <Eyebrow>The end of Day {day}</Eyebrow>
           <Title style={{ fontSize: 52, lineHeight: 56 }}>The Round Table has spoken…</Title>
@@ -220,13 +230,20 @@ function Banish({ r }: { r: DayResult }) {
   const { colors } = useTheme();
   const b = r.banish;
   if (!b) return null;
+  const revoteNext = b.tie && !!b.revote_ids?.length && b.round !== 2;
   return (
     <Animated.View entering={FadeInDown.duration(900)} style={{ gap: spacing.md }} testID="reveal-banish">
-      <Eyebrow>The Round Table</Eyebrow>
-      {b.tie || !b.target_id ? (
+      <Eyebrow>{b.round === 2 ? "The revote" : "The Round Table"}</Eyebrow>
+      {revoteNext ? (
         <>
           <Title testID="reveal-banish-tie">The table is divided.</Title>
-          <Body>The votes were tied, so nobody is banished tonight.</Body>
+          <Text style={styles.tiedNames} testID="reveal-revote-names">{(b.revote_names ?? []).join("  ·  ")}</Text>
+          <Body>The votes are tied. Everyone votes again — and this time you can only choose between them.</Body>
+        </>
+      ) : b.tie || !b.target_id ? (
+        <>
+          <Title testID="reveal-banish-tie">{b.round === 2 ? "Tied again." : "The table is divided."}</Title>
+          <Body>{b.round === 2 ? "The revote was tied too, so nobody is banished tonight." : "The votes were tied, so nobody is banished tonight."}</Body>
         </>
       ) : (
         <>
@@ -240,7 +257,7 @@ function Banish({ r }: { r: DayResult }) {
         </>
       )}
       <View style={styles.card} testID="reveal-tally">
-        <Text style={styles.cardLabel}>The votes</Text>
+        <Text style={styles.cardLabel}>{b.round === 2 ? "The revote" : "The votes"}</Text>
         {b.tally.map((t) => (
           <View key={t.player_id} style={styles.tallyRow}>
             <Text style={styles.tallyName}>{t.name}</Text>
@@ -260,6 +277,29 @@ function Banish({ r }: { r: DayResult }) {
           </View>
         ) : null}
       </View>
+      {b.round === 2 && r.tie_vote ? (
+        <View style={styles.card} testID="reveal-first-vote">
+          <Text style={styles.cardLabel}>The first vote — tied</Text>
+          {r.tie_vote.tally.map((t) => (
+            <View key={t.player_id} style={styles.tallyRow}>
+              <Text style={styles.tallyName}>{t.name}</Text>
+              <Text style={styles.tallyVotes}>{t.votes}</Text>
+            </View>
+          ))}
+          {r.tie_vote.votes && r.tie_vote.votes.length ? (
+            <View style={styles.whoVoted}>
+              <Text style={styles.whoVotedLabel}>Who voted for whom</Text>
+              {r.tie_vote.votes.map((v) => (
+                <View key={v.voter_id} style={styles.voteRow}>
+                  <Text style={styles.voterName} numberOfLines={1}>{v.voter_name}</Text>
+                  <Ionicons name="arrow-forward" size={14} color={colors.muted} />
+                  <Text style={styles.voteFor} numberOfLines={1}>{v.target_name}</Text>
+                </View>
+              ))}
+            </View>
+          ) : null}
+        </View>
+      ) : null}
     </Animated.View>
   );
 }
@@ -303,6 +343,7 @@ function Winner({ winner }: { winner: "faithful" | "traitors" }) {
 const useStyles = makeStyles((c) => ({
   root: { flex: 1, backgroundColor: c.surface },
   scroll: { flexGrow: 1, paddingHorizontal: spacing.lg, gap: spacing.lg },
+  tiedNames: { fontFamily: fonts.display, fontSize: 40, lineHeight: 46, color: c.brand },
   bigName: { fontFamily: fonts.display, fontSize: 56, lineHeight: 60, color: c.onSurface },
   countdown: { fontFamily: fonts.display, fontSize: 140, lineHeight: 150, fontWeight: "700" },
   card: { backgroundColor: c.surfaceSecondary, borderRadius: radius.lg, padding: spacing.lg, gap: spacing.sm, borderWidth: 1, borderColor: c.border },

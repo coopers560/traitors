@@ -23,22 +23,34 @@ export type DayResult = {
     eliminated?: boolean;
     role?: Role | null;
   } | null;
-  banish: {
-    tally: { player_id: string; name: string; votes: number }[];
-    votes?: { voter_id: string; voter_name: string | null; target_id: string; target_name: string | null }[];
-    tie: boolean;
-    target_id: string | null;
-    name?: string;
-    lives_left?: number;
-    eliminated?: boolean;
-    already_dead?: boolean;
-    role?: Role | null;
-    role_hidden?: boolean;
-  } | null;
+  banish: BanishResult | null;
+  /** When the Round Table tied, the first (tied) vote; `banish` is then the revote. */
+  tie_vote?: BanishResult | null;
   winner: "faithful" | "traitors" | null;
   recruited?: boolean;
   ended_by_vote?: boolean;
 };
+
+export type BanishResult = {
+  tally: { player_id: string; name: string; votes: number }[];
+  votes?: { voter_id: string; voter_name: string | null; target_id: string; target_name: string | null }[];
+  tie: boolean;
+  target_id: string | null;
+  name?: string;
+  lives_left?: number;
+  eliminated?: boolean;
+  already_dead?: boolean;
+  role?: Role | null;
+  role_hidden?: boolean;
+  /** A first-round tie: everyone votes again, only between these players. */
+  revote_ids?: string[];
+  revote_names?: (string | null)[];
+  /** 2 when this is the result of a tie-break revote. */
+  round?: number;
+};
+
+/** A tie-break in progress: pending while the tie is revealed, active while everyone votes again. */
+export type Revote = { ids: string[]; names: (string | null)[]; active: boolean };
 
 export type GameState =
   | { exists: false; gone?: boolean }
@@ -56,6 +68,7 @@ export type GameState =
       turns_needed: number;
       turns_done: number;
       history: DayResult[];
+      revote?: Revote | null;
     };
 
 export type PrivateView = {
@@ -69,6 +82,10 @@ export type PrivateView = {
   turn_done: boolean;
   my_vote_id: string | null;
   my_end_vote?: boolean;
+  /** During a tie-break revote: the only players who can be voted for. */
+  revote_ids?: string[];
+  /** This player was recruited into the Traitors today (only ever sent to them). */
+  recruited_now?: boolean;
   endgame?: boolean;
   fellow_traitors?: string[];
   target?: { id: string; name: string } | null;
@@ -107,6 +124,7 @@ export type ModeratorEvent = {
 
 export type VoteLogEntry = {
   day: number;
+  round?: number;
   votes: VoteEdge[];
   end_votes: (string | null)[];
 };
@@ -118,6 +136,8 @@ export type ModeratorView = {
   total_days: number;
   phase: Phase;
   stage: string;
+  revote: Revote | null;
+  revote_available: boolean;
   next_step: string;
   now: { doing: string; waiting_on: string[]; waiting_for: string; next: string; ready: boolean };
   win_note: string;
@@ -226,6 +246,8 @@ export const api = {
     request<GameState>(`/games/${currentCode}/advance?expected=${expected}&expected_day=${day}${force ? "&force=true" : ""}`, "POST"),
   moderatorUnlock: (passphrase: string) => request<{ ok: boolean }>("/moderator/unlock", "POST", { passphrase }),
   moderatorGames: (passphrase: string) => request<{ games: ModeratorGame[] }>("/moderator/games", "POST", { passphrase }),
+  moderatorRevote: (code: string, passphrase: string) =>
+    request<ModeratorView>(`/games/${encodeURIComponent(code.trim().toUpperCase())}/moderator/revote`, "POST", { passphrase }),
   moderatorView: (code: string, passphrase: string) =>
     request<ModeratorView>(`/games/${encodeURIComponent(code.trim().toUpperCase())}/moderator`, "POST", { passphrase }),
   getActions: () => request<ActionList>(`/games/${currentCode}/actions`),

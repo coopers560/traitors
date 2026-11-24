@@ -40,8 +40,10 @@ function DayCard({ h, index }: { h: DayResult; index: number }) {
   const b = h.banish;
   const roleText = (role?: string | null) => (role === "traitor" ? "a Traitor" : "Faithful");
   const banishText = (bb: NonNullable<DayResult["banish"]>) =>
-    bb.tie || !bb.target_id
-      ? "Tied vote — nobody banished"
+    bb.tie && bb.revote_ids?.length && bb.round !== 2
+      ? "Tied vote — a revote follows"
+      : bb.tie || !bb.target_id
+      ? bb.round === 2 ? "Tied again — nobody banished" : "Tied vote — nobody banished"
       : bb.already_dead
         ? `${bb.name} got the most votes (already murdered)`
         : bb.eliminated
@@ -78,6 +80,11 @@ function DayCard({ h, index }: { h: DayResult; index: number }) {
             <Ionicons name="flame-outline" size={20} color={colors.brand} />
             <Text style={styles.label}>Round Table</Text>
           </View>
+          {h.tie_vote ? (
+            <Text style={styles.tallyName} testID={`history-tie-${h.day}`}>
+              First vote tied ({h.tie_vote.tally.map((t) => `${t.name} ${t.votes}`).join(" · ")}) — then a revote:
+            </Text>
+          ) : null}
           <Text style={styles.main} testID={`history-banish-${h.day}`}>{banishText(b)}</Text>
           <View style={styles.tally}>
             {b.tally.map((t) => (

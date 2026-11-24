@@ -190,8 +190,21 @@ function Dashboard({ game, refreshing, onRefresh }: { game: ActiveGame; refreshi
 
   const { phase } = game;
   const allDone = game.turns_done >= game.turns_needed;
+  const tied = (game.revote?.names ?? []).filter(Boolean).join(" and ");
   const copy =
-    phase === "roundtable" && game.endgame
+    phase === "roundtable" && game.revote?.active
+      ? {
+          eyebrow: "Tie-break revote",
+          title: "Vote again",
+          body: `The Round Table was tied between ${tied}. Everyone votes again, in secret — this time you can only choose between them.`,
+        }
+      : phase === "banished" && game.revote && !game.revote.active
+      ? {
+          eyebrow: "The verdict",
+          title: "The table is divided",
+          body: "Gather everyone together and open the reveal to see the tie and how everyone voted. Then everyone votes again.",
+        }
+      : phase === "roundtable" && game.endgame
       ? {
           eyebrow: "The final vote",
           title: "Banish, or end the game",
@@ -302,7 +315,7 @@ function Dashboard({ game, refreshing, onRefresh }: { game: ActiveGame; refreshi
               <Button testID="advance-round-table-button" label={game.endgame ? "Gather for the final vote" : "Night falls — the Traitors move"} icon={game.endgame ? "flame" : "moon"} loading={advance.isPending} onPress={() => setConfirmGo({ label: game.endgame ? "Gather for the final vote" : "Night falls — the Traitors move", run: () => advance.mutate() })} />
             ) : phase === "roundtable" ? (
               <>
-                <Button testID="advance-reveal-button" label={allDone ? (game.endgame ? "Reveal the vote" : "Reveal the banishment") : "Everyone must vote first…"} icon="mail-open" disabled={!allDone} loading={advance.isPending && allDone} onPress={() => setConfirmGo({ label: game.endgame ? "Reveal the vote" : "Reveal the banishment", run: () => advance.mutate() })} />
+                <Button testID="advance-reveal-button" label={allDone ? (game.revote?.active ? "Reveal the revote" : game.endgame ? "Reveal the vote" : "Reveal the banishment") : "Everyone must vote first…"} icon="mail-open" disabled={!allDone} loading={advance.isPending && allDone} onPress={() => setConfirmGo({ label: game.revote?.active ? "Reveal the revote" : game.endgame ? "Reveal the vote" : "Reveal the banishment", run: () => advance.mutate() })} />
                 {!allDone ? (
                   <Text style={styles.waitNote} testID="roundtable-wait-note">Everyone still in must vote before the reveal — otherwise the Traitors could be given away.</Text>
                 ) : null}

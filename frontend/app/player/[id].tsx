@@ -26,6 +26,10 @@ export default function PlayerTurn() {
   const [pin, setPin] = useState("");
   const [view, setView] = useState<PrivateView | null>(null);
   const [sealed, setSealed] = useState(false);
+  // Before every Round Table vote, everyone must privately check who they are now — the
+  // Traitors may have recruited someone. Everyone does exactly the same taps, so a recruit
+  // looking at their phone never stands out.
+  const [roleChecked, setRoleChecked] = useState(false);
   const autoTried = useRef(false);
 
   const players = game?.exists ? game.players : [];
@@ -87,6 +91,8 @@ export default function PlayerTurn() {
         </View>
       ) : sealed ? (
         <Sealed onDone={leave} />
+      ) : mode === "turn" && view.phase === "roundtable" && view.alive && !roleChecked ? (
+        <RoleCheck view={view} onDone={() => setRoleChecked(true)} />
       ) : (
         <ScrollView contentContainerStyle={[styles.scroll, { paddingBottom: insets.bottom + spacing.lg }]}>
           <RoleCard view={view} exit={game?.exists ? exitOf(game.history, view.player_id) : null} />
@@ -121,6 +127,60 @@ export default function PlayerTurn() {
         </ScrollView>
       )}
     </View>
+  );
+}
+
+function RoleCheck({ view, onDone }: { view: PrivateView; onDone: () => void }) {
+  const styles = useStyles();
+  const { colors } = useTheme();
+  const insets = useSafeAreaInsets();
+  const [shown, setShown] = useState(false);
+  const traitor = view.role === "traitor";
+  const fellows = view.fellow_traitors ?? [];
+  return (
+    <ScrollView contentContainerStyle={[styles.scroll, { flexGrow: 1, justifyContent: "center", paddingBottom: insets.bottom + spacing.lg }]} testID="role-check">
+      <Animated.View entering={FadeInDown.duration(500)} style={{ gap: spacing.sm }}>
+        <Eyebrow>Before you vote</Eyebrow>
+        <Title>Who are you now?</Title>
+        <Body>
+          Everyone checks this in private before every Round Table — the Traitors may have recruited someone. Make sure
+          nobody can see your screen.
+        </Body>
+      </Animated.View>
+      {!shown ? (
+        <Pressable testID="role-check-reveal" onPress={() => setShown(true)} style={styles.checkCover} accessibilityRole="button">
+          <Ionicons name="eye" size={34} color={colors.brand} />
+          <Text style={styles.checkCoverText}>Tap to see who you are</Text>
+        </Pressable>
+      ) : (
+        <Animated.View entering={FadeIn.duration(400)} style={[styles.roleCard, traitor && { borderColor: colors.traitor }]} testID="role-check-card">
+          {view.recruited_now ? (
+            <>
+              <Eyebrow style={{ color: colors.traitor }}>You have been recruited</Eyebrow>
+              <Text testID="role-check-title" style={[styles.roleTitle, { color: colors.traitor }]}>You are now a Traitor</Text>
+              <Body>
+                The Traitors chose you. From now on you plot with them — and you win with them. Keep it secret.
+              </Body>
+            </>
+          ) : (
+            <>
+              <Eyebrow>{view.name}, you are still</Eyebrow>
+              <Text testID="role-check-title" style={[styles.roleTitle, { color: traitor ? colors.traitor : colors.brand }]}>
+                {traitor ? "A Traitor" : "Faithful"}
+              </Text>
+            </>
+          )}
+          {traitor ? (
+            <Body testID="role-check-fellows">
+              {fellows.length ? `Your fellow Traitor${fellows.length > 1 ? "s" : ""}: ${fellows.join(", ")}` : "You are the only Traitor."}
+            </Body>
+          ) : (
+            <Body>Nothing has changed for you. Find the Traitors.</Body>
+          )}
+        </Animated.View>
+      )}
+      <Button testID="role-check-done" label="Got it — hide it and vote" icon="eye-off" disabled={!shown} onPress={onDone} />
+    </ScrollView>
   );
 }
 
@@ -397,7 +457,14 @@ function SetupTurn({ view, pin, onSealed }: { view: PrivateView; pin: string; on
 }
 
 function RoundTableTurn({ view, pin, players, onSealed }: { view: PrivateView; pin: string; players: PublicPlayer[]; onSealed: () => void }) {
+  const styles = useStyles();
+  const { colors } = useTheme();
   const [vote, setVote] = useState<string | null>(view.my_vote_id);
+  // A tied Round Table goes to a revote: everyone votes again, only between the tied players.
+  const revoteIds = view.revote_ids ?? [];
+  const revote = revoteIds.length > 0;
+  const choices = revote ? players.filter((p) => revoteIds.includes(p.id)) : players;
+  const tiedNames = players.filter((p) => revoteIds.includes(p.id)).map((p) => p.name);
   const banish = useMutation({
     mutationFn: () => api.takeTurn({ player_id: view.player_id, pin, vote_target_id: vote ?? undefined }),
     onSuccess: onSealed,
@@ -408,13 +475,19 @@ function RoundTableTurn({ view, pin, players, onSealed }: { view: PrivateView; p
   });
   return (
     <>
-      {view.endgame ? (
+      {revote ? (
+        <View style={styles.revoteCard} testID="revote-banner">
+          <Eyebrow style={{ color: colors.traitor }}>Tie-break revote</Eyebrow>
+          <Text style={styles.revoteNames}>{tiedNames.join(" or ")}</Text>
+          <Text style={styles.carriedQ}>The vote was tied. Everyone votes again — this time you can only choose between them.</Text>
+        </View>
+      ) : view.endgame ? (
         <Body>Few of you remain. Vote to banish one more player, or vote to end the game now. If everyone votes to end and a Traitor is still among you, the Traitors win.</Body>
       ) : null}
-      <VictimPicker label="Who do you vote to banish?" prefix="vote-option" players={players} selected={vote} onSelect={setVote} excludeId={view.player_id} />
+      <VictimPicker label="Who do you vote to banish?" prefix="vote-option" players={choices} selected={vote} onSelect={setVote} excludeId={view.player_id} />
       <ErrorText testID="turn-error" message={banish.error?.message || end.error?.message} />
       <Button testID="vote-submit-button" label="Seal my vote to banish" icon="lock-closed" disabled={!vote} loading={banish.isPending} onPress={() => banish.mutate()} />
-      {view.endgame ? (
+      {view.endgame && !revote ? (
         <Button testID="vote-end-button" label="Vote to end the game" variant="secondary" icon="flag" loading={end.isPending} onPress={() => end.mutate()} />
       ) : null}
     </>
@@ -496,6 +569,18 @@ const useStyles = makeStyles((c) => ({
     borderColor: c.brandSecondary,
     backgroundColor: c.surfaceSecondary,
   },
+  checkCover: {
+    minHeight: 180,
+    borderRadius: radius.lg,
+    borderWidth: 1,
+    borderStyle: "dashed",
+    borderColor: c.brandSecondary,
+    backgroundColor: c.surfaceSecondary,
+    alignItems: "center",
+    justifyContent: "center",
+    gap: spacing.sm,
+  },
+  checkCoverText: { color: c.onSurface, fontSize: 18, fontWeight: "600" },
   roleTitle: { fontFamily: fonts.display, fontSize: 56, lineHeight: 60 },
   brief: { gap: spacing.sm, padding: spacing.lg, borderRadius: radius.lg, backgroundColor: c.brandTertiary },
   briefTarget: { fontFamily: fonts.display, fontSize: 40, lineHeight: 44, color: c.onSurface },
@@ -522,6 +607,8 @@ const useStyles = makeStyles((c) => ({
   rememberOnText: { color: c.onSurfaceTertiary, fontSize: 14, flex: 1 },
   outBox: { marginTop: spacing.sm, paddingTop: spacing.sm, borderTopWidth: 1, borderTopColor: c.divider, gap: 4 },
   outTitle: { fontFamily: fonts.display, fontSize: 28, lineHeight: 32 },
+  revoteCard: { gap: spacing.xs, padding: spacing.lg, borderRadius: radius.lg, backgroundColor: c.surfaceSecondary, borderWidth: 1, borderColor: c.brand },
+  revoteNames: { fontFamily: fonts.display, fontSize: 30, lineHeight: 34, color: c.onSurface },
   carriedCard: { gap: spacing.sm, padding: spacing.lg, borderRadius: radius.lg, backgroundColor: c.surfaceSecondary, borderWidth: 1, borderColor: c.traitor },
   carriedVictim: { fontFamily: fonts.display, fontSize: 34, lineHeight: 38, color: c.onSurface },
   carriedAction: { fontFamily: fonts.displaySemi, fontSize: 22, lineHeight: 26, color: c.brand },
