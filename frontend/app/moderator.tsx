@@ -1,7 +1,7 @@
 import Ionicons from "@react-native-vector-icons/ionicons";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { useRouter } from "expo-router";
-import { useState } from "react";
+import { useState, type ComponentProps } from "react";
 import { ActivityIndicator, Pressable, ScrollView, Text, TextInput, View } from "react-native";
 import { KeyboardAwareScrollView } from "react-native-keyboard-controller";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -179,6 +179,21 @@ function GameRow({ g, onPick }: { g: import("@/src/api").ModeratorGame; onPick: 
   );
 }
 
+function NowRow({ icon, label, text, tone, testID }: { icon: ComponentProps<typeof Ionicons>["name"]; label: string; text: string; tone?: "wait" | "ready"; testID: string }) {
+  const styles = useStyles();
+  const { colors } = useTheme();
+  const color = tone === "wait" ? colors.traitor : tone === "ready" ? colors.brand : colors.onSurface;
+  return (
+    <View style={styles.nowRow}>
+      <Ionicons name={icon} size={20} color={tone ? color : colors.brand} style={{ marginTop: 2 }} />
+      <View style={{ flex: 1 }}>
+        <Text style={styles.nowLabel}>{label}</Text>
+        <Text style={[styles.nowText, { color }]} testID={testID}>{text}</Text>
+      </View>
+    </View>
+  );
+}
+
 function Breakdown({ code, passphrase, onChangeGame, onLock }: { code: string; passphrase: string; onChangeGame: () => void; onLock: () => void }) {
   const styles = useStyles();
   const { colors } = useTheme();
@@ -228,6 +243,21 @@ function Breakdown({ code, passphrase, onChangeGame, onLock }: { code: string; p
       </View>
 
       <ScrollView contentContainerStyle={[styles.scroll, { paddingBottom: insets.bottom + spacing.lg }]}>
+        {/* The one-glance answer: what's happening, who we're waiting for, what's next */}
+        <View style={styles.nowCard} testID="moderator-now">
+          <NowRow icon="radio-button-on" label="Right now" text={m.now.doing} testID="moderator-now-doing" />
+          {m.now.waiting_for ? (
+            <NowRow
+              icon="hourglass-outline"
+              label="Waiting for"
+              text={m.now.waiting_on.length ? `${m.now.waiting_on.join(", ")} ${m.now.waiting_for}` : "Nobody — all done ✓"}
+              tone={m.now.waiting_on.length ? "wait" : "ready"}
+              testID="moderator-now-waiting"
+            />
+          ) : null}
+          <NowRow icon="arrow-forward-circle" label="Next" text={m.now.next} testID="moderator-now-next" />
+        </View>
+
         <View style={styles.warn} testID="moderator-warn">
           <Ionicons name="eye-off" size={16} color={colors.onWarning} />
           <Text style={styles.warnText}>
@@ -253,12 +283,6 @@ function Breakdown({ code, passphrase, onChangeGame, onLock }: { code: string; p
               {m.winner === "traitors" ? "The Traitors win" : "The Faithful win"}
             </Text>
           ) : null}
-          {m.next_step ? (
-            <View style={styles.nextStep}>
-              <Ionicons name="arrow-forward-circle" size={18} color={colors.brand} />
-              <Text style={styles.nextStepText}>Next: {m.next_step}</Text>
-            </View>
-          ) : null}
           <View style={styles.countRow}>
             <Count label="Still in" value={m.counts.alive} color={colors.onSurface} />
             {rolesShown ? (
@@ -282,7 +306,7 @@ function Breakdown({ code, passphrase, onChangeGame, onLock }: { code: string; p
         </View>
 
         {/* Where it's up to — only while turns are actually being taken */}
-        {["setup", "roundtable", "night"].includes(m.phase) ? (
+        {["setup", "roundtable", "night", "gather"].includes(m.phase) ? (
           <View style={styles.card} testID="moderator-progress">
             <Text style={styles.cardLabel}>Where it&apos;s up to</Text>
             <Text style={styles.progressText}>
@@ -396,7 +420,7 @@ function Breakdown({ code, passphrase, onChangeGame, onLock }: { code: string; p
   );
 }
 
-const EVENT_ICON: Record<string, { icon: React.ComponentProps<typeof Ionicons>["name"]; tone: "traitor" | "gold" | "muted" }> = {
+const EVENT_ICON: Record<string, { icon: ComponentProps<typeof Ionicons>["name"]; tone: "traitor" | "gold" | "muted" }> = {
   setup: { icon: "flag", tone: "gold" },
   role: { icon: "eye-outline", tone: "muted" },
   stage: { icon: "time-outline", tone: "gold" },
@@ -639,6 +663,10 @@ const useStyles = makeStyles((c) => ({
   live: { color: c.traitor, fontSize: 12, fontWeight: "700" },
   warn: { flexDirection: "row", alignItems: "center", gap: spacing.sm, backgroundColor: c.warning, borderRadius: radius.md, padding: spacing.sm },
   warnText: { color: c.onWarning, fontSize: 13, fontWeight: "600", flex: 1 },
+  nowCard: { backgroundColor: c.surfaceSecondary, borderRadius: radius.lg, padding: spacing.lg, gap: spacing.md, borderWidth: 2, borderColor: c.brand },
+  nowRow: { flexDirection: "row", gap: spacing.sm, alignItems: "flex-start" },
+  nowLabel: { color: c.muted, fontSize: 12, letterSpacing: 2, textTransform: "uppercase", fontWeight: "700" },
+  nowText: { fontSize: 19, lineHeight: 25, fontWeight: "600" },
   stageCard: { backgroundColor: c.surfaceSecondary, borderRadius: radius.lg, padding: spacing.lg, gap: spacing.sm, borderWidth: 1, borderColor: c.brandSecondary },
   stageTitle: { fontFamily: fonts.display, fontSize: 30, lineHeight: 34, color: c.onSurface },
   endgameTag: { color: c.traitor, fontSize: 14, fontWeight: "700" },

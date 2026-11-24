@@ -584,3 +584,42 @@ class TestModeratorLog:
                 assert "(Traitor)" not in e["neutral"] and "Traitors:" not in e["neutral"]
         # every entry carries a timestamp, day and phase
         assert all(e["t"] and e["day"] and e["phase"] for e in mod["event_log"])
+
+
+class TestModeratorNow:
+    def _mod(self):
+        return S.post(f"{G()}/moderator", json={"passphrase": "!Uganda02!"}).json()
+
+    def test_now_says_who_we_are_waiting_for_and_what_is_next(self):
+        g, roles = setup_game_traitors(6, 2)
+        ps = g["players"]
+        now = self._mod()["now"]
+        assert len(now["waiting_on"]) == 6 and not now["ready"]
+        finish_setup(ps)
+        now = self._mod()["now"]
+        assert now["waiting_on"] == [] and "Night falls" in now["next"]
+        S.post(f"{G()}/advance")
+        first = ps[0]
+        S.post(f"{G()}/turn", json={"player_id": first["id"], "pin": pin_of(first["name"])})
+        now = self._mod()["now"]
+        assert first["name"] not in now["waiting_on"] and len(now["waiting_on"]) == 5
+        assert "night turn" in now["waiting_for"]
+        do_night(roles)
+        now = self._mod()["now"]
+        assert now["ready"] and "Everyone to the Round Table" in now["next"]
+
+    def test_plan_override_is_flagged_and_repeat_passes_not_logged(self):
+        g, roles = setup_game_traitors(8, 2)
+        ps = g["players"]
+        t1, t2 = [p for p in ps if roles[p["id"]] == "traitor"]
+        fa = [p for p in ps if roles[p["id"]] == "faithful"]
+        finish_setup(ps)
+        S.post(f"{G()}/advance")
+        r = S.post(f"{G()}/turn", json={"player_id": t1["id"], "pin": pin_of(t1["name"]), "target_id": fa[0]["id"]})
+        S.post(f"{G()}/turn", json={"player_id": t1["id"], "pin": pin_of(t1["name"]), "action": r.json()["action_choices"][0]})
+        S.post(f"{G()}/turn", json={"player_id": t2["id"], "pin": pin_of(t2["name"]), "recruit_id": fa[1]["id"]})
+        for _ in range(2):
+            S.post(f"{G()}/turn", json={"player_id": fa[2]["id"], "pin": pin_of(fa[2]["name"])})
+        log = self._mod()["event_log"]
+        assert any(e["kind"] == "recruit" and "CHANGED the plan" in e["text"] and fa[0]["name"] in e["text"] for e in log)
+        assert sum(1 for e in log if e["kind"] == "pass" and fa[2]["name"] in e["text"]) == 1
