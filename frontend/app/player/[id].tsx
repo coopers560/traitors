@@ -152,7 +152,6 @@ export default function PlayerTurn() {
 
 function RoleCheck({ view, onDone }: { view: PrivateView; onDone: () => void }) {
   const styles = useStyles();
-  const { colors } = useTheme();
   const insets = useSafeAreaInsets();
   const [shown, setShown] = useState(false); // held at least once
   const traitor = view.role === "traitor";
@@ -168,11 +167,11 @@ function RoleCheck({ view, onDone }: { view: PrivateView; onDone: () => void }) 
         </Body>
       </Animated.View>
       <HoldToReveal testID="role-check-reveal" label="Press and hold to see who you are" minHeight={190} onReveal={() => setShown(true)}>
-        <View style={[styles.roleCard, { borderColor: traitor ? colors.traitor : colors.brand }]} testID="role-check-card">
+        <View style={styles.roleCard} testID="role-check-card">
           {view.recruited_now ? (
             <>
-              <Eyebrow style={{ color: colors.traitor }}>You have been recruited</Eyebrow>
-              <Text testID="role-check-title" style={[styles.roleTitle, { color: colors.traitor }]}>You are now a Traitor</Text>
+              <Eyebrow>You have been recruited</Eyebrow>
+              <Text testID="role-check-title" style={styles.roleTitle}>You are now a Traitor</Text>
               <Body>
                 The Traitors chose you. From now on you plot with them — and you win with them. Keep it secret.
               </Body>
@@ -180,7 +179,7 @@ function RoleCheck({ view, onDone }: { view: PrivateView; onDone: () => void }) 
           ) : (
             <>
               <Eyebrow>{view.name}, you are still</Eyebrow>
-              <Text testID="role-check-title" style={[styles.roleTitle, { color: traitor ? colors.traitor : colors.brand }]}>
+              <Text testID="role-check-title" style={styles.roleTitle}>
                 {traitor ? "A Traitor" : "Faithful"}
               </Text>
             </>
@@ -220,7 +219,7 @@ function RoleCard({
       <Eyebrow>{view.name}, you are</Eyebrow>
       <HoldToReveal testID="role-hold" label="Press and hold to see your role" minHeight={children ? 220 : 150} onReveal={onReveal}>
         <View style={{ gap: spacing.sm }}>
-          <Text testID="role-title" style={[styles.roleTitle, { color: traitor ? colors.traitor : colors.brand }]}>
+          <Text testID="role-title" style={styles.roleTitle}>
             {traitor ? "A Traitor" : "Faithful"}
           </Text>
           {traitor && view.fellow_traitors ? (
@@ -501,7 +500,6 @@ function RoundTableTurn({
   onSealed: () => void;
 }) {
   const styles = useStyles();
-  const { colors } = useTheme();
   const [vote, setVote] = useState<string | null>(view.my_vote_id);
   // A tied Round Table goes to a revote: everyone votes again, only between the tied players.
   const revoteIds = view.revote_ids ?? [];
@@ -522,7 +520,7 @@ function RoundTableTurn({
     <>
       {revote ? (
         <View style={styles.revoteCard} testID="revote-banner">
-          <Eyebrow style={{ color: colors.traitor }}>Tie-break revote</Eyebrow>
+          <Eyebrow>Tie-break revote</Eyebrow>
           <Text style={styles.revoteNames}>{tiedNames.join(" or ")}</Text>
           <Text style={styles.carriedQ}>The vote was tied. Everyone votes again — this time you can only choose between them.</Text>
         </View>
@@ -545,45 +543,53 @@ function RoundTableTurn({
 
 function GatherTurn({ view, pin, onSealed }: { view: PrivateView; pin: string; onSealed: () => void }) {
   // Everyone checks in before the murder is revealed. A Traitor who planned a murder also
-  // confirms, privately, whether it was carried out — every turn looks the same from outside.
+  // confirms, privately, whether it was carried out. Everyone else gets a question of the same
+  // shape (not recorded), so every check-in looks and taps exactly the same from outside.
   const styles = useStyles();
   const { colors } = useTheme();
   const traitor = view.role === "traitor";
   const needsAnswer = traitor && !!view.planned_murder && !view.murder_done;
-  const [carried, setCarried] = useState<boolean | null>(null);
+  const [answer, setAnswer] = useState<boolean | null>(null);
   const checkIn = useMutation({
-    mutationFn: () => api.takeTurn({ player_id: view.player_id, pin, murder_done: needsAnswer ? carried ?? false : undefined }),
+    mutationFn: () => api.takeTurn({ player_id: view.player_id, pin, murder_done: needsAnswer ? answer ?? false : undefined }),
     onSuccess: onSealed,
   });
+  const note = needsAnswer
+    ? null
+    : traitor && view.murder_done
+      ? { id: "gather-already-confirmed", text: "A fellow Traitor has already confirmed tonight's murder." }
+      : traitor
+        ? { id: "gather-no-murder", text: "No murder to confirm tonight." }
+        : { id: "gather-faithful-note", text: "Think back over the day." };
+  const yesId = needsAnswer ? "carried-yes" : "gather-yes";
+  const noId = needsAnswer ? "carried-no" : "gather-no";
   return (
     <>
-      {needsAnswer ? (
-        <View style={styles.carriedCard} testID="carried-card">
-          <Eyebrow style={{ color: colors.traitor }}>Your murder in plain sight</Eyebrow>
-          <Text style={styles.carriedVictim} testID="carried-victim">{view.target?.name}</Text>
-          <Text style={styles.carriedAction}>{view.action}</Text>
-          <Text style={styles.carriedQ}>Was it carried out — in plain sight, without being caught?</Text>
-          <View style={{ flexDirection: "row", gap: spacing.sm }}>
-            <Pressable testID="carried-yes" onPress={() => setCarried(true)} style={[styles.pick, { flex: 1, justifyContent: "center" }, carried === true && styles.pickOn]}>
-              <Text style={[styles.pickText, carried === true && { color: colors.onBrandPrimary }]}>Yes — it&apos;s done</Text>
-            </Pressable>
-            <Pressable testID="carried-no" onPress={() => setCarried(false)} style={[styles.pick, { flex: 1, justifyContent: "center" }, carried === false && styles.pickOn]}>
-              <Text style={[styles.pickText, carried === false && { color: colors.onBrandPrimary }]}>No — it wasn&apos;t</Text>
-            </Pressable>
-          </View>
+      <View style={styles.carriedCard} testID={needsAnswer ? "carried-card" : "gather-card"}>
+        <Eyebrow>{needsAnswer ? "Your murder in plain sight" : "Before the Round Table"}</Eyebrow>
+        <Text style={styles.carriedVictim} testID={needsAnswer ? "carried-victim" : undefined}>
+          {needsAnswer ? view.target?.name : "Today"}
+        </Text>
+        <Text style={styles.carriedAction} testID={note?.id}>{needsAnswer ? view.action : note?.text}</Text>
+        <Text style={styles.carriedQ}>
+          {needsAnswer ? "Was it carried out — in plain sight, without being caught?" : "Did you spot anything suspicious today?"}
+        </Text>
+        <View style={{ flexDirection: "row", gap: spacing.sm }}>
+          <Pressable testID={yesId} onPress={() => setAnswer(true)} style={[styles.pick, { flex: 1, justifyContent: "center" }, answer === true && styles.pickOn]}>
+            <Text style={[styles.pickText, answer === true && { color: colors.onBrandPrimary }]}>
+              {needsAnswer ? "Yes — it's done" : "Yes — I did"}
+            </Text>
+          </Pressable>
+          <Pressable testID={noId} onPress={() => setAnswer(false)} style={[styles.pick, { flex: 1, justifyContent: "center" }, answer === false && styles.pickOn]}>
+            <Text style={[styles.pickText, answer === false && { color: colors.onBrandPrimary }]}>
+              {needsAnswer ? "No — it wasn't" : "No — nothing"}
+            </Text>
+          </Pressable>
         </View>
-      ) : traitor && view.murder_done ? (
-        <Body testID="gather-already-confirmed">A fellow Traitor has already confirmed tonight&apos;s murder. Just check in.</Body>
-      ) : traitor ? (
-        <Body testID="gather-no-murder">No murder to confirm tonight. Just check in, like everyone else.</Body>
-      ) : (
-        <Body testID="gather-faithful-note">
-          The Round Table gathers. Check in so the murder can be revealed — everyone does this, so nobody can tell who
-          the Traitors are.
-        </Body>
-      )}
+      </View>
+      <Body style={{ fontSize: 15 }}>Everyone answers and checks in, so nobody can tell who the Traitors are.</Body>
       <ErrorText testID="turn-error" message={checkIn.error?.message} />
-      <Button testID="gather-checkin-button" label="Check in" icon="checkmark-circle" disabled={needsAnswer && carried === null} loading={checkIn.isPending} onPress={() => checkIn.mutate()} />
+      <Button testID="gather-checkin-button" label="Check in" icon="checkmark-circle" disabled={answer === null} loading={checkIn.isPending} onPress={() => checkIn.mutate()} />
     </>
   );
 }
@@ -630,7 +636,8 @@ const useStyles = makeStyles((c) => ({
     gap: spacing.sm,
   },
   checkCoverText: { color: c.onSurface, fontSize: 18, fontWeight: "600" },
-  roleTitle: { fontFamily: fonts.display, fontSize: 56, lineHeight: 60 },
+  // One colour for every role: a glimpse of the colour must never tell Traitor from Faithful.
+  roleTitle: { fontFamily: fonts.display, fontSize: 56, lineHeight: 60, color: c.brand },
   brief: { gap: spacing.sm, padding: spacing.lg, borderRadius: radius.lg, backgroundColor: c.brandTertiary },
   briefTarget: { fontFamily: fonts.display, fontSize: 40, lineHeight: 44, color: c.onSurface },
   briefLabel: { color: c.onSurfaceSecondary, fontSize: 17, lineHeight: 24, fontWeight: "600" },
@@ -658,7 +665,7 @@ const useStyles = makeStyles((c) => ({
   outTitle: { fontFamily: fonts.display, fontSize: 28, lineHeight: 32 },
   revoteCard: { gap: spacing.xs, padding: spacing.lg, borderRadius: radius.lg, backgroundColor: c.surfaceSecondary, borderWidth: 1, borderColor: c.brand },
   revoteNames: { fontFamily: fonts.display, fontSize: 30, lineHeight: 34, color: c.onSurface },
-  carriedCard: { gap: spacing.sm, padding: spacing.lg, borderRadius: radius.lg, backgroundColor: c.surfaceSecondary, borderWidth: 1, borderColor: c.traitor },
+  carriedCard: { gap: spacing.sm, padding: spacing.lg, borderRadius: radius.lg, backgroundColor: c.surfaceSecondary, borderWidth: 1, borderColor: c.brandSecondary },
   carriedVictim: { fontFamily: fonts.display, fontSize: 34, lineHeight: 38, color: c.onSurface },
   carriedAction: { fontFamily: fonts.displaySemi, fontSize: 22, lineHeight: 26, color: c.brand },
   carriedQ: { color: c.onSurfaceSecondary, fontSize: 16, lineHeight: 22, marginTop: spacing.xs },
