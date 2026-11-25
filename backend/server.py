@@ -133,6 +133,8 @@ class Game(BaseModel):
     action: Optional[str] = None
     action_choices: List[str] = []  # the three options a Traitor picks tonight's action from
     recruit_id: Optional[str] = None  # a Faithful the Traitors recruit tonight (instead of murdering)
+    # Recruits the Traitors have earned: +1 each time a Traitor is banished, -1 when they use it.
+    recruit_credits: int = 0
     next_target_id: Optional[str] = None
     next_action: Optional[str] = None
     used_actions: List[str] = []
@@ -479,6 +481,7 @@ def moderator_state(g: Game) -> dict:
             "murder_done": g.murder_done,  # confirmed carried out at the gather check-in
             "recruit_id": g.recruit_id,
             "recruit_name": name_of(g, g.recruit_id),
+            "recruit_allowed": recruit_reason(g),  # None | "banished" | "alone"
         }
 
     # Live Round Table: individual ballots, a running tally, who hasn't voted, end-game votes.
@@ -573,12 +576,24 @@ def in_endgame(g: Game) -> bool:
 RECRUIT_MIN_PLAYERS = 6
 
 
-def recruitment_available(g: Game) -> bool:
-    """Traitors may recruit on any night while at least six players are still in."""
+def recruit_reason(g: Game) -> Optional[str]:
+    """Why the Traitors may recruit tonight, or None if they may not. They may only recruit to
+    replace a banished Traitor (one recruit per Traitor banished), or when only one Traitor is
+    left — and only while at least six players are still in."""
     alive = g.alive()
     traitors = [p for p in alive if p.role == "traitor"]
     faithful = [p for p in alive if p.role == "faithful"]
-    return len(alive) >= RECRUIT_MIN_PLAYERS and bool(traitors) and bool(faithful)
+    if len(alive) < RECRUIT_MIN_PLAYERS or not traitors or not faithful:
+        return None
+    if g.recruit_credits > 0:
+        return "banished"
+    if len(traitors) == 1:
+        return "alone"
+    return None
+
+
+def recruitment_available(g: Game) -> bool:
+    return recruit_reason(g) is not None
 
 
 def winner_by_roles(g: Game) -> Optional[str]:
@@ -617,6 +632,8 @@ def resolve_banish(g: Game) -> dict:
                 t.lives -= 1
                 t.role_revealed = alive_before > HIDE_ROLE_AT
                 banish["already_dead"] = False
+                if t.lives == 0 and t.role == "traitor":
+                    g.recruit_credits += 1  # the Traitors may now recruit a replacement
             else:
                 banish["already_dead"] = True
             banish["lives_left"] = t.lives
@@ -880,6 +897,7 @@ async def private_view(code: str, data: AuthIn):
         out["murder_done"] = g.murder_done
         out["planned_murder"] = bool(g.target_id and g.murder_confirmed)
         out["can_recruit"] = recruitment_available(g)
+        out["recruit_reason"] = recruit_reason(g)
         out["recruit"] = {"id": g.recruit_id, "name": name_of(g, g.recruit_id)} if g.recruit_id else None
     return out
 
@@ -943,7 +961,7 @@ async def take_turn(code: str, data: TurnIn):
         if is_traitor and p.lives > 0 and data.recruit_id:
             # Recruit a Faithful to replace a lost Traitor (instead of murdering tonight)
             if not recruitment_available(g):
-                raise HTTPException(400, "The Traitors are already up to strength")
+                raise HTTPException(400, "You can only recruit to replace a banished Traitor, or when you are the only Traitor left")
             r = g.player(data.recruit_id)
             if not r or r.lives <= 0 or r.role != "faithful":
                 raise HTTPException(400, "Choose a Faithful to recruit")
@@ -1056,6 +1074,8 @@ async def advance(code: str, expected: Optional[str] = None, expected_day: Optio
         if rp and rp.lives > 0 and rp.role == "faithful":
             rp.role = "traitor"  # recruited instead of murdered
             recruited = True
+            if g.recruit_credits > 0:
+                g.recruit_credits -= 1
             murder = {"success": False}
         elif g.murder_confirmed and g.murder_done:
             murder = resolve_murder(g)

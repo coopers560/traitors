@@ -420,6 +420,15 @@ function Breakdown({ code, passphrase, onChangeGame, onLock }: { code: string; p
             ) : (
               <Text style={styles.planText}>No victim chosen yet.</Text>
             )}
+            {rolesShown && m.phase === "night" ? (
+              <Text style={[styles.planText, { fontSize: 15, color: colors.muted }]} testID="moderator-recruit-rule">
+                {m.tonight.recruit_allowed === "banished"
+                  ? "Recruiting allowed tonight — a Traitor has been banished."
+                  : m.tonight.recruit_allowed === "alone"
+                    ? "Recruiting allowed tonight — only one Traitor left."
+                    : "No recruiting tonight — no Traitor banished and more than one left."}
+              </Text>
+            ) : null}
           </View>
         ) : null}
 

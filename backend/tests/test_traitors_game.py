@@ -427,9 +427,10 @@ class TestRecruit:
         tr = next(p for p in ps if roles[p["id"]] == "traitor")
         fa = [p for p in ps if roles[p["id"]] == "faithful"]
         finish_setup(ps)  # -> day 1
-        # Day 1 night comes first: 8 still in (>= 6), so recruitment is available
+        # Day 1 night comes first: 8 still in (>= 6) and a lone Traitor, so recruitment is available
         assert S.post(f"{G()}/advance").json()["phase"] == "night"
-        assert private(tr["id"], pin_of(tr["name"])).json()["can_recruit"] is True
+        v = private(tr["id"], pin_of(tr["name"])).json()
+        assert v["can_recruit"] is True and v["recruit_reason"] == "alone"
         recruit = fa[0]
         assert private(recruit["id"], pin_of(recruit["name"])).json()["role"] == "faithful"
         assert S.post(f"{G()}/turn", json={"player_id": tr["id"], "pin": pin_of(tr["name"]), "recruit_id": recruit["id"]}).status_code == 200
@@ -460,6 +461,49 @@ class TestRecruit:
         assert S.post(f"{G()}/advance").json()["phase"] == "night"
         assert private(tr["id"], pin_of(tr["name"])).json()["can_recruit"] is False
         assert S.post(f"{G()}/turn", json={"player_id": tr["id"], "pin": pin_of(tr["name"]), "recruit_id": fa[1]["id"]}).status_code == 400
+
+
+class TestRecruitOnlyToReplace:
+    """Recruiting is only offered to replace a banished Traitor, or to a lone Traitor."""
+
+    def test_no_recruit_with_several_traitors_until_one_is_banished(self):
+        g, roles = setup_game_traitors(10, 2)
+        ps = g["players"]
+        t1, t2 = [p for p in ps if roles[p["id"]] == "traitor"]
+        fa = [p for p in ps if roles[p["id"]] == "faithful"]
+        finish_setup(ps)
+        assert S.post(f"{G()}/advance").json()["phase"] == "night"
+        v = private(t1["id"], pin_of(t1["name"])).json()
+        assert v["can_recruit"] is False and v["recruit_reason"] is None
+        r = S.post(f"{G()}/turn", json={"player_id": t1["id"], "pin": pin_of(t1["name"]), "recruit_id": fa[0]["id"]})
+        assert r.status_code == 400 and "banished Traitor" in r.json()["detail"]
+        # Day 1: lie low, then banish Traitor t2 at the Round Table
+        do_night(roles)
+        assert S.post(f"{G()}/advance").json()["phase"] == "gather"
+        do_gather(roles)
+        S.post(f"{G()}/advance"); S.post(f"{G()}/advance")  # reveal -> roundtable
+        cast_votes({p["id"]: (t2["id"] if p["id"] != t2["id"] else fa[0]["id"]) for p in ps})
+        assert S.post(f"{G()}/advance").json()["history"][-1]["banish"]["target_id"] == t2["id"]
+        S.post(f"{G()}/advance")  # -> day 2
+        assert S.post(f"{G()}/advance").json()["phase"] == "night"
+        # t1 is now alone AND has a banished Traitor to replace
+        v = private(t1["id"], pin_of(t1["name"])).json()
+        assert v["can_recruit"] is True and v["recruit_reason"] == "banished"
+        assert S.post(f"{G()}/turn", json={"player_id": t1["id"], "pin": pin_of(t1["name"]), "recruit_id": fa[0]["id"]}).status_code == 200
+        for p in S.get(f"{G()}").json()["players"]:
+            if p["alive"] and p["id"] != t1["id"]:
+                S.post(f"{G()}/turn", json={"player_id": p["id"], "pin": pin_of(p["name"])})
+        assert S.post(f"{G()}/advance").json()["phase"] == "gather"
+        do_gather(roles)
+        assert S.post(f"{G()}/advance").json()["history"][-1]["recruited"] is True
+        # the replacement is used up and there are two Traitors again: no more recruiting
+        mod = S.post(f"{G()}/moderator", json={"passphrase": "!Uganda02!"}).json()
+        assert mod["counts"]["traitors_alive"] == 2
+        S.post(f"{G()}/advance")  # -> roundtable
+        cast_votes({p["id"]: (fa[1]["id"] if p["id"] != fa[1]["id"] else fa[2]["id"]) for p in S.get(G()).json()["players"] if p["alive"]})
+        S.post(f"{G()}/advance"); S.post(f"{G()}/advance")  # banished -> day 3
+        assert S.post(f"{G()}/advance").json()["phase"] == "night"
+        assert private(t1["id"], pin_of(t1["name"])).json()["can_recruit"] is False
 
 
 class TestHideRoleAndEndgame:
@@ -622,11 +666,11 @@ class TestModeratorNow:
         S.post(f"{G()}/advance")
         r = S.post(f"{G()}/turn", json={"player_id": t1["id"], "pin": pin_of(t1["name"]), "target_id": fa[0]["id"]})
         S.post(f"{G()}/turn", json={"player_id": t1["id"], "pin": pin_of(t1["name"]), "action": r.json()["action_choices"][0]})
-        S.post(f"{G()}/turn", json={"player_id": t2["id"], "pin": pin_of(t2["name"]), "recruit_id": fa[1]["id"]})
+        S.post(f"{G()}/turn", json={"player_id": t2["id"], "pin": pin_of(t2["name"]), "target_id": fa[1]["id"]})
         for _ in range(2):
             S.post(f"{G()}/turn", json={"player_id": fa[2]["id"], "pin": pin_of(fa[2]["name"])})
         log = self._mod()["event_log"]
-        assert any(e["kind"] == "recruit" and "CHANGED the plan" in e["text"] and fa[0]["name"] in e["text"] for e in log)
+        assert any(e["kind"] == "victim" and "CHANGED the plan" in e["text"] and fa[0]["name"] in e["text"] for e in log)
         assert sum(1 for e in log if e["kind"] == "pass" and fa[2]["name"] in e["text"]) == 1
 
 

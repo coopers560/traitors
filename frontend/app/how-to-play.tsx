@@ -17,7 +17,7 @@ const STEPS: { icon: React.ComponentProps<typeof Ionicons>["name"]; title: strin
   {
     icon: "moon",
     title: "2. The Traitors plot (night)",
-    body: "Each day opens with the Traitors. On the phone they secretly pick their victim and a method; everyone else just passes the phone on, so every turn looks the same.",
+    body: "Each day opens with the Traitors. On the phone they secretly pick their victim and a method; everyone else just passes the phone on, so every turn looks the same. Instead of murdering, the Traitors may recruit a Faithful — but only to replace a banished Traitor, or when just one Traitor is left.",
   },
   {
     icon: "sunny",
