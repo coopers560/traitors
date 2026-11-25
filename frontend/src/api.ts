@@ -95,6 +95,8 @@ export type PrivateView = {
   murder_done?: boolean;
   planned_murder?: boolean;
   can_recruit?: boolean;
+  /** Why recruiting is allowed tonight: to replace a banished Traitor, or a lone Traitor. */
+  recruit_reason?: "banished" | "alone" | null;
   recruit?: { id: string; name: string } | null;
 };
 
@@ -176,6 +178,7 @@ export type ModeratorView = {
     murder_done: boolean;
     recruit_id: string | null;
     recruit_name: string | null;
+    recruit_allowed?: "banished" | "alone" | null;
   } | null;
   round_table: {
     votes: VoteEdge[];
