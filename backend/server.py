@@ -48,6 +48,7 @@ MAX_MURDER_GAP_HOURS = 24.0  # ClaudAI may set the minimum time between murders 
 # After everyone has taken their plot turn, the Round Table stays shut this long, so the Traitors
 # always have time to carry out the murder in plain sight. ClaudAI can change it (0 to the max).
 DEFAULT_MURDER_WINDOW_MIN = 30.0
+RECRUIT_DELAY_MAX_MIN = 10.0  # a planned recruit turns at a random moment within this many minutes
 MAX_MURDER_WINDOW_MIN = 120.0
 ACTION_CHOICES = 5  # secret murder methods a Traitor chooses from each night (always this many, all different)
 
@@ -209,6 +210,11 @@ class Game(BaseModel):
     # When the last plot turn was taken this round (ISO), and how long the Round Table then
     # stays shut so the Traitors have time to carry out the murder.
     plot_done_at: Optional[str] = None
+    # A planned recruit happens at a random moment up to RECRUIT_DELAY_MAX_MIN after the plot
+    # closes (so the recruit can join the Traitors before the Round Table, and the moment can't be
+    # tied to anything public). recruit_applied_at is set once it has happened.
+    recruit_at: Optional[str] = None
+    recruit_applied_at: Optional[str] = None
     murder_window_minutes: float = DEFAULT_MURDER_WINDOW_MIN
     # Optional per-game ClaudAI login: the hashed ClaudAI passphrase that opens this game's
     # god-view (games from before passphrases may hold the plain hash of a 4-digit PIN).
@@ -499,6 +505,37 @@ def next_plot_at(g: Game) -> Optional[datetime]:
     return None
 
 
+def apply_recruit(g: Game) -> bool:
+    """Turn tonight's recruit into a Traitor now (once). False if there's nothing to do or it
+    isn't allowed (never more than MAX_TRAITORS)."""
+    if g.recruit_applied_at:
+        return False
+    rp = g.player(g.recruit_id)
+    traitors_in = sum(1 for p in g.alive() if p.role == "traitor")
+    if not (rp and rp.lives > 0 and rp.role == "faithful" and traitors_in < MAX_TRAITORS):
+        return False
+    rp.role = "traitor"  # recruited instead of murdered
+    rp.started_as = rp.started_as or "faithful"
+    rp.recruited_label = round_label(g)
+    if g.recruit_credits > 0:
+        g.recruit_credits -= 1
+    g.recruit_applied_at = datetime.now(timezone.utc).isoformat()
+    log(g, "recruit", f"{rp.name} turned — now a Traitor (recruited)", None)
+    return True
+
+
+def apply_due_recruit(g: Game) -> bool:
+    """If a planned recruit's random moment has come, make it happen. Called from locked
+    endpoints the players hit often (turns, the private view, the Traitors' chat)."""
+    if not g.recruit_at or g.recruit_applied_at or g.phase not in ("night", "gather"):
+        return False
+    try:
+        due = datetime.fromisoformat(g.recruit_at)
+    except ValueError:
+        return False
+    return due <= datetime.now(timezone.utc) and apply_recruit(g)
+
+
 def round_table_at(g: Game) -> Optional[datetime]:
     """When the Round Table may open, if it must still wait: murder_window_minutes after the last
     plot turn. Measured from when EVERYONE had taken their turn (not from when a murder was
@@ -786,7 +823,9 @@ def moderator_state(g: Game) -> dict:
             "murder_done": g.murder_done,  # confirmed carried out at the gather check-in
             "recruit_id": g.recruit_id,
             "recruit_name": name_of(g, g.recruit_id),
-            "recruit_allowed": recruit_reason(g),  # None | "banished" | "alone"
+            "recruit_allowed": recruit_reason(g),
+            "recruit_at": g.recruit_at,  # when tonight's recruit turns (random, within 10 minutes of the plot closing)
+            "recruit_applied_at": g.recruit_applied_at,  # None | "banished" | "alone"
         }
 
     # Live Round Table: individual ballots, a running tally, who hasn't voted, end-game votes.
@@ -1267,6 +1306,8 @@ async def read_chat(code: str, data: AuthIn):
     Traitor still in the game gets the messages — and reading marks them as seen by them."""
     g = await require_game(code)
     p = auth(g, data)
+    if apply_due_recruit(g):
+        await save(g)
     if not chat_allowed(g, p):
         return {"allowed": False, "messages": []}
     now = datetime.now(timezone.utc).isoformat()
@@ -1512,10 +1553,7 @@ async def delete_game(code: str, data: Optional[EndGameIn] = None):
     return {"exists": False}
 
 
-@api_router.post("/games/{code}/private")
-async def private_view(code: str, data: AuthIn):
-    g = await require_game(code)
-    p = auth(g, data)
+def private_out(g: Game, p: Player) -> dict:
     out = {
         "player_id": p.id,
         "name": p.name,
@@ -1533,7 +1571,8 @@ async def private_view(code: str, data: AuthIn):
         # Recruited into the Traitors today (resolved at the murder reveal). Only ever sent to
         # that player, and only once they really are a Traitor — never during the night plan.
         "recruited_now": bool(
-            p.role == "traitor" and g.recruit_id == p.id and g.phase in ("reveal", "roundtable", "banished")
+            p.role == "traitor" and g.recruit_id == p.id and g.recruit_applied_at
+            and g.phase in ("night", "gather", "reveal", "roundtable", "banished")
         ),
         "endgame": in_endgame(g),
     }
@@ -1549,6 +1588,16 @@ async def private_view(code: str, data: AuthIn):
         out["recruit_reason"] = recruit_reason(g)
         out["recruit"] = {"id": g.recruit_id, "name": name_of(g, g.recruit_id)} if g.recruit_id else None
     return out
+
+
+@api_router.post("/games/{code}/private")
+@locked
+async def private_view(code: str, data: AuthIn):
+    g = await require_game(code)
+    p = auth(g, data)
+    if apply_due_recruit(g):
+        await save(g)
+    return private_out(g, p)
 
 
 @api_router.post("/games/{code}/turn")
@@ -1637,7 +1686,7 @@ async def take_turn(code: str, data: TurnIn):
             log(g, "victim", f"{p.name} (Traitor) {'CHANGED the plan (was: ' + before + ') — now picking ' if before else 'picked '}{name_of(g, g.target_id)} as the victim — offered: "
                 + " · ".join(f"“{a}”" for a in g.action_choices), None)
             await save(g)
-            return await private_view(code, AuthIn(player_id=data.player_id, pin=data.pin))
+            return private_out(g, p)
         elif is_traitor and p.lives > 0 and data.action:
             # Step 2: commit one of the offered actions
             if not g.target_id:
@@ -1671,8 +1720,13 @@ async def take_turn(code: str, data: TurnIn):
         # Everyone has taken their plot turn: the Traitors now get time to carry out the murder.
         g.plot_done_at = datetime.now(timezone.utc).isoformat()
         log(g, "stage", f"Everyone has taken their plot turn — the Round Table opens in {g.murder_window_minutes:g} minutes")
+        if g.recruit_id:
+            delay = random.uniform(0, RECRUIT_DELAY_MAX_MIN)
+            g.recruit_at = (datetime.now(timezone.utc) + timedelta(minutes=delay)).isoformat()
+            log(g, "recruit", f"{name_of(g, g.recruit_id)} will turn in about {delay:.0f} minutes", None)
+    apply_due_recruit(g)
     await save(g)
-    return await private_view(code, AuthIn(player_id=data.player_id, pin=data.pin))
+    return private_out(g, p)
 
 
 @api_router.post("/games/{code}/advance")
@@ -1707,6 +1761,7 @@ async def advance(code: str, expected: Optional[str] = None, expected_day: Optio
             g.turns_done, g.target_id, g.action, g.murder_confirmed, g.action_choices, g.recruit_id = [], None, None, False, [], None
             g.murder_done = False
             g.plot_done_at = None
+            g.recruit_at = g.recruit_applied_at = None
             log(g, "stage", f"The Traitors plot ({round_label(g)})")
     elif g.phase == "night":
         # The Traitors have planned their victim and action. The murder itself is carried
@@ -1738,16 +1793,10 @@ async def advance(code: str, expected: Optional[str] = None, expected_day: Optio
         if not alive_ids.issubset(set(g.turns_done)):
             missing = [name_of(g, pid) for pid in alive_ids - set(g.turns_done)]
             raise HTTPException(400, f"Everyone must check in first. Still to check in: {', '.join(n for n in missing if n)}")
-        recruited = False
         rp = g.player(g.recruit_id)
-        traitors_in = sum(1 for p in g.alive() if p.role == "traitor")
-        if rp and rp.lives > 0 and rp.role == "faithful" and traitors_in < MAX_TRAITORS:
-            rp.role = "traitor"  # recruited instead of murdered
-            rp.started_as = rp.started_as or "faithful"
-            rp.recruited_label = round_label(g)
-            recruited = True
-            if g.recruit_credits > 0:
-                g.recruit_credits -= 1
+        # The recruit may already have turned (at its random moment); otherwise it happens now.
+        recruited = bool(rp and g.recruit_id and (g.recruit_applied_at or apply_recruit(g)))
+        if recruited:
             murder = {"success": False}
         elif g.murder_confirmed and g.murder_done:
             murder = resolve_murder(g)
