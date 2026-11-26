@@ -17,7 +17,7 @@ const STEPS: { icon: React.ComponentProps<typeof Ionicons>["name"]; title: strin
   {
     icon: "moon",
     title: "2. The Traitors plot",
-    body: "Before every Round Table the Traitors secretly pick a victim and one of five methods on the phone — or they lie low and spare everyone. Everyone else picks who they suspect on an identical-looking screen, so every turn looks the same. Instead of murdering, the Traitors may recruit a Faithful — only to replace a banished Traitor, or when just one Traitor is left. There are never more than two Traitors. Hold your role card 3 seconds to see your role, and 3 more for the Traitors' menu — secret chat any time.",
+    body: "Before every Round Table the Traitors secretly pick a victim and one of five methods on the phone — or they lie low and spare everyone. Once everyone has had their turn, they get 30 minutes to carry it out before the Round Table opens. Everyone else picks who they suspect on an identical-looking screen, so every turn looks the same. Instead of murdering, the Traitors may recruit a Faithful — only to replace a banished Traitor, or when just one Traitor is left. There are never more than two Traitors. Hold your role card 3 seconds to see your role, and 3 more for the Traitors' menu — secret chat any time.",
   },
   {
     icon: "sunny",

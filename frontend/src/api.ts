@@ -81,9 +81,13 @@ export type GameState =
       session?: "" | "lunch" | "evening";
       /** Round Tables per day: 1, or 2 (lunch and 8pm). */
       tables_per_day?: number;
-      /** Murders can't come in quick succession: the next night can't start before this (ISO time). */
+      /** Retired (always null): murders used to have to be hours apart. */
       next_plot_at?: string | null;
       murder_gap_hours?: number;
+      /** The Traitors get time to carry out the murder: the Round Table opens at this time (ISO), if still waiting. */
+      round_table_at?: string | null;
+      /** Minutes the Round Table stays shut after everyone has taken their plot turn. */
+      murder_window_minutes?: number;
     };
 
 export type PrivateView = {
@@ -161,6 +165,8 @@ export type ModeratorView = {
   /** Minimum hours between murders, and when the Traitors may next plot (ISO), if still waiting. */
   murder_gap_hours?: number;
   next_plot_at?: string | null;
+  round_table_at?: string | null;
+  murder_window_minutes?: number;
   total_days: number;
   phase: Phase;
   stage: string;
@@ -266,6 +272,7 @@ export const api = {
       players,
       single: true,
       tables_per_day: opts.tablesPerDay ?? 2,
+      murder_window_minutes: 30, // the Traitors get 30 minutes to carry out each murder
       ...(opts.claudaiPassphrase ? { claudai_passphrase: opts.claudaiPassphrase } : {}),
     }),
   /** The group's game in progress, if any — phones join it without a code. */
@@ -301,7 +308,13 @@ export const api = {
   moderatorSetPassphrase: (code: string, auth: ModAuth, newPassphrase: string) =>
     request<ModeratorView>(`/games/${encodeURIComponent(code.trim().toUpperCase())}/moderator/pin`, "POST", { ...auth, new_passphrase: newPassphrase }),
   /** Switch a game between one Round Table a day and two (lunch and 8pm). */
-  /** Change the minimum hours between murders (0–24). */
+  /** Change how long the Traitors get to carry out the murder after the plot (0–120 minutes). */
+  moderatorMurderWindow: (code: string, auth: ModAuth, minutes: number) =>
+    request<ModeratorView>(`/games/${encodeURIComponent(code.trim().toUpperCase())}/moderator/schedule`, "POST", {
+      ...auth,
+      murder_window_minutes: minutes,
+    }),
+  /** Change the minimum hours between murders (0–24). Retired: no longer enforced. */
   moderatorMurderGap: (code: string, auth: ModAuth, hours: number) =>
     request<ModeratorView>(`/games/${encodeURIComponent(code.trim().toUpperCase())}/moderator/schedule`, "POST", {
       ...auth,

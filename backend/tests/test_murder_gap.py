@@ -1,4 +1,6 @@
-"""Murders can't come in quick succession (in-process, mongomock)."""
+"""The Traitors get time to carry out the murder: after everyone has taken their plot turn, the
+Round Table stays shut for murder_window_minutes (in-process, mongomock). The old 'hours between
+murders' gap is retired and never blocks anything."""
 import asyncio
 import os
 import sys
@@ -8,7 +10,7 @@ import pytest
 
 pytest.importorskip("mongomock_motor")
 os.environ.setdefault("MONGO_URL", "mongodb://localhost")
-os.environ.setdefault("DB_NAME", "traitors_gap_test")
+os.environ.setdefault("DB_NAME", "traitors_window_test")
 import motor.motor_asyncio as m  # noqa: E402
 from mongomock_motor import AsyncMongoMockClient  # noqa: E402
 
@@ -18,12 +20,12 @@ import server  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
 
 NAMES = ["Ada", "Ben", "Cleo", "Dev", "Esme", "Finn", "Gus", "Hana"]
+PASS = "Window#Test1"
 
 
-def _murder_day_one(c, gap=None):
-    body = {"players": [{"name": n, "pin": f"{1000 + i}"} for i, n in enumerate(NAMES)]}
-    if gap is not None:
-        body["murder_gap_hours"] = gap
+def _plot(c, window=30, murder=True):
+    body = {"players": [{"name": n, "pin": f"{1000 + i}"} for i, n in enumerate(NAMES)], "murder_window_minutes": window,
+            "claudai_passphrase": PASS}
     g = c.post("/api/games", json=body).json()
     code = g["code"]
     ids = {p["name"]: p["id"] for p in g["players"]}
@@ -35,57 +37,73 @@ def _murder_day_one(c, gap=None):
     F = [n for n in NAMES if role[n] == "faithful"]
     for n in NAMES:
         turn(n)
-    adv(); adv()  # day -> night
-    r = turn(T[0], target_id=ids[F[0]]).json()
-    turn(T[0], action=r["action_choices"][0])
+    adv(); assert adv().json()["phase"] == "night"
+    if murder:
+        r = turn(T[0], target_id=ids[F[0]]).json()
+        turn(T[0], action=r["action_choices"][0])
     for n in NAMES:
-        if n != T[0]:
+        if not (murder and n == T[0]):
             turn(n)
-    adv()  # gather
-    for n in NAMES:
-        if n != F[0]:
-            turn(n, murder_done=True) if n in T else turn(n)
-    turn(F[0])
-    assert adv().json()["history"][-1]["murder"]["success"] is True
-    adv()  # -> roundtable
-    alive = [n for n in NAMES if n != F[0]]
-    for n in alive:
-        turn(n, vote_target_id=ids[F[1] if n != F[1] else F[2]])
-    adv(); adv()  # banished -> day 2
-    return code, adv
+    return code, ids, pin, T, F, turn, adv
 
 
-def test_next_night_waits_for_the_gap():
+def _age(code, minutes):
+    async def go():
+        doc = await server.db.games.find_one({"code": code})
+        doc["plot_done_at"] = (datetime.now(timezone.utc) - timedelta(minutes=minutes)).isoformat()
+        await server.db.games.replace_one({"code": code}, doc)
+    asyncio.run(go())
+
+
+def test_round_table_waits_after_the_plot():
     with TestClient(server.app) as c:
-        code, adv = _murder_day_one(c)  # default gap: 3 hours
+        code, ids, pin, T, F, turn, adv = _plot(c)
         st = c.get(f"/api/games/{code}").json()
-        assert st["phase"] == "day" and st["next_plot_at"] and st["murder_gap_hours"] == 3
+        assert st["phase"] == "night" and st["round_table_at"] and st["murder_window_minutes"] == 30
         r = adv()
-        assert r.status_code == 400 and "Too soon after the last murder" in r.json()["detail"]
-        # three hours later the Traitors may plot again
-        async def age():
-            doc = await server.db.games.find_one({"code": code})
-            doc["last_murder_at"] = (datetime.now(timezone.utc) - timedelta(hours=3, minutes=1)).isoformat()
-            await server.db.games.replace_one({"code": code}, doc)
-        asyncio.run(age())
-        assert c.get(f"/api/games/{code}").json()["next_plot_at"] is None
-        assert adv().json()["phase"] == "night"
+        assert r.status_code == 400 and "The Round Table opens in" in r.json()["detail"]
+        _age(code, 31)
+        assert c.get(f"/api/games/{code}").json()["round_table_at"] is None
+        assert adv().json()["phase"] == "gather"
 
 
-def test_games_from_before_the_rule_use_the_event_log():
+def test_the_wait_is_the_same_when_the_traitors_lie_low():
     with TestClient(server.app) as c:
-        code, adv = _murder_day_one(c)
-        async def legacy():
-            doc = await server.db.games.find_one({"code": code})
-            doc.pop("last_murder_at", None)  # stored before last_murder_at existed
-            await server.db.games.replace_one({"code": code}, doc)
-        asyncio.run(legacy())
-        assert c.get(f"/api/games/{code}").json()["next_plot_at"]  # found in the event log
+        code, *_rest, adv = _plot(c, murder=False)
+        st = c.get(f"/api/games/{code}").json()
+        assert st["round_table_at"]  # same wait — it never shows whether a murder was planned
         assert adv().status_code == 400
 
 
-def test_zero_gap_never_waits():
+def test_the_plan_locks_once_everyone_has_gone():
     with TestClient(server.app) as c:
-        code, adv = _murder_day_one(c, gap=0)
-        assert c.get(f"/api/games/{code}").json()["next_plot_at"] is None
-        assert adv().json()["phase"] == "night"
+        code, ids, pin, T, F, turn, adv = _plot(c)
+        r = turn(T[0], target_id=ids[F[1]])
+        assert r.status_code == 400 and "locked" in r.json()["detail"]
+        assert turn(F[0]).status_code == 200  # an ordinary (pass) turn is still fine
+
+
+def test_claudai_can_change_the_wait_and_zero_never_waits():
+    with TestClient(server.app) as c:
+        code, *_rest, adv = _plot(c)
+        r = c.post(f"/api/games/{code}/moderator/schedule", json={"passphrase": PASS, "murder_window_minutes": 0})
+        assert r.status_code == 200 and r.json()["murder_window_minutes"] == 0 and r.json()["round_table_at"] is None
+        assert adv().json()["phase"] == "gather"
+        bad = c.post(f"/api/games/{code}/moderator/schedule", json={"passphrase": PASS, "murder_window_minutes": 500})
+        assert bad.status_code == 400
+
+
+def test_the_old_gap_between_murders_never_blocks():
+    with TestClient(server.app) as c:
+        code, ids, pin, T, F, turn, adv = _plot(c, window=0)
+        assert adv().json()["phase"] == "gather"
+        for n in NAMES:
+            turn(n, murder_done=True) if n in T else turn(n)
+        assert adv().json()["history"][-1]["murder"]["success"] is True
+        adv()  # roundtable
+        for n in [x for x in NAMES if x != F[0]]:
+            turn(n, vote_target_id=ids[F[1] if n != F[1] else F[2]])
+        adv(); st = adv().json()  # banished -> next round
+        if st["phase"] == "day":
+            assert st["next_plot_at"] is None
+            assert adv().json()["phase"] == "night"  # straight away, no 3-hour wait
