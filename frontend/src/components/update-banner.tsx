@@ -1,17 +1,17 @@
 import Ionicons from "@react-native-vector-icons/ionicons";
 import { useEffect, useState } from "react";
 import { Platform, Pressable, Text, View } from "react-native";
-import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { makeStyles, radius, spacing, useTheme } from "@/src/theme";
 
 // When a new version of the app is deployed, phones that already have it open keep running
-// the old code until they reload — and an old screen can show old rules. Every so often we
-// fetch the live page and compare its app bundle with the one this phone is running; if they
-// differ, a banner offers a one-tap update.
+// the old code until they reload — and an old screen can show old rules. So the app keeps
+// comparing its bundle with the live page's, and as soon as a new version is live it covers
+// the screen and reloads itself: nobody can carry on playing on an old version.
 
 const BUNDLE = /\/_expo\/static\/js\/web\/entry-[^"']+\.js/;
 const CHECK_EVERY_MS = 60_000;
+const RELOAD_AFTER_S = 8;
 
 /** The app bundle this page is running, or null (development, or not on the web). */
 function runningBundle(): string | null {
@@ -36,8 +36,8 @@ export async function liveBundle(): Promise<string | null> {
 export function UpdateBanner() {
   const styles = useStyles();
   const { colors } = useTheme();
-  const insets = useSafeAreaInsets();
   const [stale, setStale] = useState(false);
+  const [left, setLeft] = useState(RELOAD_AFTER_S);
 
   useEffect(() => {
     const mine = runningBundle();
@@ -48,7 +48,7 @@ export function UpdateBanner() {
       if (!cancelled && live && live !== mine) setStale(true);
     };
     const id = setInterval(check, CHECK_EVERY_MS);
-    // Also check whenever the app comes back to the foreground (phones sleep a lot).
+    // Check straight away, and whenever the app comes back to the foreground (phones sleep a lot).
     const onVisible = () => document.visibilityState === "visible" && check();
     document.addEventListener("visibilitychange", onVisible);
     check();
@@ -59,37 +59,63 @@ export function UpdateBanner() {
     };
   }, []);
 
+  // Once a new version is live, count down and reload — the old version can't be used.
+  useEffect(() => {
+    if (!stale) return;
+    const id = setInterval(() => {
+      setLeft((s) => {
+        if (s <= 1) {
+          clearInterval(id);
+          window.location.reload();
+          return 0;
+        }
+        return s - 1;
+      });
+    }, 1000);
+    return () => clearInterval(id);
+  }, [stale]);
+
   if (!stale) return null;
   return (
-    <View style={[styles.wrap, { paddingTop: insets.top + spacing.xs }]} pointerEvents="box-none">
-      <Pressable
-        testID="update-banner"
-        accessibilityRole="button"
-        onPress={() => window.location.reload()}
-        style={({ pressed }) => [styles.banner, pressed && { opacity: 0.85 }]}
-      >
-        <Ionicons name="refresh-circle" size={24} color={colors.onBrandPrimary} />
-        <View style={{ flex: 1 }}>
-          <Text style={styles.title}>A new version of the game is ready</Text>
-          <Text style={styles.sub}>Tap to update — finish your turn first if you&apos;re in the middle of one.</Text>
-        </View>
-      </Pressable>
+    <View style={styles.cover} testID="update-banner">
+      <View style={styles.card}>
+        <Ionicons name="refresh-circle" size={56} color={colors.brand} />
+        <Text style={styles.title}>A new version of the game is ready</Text>
+        <Text style={styles.sub}>Updating in {left}s so everyone plays by the same rules. Anything you already sealed is safe.</Text>
+        <Pressable testID="update-now-button" accessibilityRole="button" onPress={() => window.location.reload()} style={({ pressed }) => [styles.button, pressed && { opacity: 0.85 }]}>
+          <Text style={styles.buttonText}>Update now</Text>
+        </Pressable>
+      </View>
     </View>
   );
 }
 
 const useStyles = makeStyles((c) => ({
-  wrap: { position: "absolute", top: 0, left: 0, right: 0, paddingHorizontal: spacing.md, zIndex: 1000 },
-  banner: {
-    flexDirection: "row",
+  cover: {
+    position: "absolute",
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    zIndex: 1000,
+    backgroundColor: "rgba(0,0,0,0.82)",
     alignItems: "center",
-    gap: spacing.sm,
-    backgroundColor: c.brandPrimary,
-    borderRadius: radius.md,
-    paddingVertical: spacing.sm,
-    paddingHorizontal: spacing.md,
-    boxShadow: "0px 6px 18px rgba(0,0,0,0.45)",
+    justifyContent: "center",
+    padding: spacing.lg,
   },
-  title: { color: c.onBrandPrimary, fontSize: 16, fontWeight: "800" },
-  sub: { color: c.onBrandPrimary, fontSize: 13, lineHeight: 17, opacity: 0.85 },
+  card: {
+    width: "100%",
+    maxWidth: 420,
+    alignItems: "center",
+    gap: spacing.md,
+    backgroundColor: c.surfaceSecondary,
+    borderRadius: radius.lg,
+    borderWidth: 1,
+    borderColor: c.brand,
+    padding: spacing.lg,
+  },
+  title: { color: c.onSurface, fontSize: 22, fontWeight: "800", textAlign: "center" },
+  sub: { color: c.onSurfaceSecondary, fontSize: 16, lineHeight: 22, textAlign: "center" },
+  button: { alignSelf: "stretch", minHeight: 56, borderRadius: radius.lg, backgroundColor: c.brandPrimary, alignItems: "center", justifyContent: "center" },
+  buttonText: { color: c.onBrandPrimary, fontSize: 18, fontWeight: "800" },
 }));
