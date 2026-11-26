@@ -86,8 +86,12 @@ export type GameState =
       murder_gap_hours?: number;
       /** The Traitors get time to carry out the murder: the Round Table opens at this time (ISO), if still waiting. */
       round_table_at?: string | null;
-      /** Minutes the Round Table stays shut after everyone has taken their plot turn. */
+      /** Minutes the Round Table stays shut after the plan is sealed. */
       murder_window_minutes?: number;
+      /** Only the Traitors take part in the plot (from the Traitors' menu); nobody else takes a turn. */
+      traitors_plot_alone?: boolean;
+      /** A Traitors-only plot is sealed and its time to strike has passed: the Round Table can open. */
+      plot_ready?: boolean;
     };
 
 export type PrivateView = {
@@ -122,6 +126,13 @@ export type PrivateView = {
   /** Why recruiting is allowed tonight: to replace a banished Traitor, or a lone Traitor. */
   recruit_reason?: "banished" | "alone" | null;
   recruit?: { id: string; name: string } | null;
+  /** Only the Traitors take part in the plot. */
+  traitors_plot_alone?: boolean;
+  /** Tonight's plan is final — sealed by a Traitor (Traitors only), and when (ISO). */
+  plan_sealed?: boolean;
+  plan_sealed_at?: string | null;
+  /** When the Round Table can open, once sealed (Traitors only). */
+  plan_ready_at?: string | null;
 };
 
 export type ModeratorGame = {
@@ -169,6 +180,8 @@ export type ModeratorView = {
   murder_gap_hours?: number;
   next_plot_at?: string | null;
   round_table_at?: string | null;
+  plot_ready?: boolean;
+  traitors_plot_alone?: boolean;
   murder_window_minutes?: number;
   total_days: number;
   phase: Phase;
@@ -277,6 +290,7 @@ export const api = {
       tables_per_day: opts.tablesPerDay ?? 2,
       murder_window_minutes: 30, // the Traitors get 30 minutes to carry out each murder
       skip_day: true, // straight from the start / the banishment into the next plot
+      traitors_plot_alone: true, // only the Traitors take part in the plot, from their menu
       ...(opts.claudaiPassphrase ? { claudai_passphrase: opts.claudaiPassphrase } : {}),
     }),
   /** The group's game in progress, if any — phones join it without a code. */

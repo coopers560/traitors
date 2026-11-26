@@ -147,8 +147,8 @@ const PHASE_COPY: Record<string, { eyebrow: string; title: string; body: string 
   },
   night: {
     eyebrow: "The plot",
-    title: "Everyone take your turn",
-    body: "Tap your name below, in private — nobody can tell who's plotting.",
+    title: "The Traitors are plotting",
+    body: "Act natural. Anyone can check their secret at any time.",
   },
   gather: {
     eyebrow: "This evening",
@@ -249,13 +249,9 @@ function Dashboard({ game, refreshing, onRefresh }: { game: ActiveGame; refreshi
   }
   const startLabel = game.tables_per_day === 2 ? "Begin Day 1 · Lunch" : "Begin Day 1";
   const plotLabel = game.endgame ? "Gather for the final vote" : "Start the plot";
-  // The Traitors get time to carry out the murder: after everyone has taken their plot turn the
-  // Round Table opens at this local time. (The server only sends it while it's still in the
-  // future; the 4-second refresh clears it when it passes.)
-  const tableAt = game.round_table_at
-    ? new Date(game.round_table_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false })
-    : null;
-  const takingTurns = phase === "setup" || phase === "night" || phase === "gather" || phase === "roundtable";
+  // Only the Traitors take part in the plot (from their menu), so nobody takes a turn then and the
+  // list shows no ticks — a tick would point straight at a Traitor.
+  const takingTurns = phase === "setup" || phase === "gather" || phase === "roundtable";
   const alive = game.players.filter((p) => p.alive);
   const out = game.players.filter((p) => !p.alive);
   // Progress through the holiday's calendar days (a lunch table is half way through its day).
@@ -353,7 +349,7 @@ function Dashboard({ game, refreshing, onRefresh }: { game: ActiveGame; refreshi
           <Animated.View entering={FadeInDown.duration(500)} style={styles.phaseCard} testID="phase-card">
             <Title style={styles.phaseTitle}>{copy.title}</Title>
             <Body>{copy.body}</Body>
-            {takingTurns && phase !== "night" ? (
+            {takingTurns ? (
               <View style={styles.turnRow} testID="turn-progress">
                 <Ionicons name="people" size={20} color={colors.brand} />
                 <Text style={styles.turnText}>
@@ -377,16 +373,16 @@ function Dashboard({ game, refreshing, onRefresh }: { game: ActiveGame; refreshi
                 ) : null}
               </>
             ) : phase === "night" ? (
-              allDone && tableAt ? (
-                <>
-                  <Button testID="advance-murder-button" label={`Round Table opens at ${tableAt}`} icon="time-outline" disabled onPress={() => {}} />
+              // Lights up once the Traitors have sealed their plan and had their time to strike. It
+              // never shows when they sealed it — that would point at whoever was on their phone.
+              <>
+                <Button testID="advance-murder-button" label={game.plot_ready ? "Everyone to the Round Table" : "Awaiting treachery…"} icon="flame" disabled={!game.plot_ready} loading={advance.isPending && !!game.plot_ready} onPress={() => setConfirmGo({ label: "Everyone to the Round Table", run: () => advance.mutate() })} />
+                {!game.plot_ready ? (
                   <Text style={styles.waitNote} testID="murder-window-note">
-                    The Traitors get {game.murder_window_minutes ?? 30} minutes to strike.
+                    Opens at least {game.murder_window_minutes ?? 30} minutes after the Traitors seal their plan.
                   </Text>
-                </>
-              ) : (
-                <Button testID="advance-murder-button" label={allDone ? "Everyone to the Round Table" : "Awaiting treachery…"} icon="flame" disabled={!allDone} loading={advance.isPending} onPress={() => setConfirmGo({ label: "Everyone to the Round Table", run: () => advance.mutate() })} />
-              )
+                ) : null}
+              </>
             ) : phase === "gather" ? (
               <>
                 <Button testID="advance-gather-button" label={allDone ? "Reveal the murder" : "Everyone must check in first…"} icon="mail-open" disabled={!allDone} loading={advance.isPending && allDone} onPress={() => setConfirmGo({ label: "Reveal the murder", run: () => advance.mutate() })} />
