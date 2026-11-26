@@ -4,7 +4,7 @@ import { ScrollView, Text, View } from "react-native";
 import Animated, { FadeInDown } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-import { api, DayResult } from "@/src/api";
+import { api, DayResult, roundLabel } from "@/src/api";
 import { HoldRole } from "@/src/components/hold-reveal";
 import { ScreenHeader } from "@/src/components/screen-header";
 import { Body, Eyebrow, Title } from "@/src/components/ui";
@@ -25,7 +25,7 @@ export default function History() {
           <Title>What has happened</Title>
         </View>
         {history.length === 0 ? (
-          <Body testID="history-empty">Nothing yet. The first entry appears after the Day 1 reveal.</Body>
+          <Body testID="history-empty">Nothing yet. The first entry appears after the first reveal.</Body>
         ) : (
           history.map((h, i) => <DayCard key={h.day} h={h} index={i} />)
         )}
@@ -52,7 +52,7 @@ function DayCard({ h, index }: { h: DayResult; index: number }) {
 
   return (
     <Animated.View entering={FadeInDown.delay(Math.min(index, 8) * 60).duration(400)} style={styles.card} testID={`history-day-${h.day}`}>
-      <Text style={styles.day}>Day {h.day}</Text>
+      <Text style={styles.day}>{roundLabel(h)}</Text>
 
       {h.ended_by_vote ? (
         <Text style={styles.main} testID={`history-ended-${h.day}`}>The players voted to end the game.</Text>
