@@ -156,6 +156,9 @@ export type ModeratorView = {
   cal_day?: number;
   session?: "" | "lunch" | "evening";
   tables_per_day?: number;
+  /** Minimum hours between murders, and when the Traitors may next plot (ISO), if still waiting. */
+  murder_gap_hours?: number;
+  next_plot_at?: string | null;
   total_days: number;
   phase: Phase;
   stage: string;
@@ -296,6 +299,12 @@ export const api = {
   moderatorSetPassphrase: (code: string, auth: ModAuth, newPassphrase: string) =>
     request<ModeratorView>(`/games/${encodeURIComponent(code.trim().toUpperCase())}/moderator/pin`, "POST", { ...auth, new_passphrase: newPassphrase }),
   /** Switch a game between one Round Table a day and two (lunch and 8pm). */
+  /** Change the minimum hours between murders (0–24). */
+  moderatorMurderGap: (code: string, auth: ModAuth, hours: number) =>
+    request<ModeratorView>(`/games/${encodeURIComponent(code.trim().toUpperCase())}/moderator/schedule`, "POST", {
+      ...auth,
+      murder_gap_hours: hours,
+    }),
   moderatorSchedule: (code: string, auth: ModAuth, tablesPerDay: 1 | 2, session?: "lunch" | "evening") =>
     request<ModeratorView>(`/games/${encodeURIComponent(code.trim().toUpperCase())}/moderator/schedule`, "POST", {
       ...auth,
@@ -350,6 +359,21 @@ export type Story = {
 };
 
 /** The label to show for a round: its stored label, or "Day N" for older entries. */
+/**
+ * A murder method with "them / their / they" replaced by the victim's name, so a Traitor knows
+ * exactly who it means: "Sit next to them on their sunbed" → "Sit next to Ben on Ben's sunbed".
+ */
+export function personalise(action: string | null | undefined, victim: string | null | undefined): string {
+  if (!action) return "";
+  if (!victim) return action;
+  return action
+    .replace(/\btheirs\b/g, `${victim}'s`)
+    .replace(/\btheir\b/g, `${victim}'s`)
+    .replace(/\bThem\b/g, victim)
+    .replace(/\bthem\b/g, victim)
+    .replace(/\bthemselves\b/g, victim);
+}
+
 export function roundLabel(x: { day: number; label?: string }): string {
   return x.label || `Day ${x.day}`;
 }
@@ -362,7 +386,17 @@ export function passphraseProblem(s: string): string | null {
 
 export type CurrentGame = { code: string | null; phase?: Phase; day?: number; players?: number };
 
-export type ChatMessage = { id: string; t: string; day: number; from_id: string; from_name: string; text: string };
+export type ChatMessage = {
+  id: string;
+  t: string;
+  day: number;
+  label?: string;
+  from_id: string;
+  from_name: string;
+  text: string;
+  /** Names of the other Traitors who have opened the chat since this was sent (not the sender). */
+  seen_by?: string[];
+};
 export type ChatState = { allowed: boolean; messages: ChatMessage[] };
 
 /** How and when a player left the game, from the public history. */
