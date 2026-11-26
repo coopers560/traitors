@@ -131,6 +131,8 @@ export type PrivateView = {
   /** Tonight's plan is final — sealed by a Traitor (Traitors only), and when (ISO). */
   plan_sealed?: boolean;
   plan_sealed_at?: string | null;
+  /** When the Round Table can open, once sealed (Traitors only). */
+  plan_ready_at?: string | null;
 };
 
 export type ModeratorGame = {
@@ -178,6 +180,8 @@ export type ModeratorView = {
   murder_gap_hours?: number;
   next_plot_at?: string | null;
   round_table_at?: string | null;
+  plot_ready?: boolean;
+  traitors_plot_alone?: boolean;
   murder_window_minutes?: number;
   total_days: number;
   phase: Phase;

@@ -149,7 +149,7 @@ export default function PlayerTurn() {
                   {mode === "turn" && view.phase === "setup" ? (
                     view.role === "traitor" ? (
                       <Body testID="setup-traitor-note">
-                        Remember your fellow Traitors. Before every Round Table, keep holding this card for the Traitors&apos; menu and choose a victim there (or lie low). Carry out the murder in plain sight, then confirm it when everyone checks in.
+                        Remember your fellow Traitors. Before every Round Table, keep holding this card for the Traitors&apos; menu and choose a victim there (or lie low) — on your own phone, out of sight. Carry out the murder in plain sight, then confirm it when everyone checks in.
                       </Body>
                     ) : (
                       <FaithfulBrief view={view} />
@@ -512,7 +512,7 @@ function PlotActions({
   );
   const sealNote = (
     <Text style={styles.menuNote} testID="plot-seal-note">
-      {hasFellows ? "Whoever seals first decides — for all the Traitors. " : ""}Once sealed, you get 30 minutes to strike before the Round Table opens.
+      {hasFellows ? "Whoever seals first decides — for all the Traitors. " : ""}Once sealed, you get at least 30 minutes to strike before the Round Table opens.
     </Text>
   );
 
@@ -596,7 +596,6 @@ function TraitorsMenu({ view: initial, pin, round, onClose }: { view: PrivateVie
   const traitor = view.role === "traitor" && view.alive;
   const { data: game } = useQuery({ queryKey: ["game"], queryFn: api.getGame });
   const players = game?.exists ? game.players : [];
-  const windowMins = (game?.exists ? game.murder_window_minutes : undefined) ?? 30;
   const { data: chat } = useQuery({
     queryKey: ["chat", id],
     queryFn: () => api.readChat(id, pin),
@@ -636,8 +635,8 @@ function TraitorsMenu({ view: initial, pin, round, onClose }: { view: PrivateVie
           : { who: "Lying low", what: "No murder this time." };
   // When the Round Table can open: the sealed time plus the time to strike (only the Traitors see this).
   const opensAt =
-    view.phase === "night" && view.plan_sealed_at
-      ? new Date(new Date(view.plan_sealed_at).getTime() + windowMins * 60000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false })
+    view.phase === "night" && view.plan_ready_at
+      ? new Date(view.plan_ready_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false })
       : null;
   // Scroll to the newest message when one arrives — but not on opening while there's a plan to make.
   const lastCount = useRef<number | null>(null);

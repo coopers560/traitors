@@ -148,7 +148,7 @@ const PHASE_COPY: Record<string, { eyebrow: string; title: string; body: string 
   night: {
     eyebrow: "The plot",
     title: "The Traitors are plotting",
-    body: "Nobody else needs to tap anything — act natural.",
+    body: "Act natural. Anyone can check their secret at any time.",
   },
   gather: {
     eyebrow: "This evening",
@@ -379,7 +379,7 @@ function Dashboard({ game, refreshing, onRefresh }: { game: ActiveGame; refreshi
                 <Button testID="advance-murder-button" label={game.plot_ready ? "Everyone to the Round Table" : "Awaiting treachery…"} icon="flame" disabled={!game.plot_ready} loading={advance.isPending && !!game.plot_ready} onPress={() => setConfirmGo({ label: "Everyone to the Round Table", run: () => advance.mutate() })} />
                 {!game.plot_ready ? (
                   <Text style={styles.waitNote} testID="murder-window-note">
-                    Opens {game.murder_window_minutes ?? 30} minutes after the Traitors seal their plan.
+                    Opens at least {game.murder_window_minutes ?? 30} minutes after the Traitors seal their plan.
                   </Text>
                 ) : null}
               </>

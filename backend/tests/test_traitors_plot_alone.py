@@ -47,7 +47,10 @@ def _game(c, window=30, alone=True):
 def _age(code, minutes):
     async def go():
         doc = await server.db.games.find_one({"code": code})
-        doc["plot_done_at"] = (datetime.now(timezone.utc) - timedelta(minutes=minutes)).isoformat()
+        shift = timedelta(minutes=minutes)
+        for k in ("plot_done_at", "round_table_ready_at"):
+            if doc.get(k):
+                doc[k] = (datetime.fromisoformat(doc[k]) - shift).isoformat()
         await server.db.games.replace_one({"code": code}, doc)
     asyncio.run(go())
 
@@ -66,9 +69,10 @@ def test_nobody_else_takes_a_turn_and_nothing_public_changes_when_the_traitors_s
         g = _game(c)
         before = _public_plot_signals(g["state"]())
         assert before[0] == 0 and not any(before[1]) and before[2] is None and before[3] is False
-        r = g["turn"](g["F"][0])
-        assert r.status_code == 400  # the Faithful have nothing to do during the plot
-        assert g["adv"]().status_code == 400  # nothing sealed yet
+        assert g["turn"](g["F"][0], target_id=g["ids"][g["F"][1]]).status_code == 400  # nothing for the Faithful to do
+        r = g["adv"]()
+        assert r.status_code == 400  # nothing sealed yet
+        refused_before = r.json()["detail"]
         neutral_before = [e["neutral"] for e in _doc(g["code"])["event_log"]]
         r = g["turn"](g["T"][0], target_id=g["ids"][g["F"][0]]).json()
         assert len(r["action_choices"]) == 5 and not r["plan_sealed"]
@@ -82,14 +86,19 @@ def test_nobody_else_takes_a_turn_and_nothing_public_changes_when_the_traitors_s
         # Sealed means sealed — for every Traitor.
         other = g["T"][1] if len(g["T"]) > 1 else g["T"][0]
         assert g["turn"](other, target_id=g["ids"][g["F"][1]]).status_code == 400
-        assert g["turn"](other).status_code == 400
+        r = g["turn"](other)  # a plain pass after the seal changes nothing
+        assert r.status_code == 200 and r.json()["plan_sealed"] and r.json()["murder_confirmed"]
         if len(g["T"]) > 1:
             assert g["view"](other)["plan_sealed"] is True
-        # The Round Table waits; the refusal doesn't say for how long.
+        # The Round Table waits at least the 30 minutes, at a random moment up to 10 more.
+        doc = _doc(g["code"])
+        wait = (datetime.fromisoformat(doc["round_table_ready_at"]) - datetime.fromisoformat(doc["plot_done_at"])).total_seconds() / 60
+        assert 30 <= wait <= 40
+        # The refusal is word for word what it was before the seal.
         r = g["adv"]()
-        assert r.status_code == 400 and "minute" not in r.json()["detail"]
+        assert r.status_code == 400 and r.json()["detail"] == refused_before
         assert g["adv"](force=True).status_code == 400  # forcing can't cut the Traitors' time
-        _age(g["code"], 31)
+        _age(g["code"], 41)
         st = g["state"]()
         assert st["plot_ready"] is True and st["round_table_at"] is None
         assert g["adv"]().json()["phase"] == "gather"
@@ -105,7 +114,10 @@ def test_lying_low_seals_the_plot_with_no_murder():
         g = _game(c, window=0)
         g["turn"](g["T"][0], target_id=g["ids"][g["F"][0]])
         v = g["turn"](g["T"][0]).json()
-        assert v["plan_sealed"] and v["target"] is None and not v["murder_confirmed"]
+        assert v["plan_sealed"] and v["target"] is None and not v["murder_confirmed"] and v["plan_ready_at"]
+        # Even with no time to strike set, it never lights up the moment a Traitor seals.
+        assert g["state"]()["plot_ready"] is False
+        _age(g["code"], 21)
         assert g["state"]()["plot_ready"] is True
         assert g["adv"]().json()["phase"] == "gather"
         for n in NAMES:
@@ -166,3 +178,23 @@ def test_api_games_without_the_flag_keep_everyone_taking_a_turn():
         g = _game(c, window=0, alone=False)
         assert g["turn"](g["F"][0]).status_code == 200
         assert g["state"]()["turns_done"] == 1
+
+
+def test_a_plain_pass_from_someone_with_nothing_to_do_changes_nothing():
+    """Phones on an older app still send the decoy turn: it quietly does nothing, for everyone alike."""
+    with TestClient(server.app) as c:
+        g = _game(c)
+        before = _public_plot_signals(g["state"]())
+        r = g["turn"](g["F"][0])
+        assert r.status_code == 200 and r.json()["role"] == "faithful"
+        assert g["turn"](g["F"][0], target_id=g["ids"][g["F"][1]]).status_code == 400
+        assert _public_plot_signals(g["state"]()) == before
+        assert not _doc(g["code"])["plot_done_at"]
+
+
+def test_moderator_never_sees_the_round_table_time_during_the_plot():
+    with TestClient(server.app) as c:
+        g = _game(c)
+        g["turn"](g["T"][0])  # lie low: sealed
+        mod = c.post(f"/api/games/{g['code']}/moderator", json={"passphrase": PASS}).json()
+        assert mod["round_table_at"] is None and mod["plot_ready"] is False

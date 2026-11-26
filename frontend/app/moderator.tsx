@@ -235,9 +235,11 @@ function Schedule({ code, auth, m }: { code: string; auth: ModAuth; m: Moderator
           {gap > 0 ? `${gap} minutes` : "No wait"}
         </Text>
         <Text style={styles.planText}>
-          {gap > 0
-            ? `Once everyone has taken their plot turn, the Round Table stays shut for ${gap} minutes.`
-            : "The Round Table can open as soon as everyone has taken their plot turn."}
+          {m.traitors_plot_alone
+            ? `Once the Traitors seal their plan, the Round Table stays shut for ${Math.max(gap, 10)}–${Math.max(gap, 10) + 10} minutes (a random moment, so nobody can work out when they sealed it).`
+            : gap > 0
+              ? `Once everyone has taken their plot turn, the Round Table stays shut for ${gap} minutes.`
+              : "The Round Table can open as soon as everyone has taken their plot turn."}
         </Text>
         {plotAt ? (
           <Text style={[styles.planText, { color: colors.onSurface, fontWeight: "700" }]} testID="moderator-gap-next">
