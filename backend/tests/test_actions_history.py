@@ -42,7 +42,7 @@ class TestActions:
         assert r.status_code == 200 and r.json()["actions"] == CUSTOM
 
     def test_custom_actions_used_in_game(self):
-        g, roles = setup_game_traitors(6, 1)
+        g, roles = setup_game_traitors(7, 2)  # 7 so a murder + a banishment leaves 2 v 3
         assert S.get(f"{G()}/actions").json()["is_default"] is True  # new game starts with defaults
         S.put(f"{G()}/actions", json={"actions": CUSTOM})
         ps = g["players"]
@@ -75,7 +75,7 @@ class TestActions:
         h = r["history"][-1]
         assert h["day"] == 1 and h["murder"]["success"] and "action" not in h["murder"]
         assert h["murder"]["victim_name"] == fa[0]["name"] and h["banish"] is None
-        # the Round Table: fa[0] is dead, so 5 alive vote to banish fa[1]
+        # the Round Table: fa[0] is dead, so 6 alive vote to banish fa[1]
         assert S.post(f"{G()}/advance").json()["phase"] == "roundtable"
         for p in S.get(f"{G()}").json()["players"]:
             if not p["alive"]:
@@ -85,7 +85,7 @@ class TestActions:
         r = S.post(f"{G()}/advance").json()
         assert r["phase"] == "banished"
         h = r["history"][-1]
-        assert h["banish"]["name"] == fa[1]["name"] and h["banish"]["tally"][0]["votes"] == 4
+        assert h["banish"]["name"] == fa[1]["name"] and h["banish"]["tally"][0]["votes"] == 5
         r = S.post(f"{G()}/advance").json()
         assert r["day"] == 2 and r["phase"] == "day"
         # a fresh day clears the victim and action until the next night
