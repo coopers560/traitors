@@ -1,6 +1,6 @@
 import Ionicons from "@react-native-vector-icons/ionicons";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { useRouter } from "expo-router";
+import { type Href, usePathname, useRouter } from "expo-router";
 import { useState } from "react";
 import { Pressable, Text, TextInput, View } from "react-native";
 import { KeyboardAwareScrollView } from "react-native-keyboard-controller";
@@ -12,17 +12,33 @@ import { useGameCode } from "@/src/game-code";
 import { Body, Button, ErrorText, Eyebrow, Title } from "@/src/components/ui";
 import { makeStyles, radius, spacing, useTheme } from "@/src/theme";
 
+// Cast so this file type-checks even before the generated typed-routes list includes it.
+const PREVIOUS_GAMES = "/previous-games" as Href;
+
 type Row = { key: number; name: string; pin: string };
 let nextKey = 0;
 const blank = (): Row => ({ key: nextKey++, name: "", pin: "" });
 
+/**
+ * New game setup. Also shown by the home screen (app/index.tsx) itself when this phone has no
+ * game and none is in progress — then there is nowhere to go back to, so no back button.
+ */
 export default function Setup() {
   const styles = useStyles();
   const { colors } = useTheme();
   const router = useRouter();
+  const pathname = usePathname();
   const insets = useSafeAreaInsets();
   const qc = useQueryClient();
-  const { setCode } = useGameCode();
+  // `gone`: the game this phone was in was ended on another phone.
+  const { setCode, gone } = useGameCode();
+  const canGoBack = router.canGoBack();
+  // Back to the dashboard — unless this is the home screen already (it then shows the game).
+  const goHome = () => {
+    if (pathname === "/") return;
+    if (router.canGoBack()) router.dismissTo("/");
+    else router.replace("/");
+  };
   const [rows, setRows] = useState<Row[]>(() => Array.from({ length: 10 }, blank));
   const [localError, setLocalError] = useState<string | null>(null);
 
@@ -41,7 +57,7 @@ export default function Setup() {
     onSuccess: async (s) => {
       if (s.exists) await setCode(s.code);
       qc.setQueryData(["game"], s);
-      router.dismissTo("/");
+      goHome();
     },
   });
 
@@ -49,7 +65,7 @@ export default function Setup() {
   const joinCurrent = async () => {
     const cur = await api.currentGame();
     if (cur.code) await setCode(cur.code);
-    router.dismissTo("/");
+    goHome();
   };
 
   const update = (key: number, patch: Partial<Row>) => setRows((r) => r.map((x) => (x.key === key ? { ...x, ...patch } : x)));
@@ -75,10 +91,12 @@ export default function Setup() {
   return (
     <View style={styles.root} testID="setup-screen">
       <View style={[styles.header, { paddingTop: insets.top + spacing.sm }]}>
-        <Pressable testID="setup-back-button" onPress={() => router.back()} style={styles.iconBtn} hitSlop={8}>
-          <Ionicons name="chevron-back" size={26} color={colors.onSurface} />
-        </Pressable>
-        <Text style={styles.headerText}>New game</Text>
+        {canGoBack ? (
+          <Pressable testID="setup-back-button" onPress={() => router.back()} style={styles.iconBtn} hitSlop={8}>
+            <Ionicons name="chevron-back" size={26} color={colors.onSurface} />
+          </Pressable>
+        ) : null}
+        <Text style={[styles.headerText, !canGoBack && { paddingLeft: spacing.sm }]}>New game</Text>
         <HelpButton from="setup" testID="setup-help-button" />
       </View>
       <KeyboardAwareScrollView
@@ -93,7 +111,20 @@ export default function Setup() {
             Pass the phone round: each person types their own name and a secret 4-digit PIN they will remember for 12
             days.
           </Body>
+          {/* The start screen is this one now, so its two links live here */}
+          <View style={styles.links}>
+            <Pressable testID="setup-how-to-play-link" accessibilityRole="link" onPress={() => router.push("/how-to-play")} style={styles.link} hitSlop={6}>
+              <Ionicons name="book-outline" size={18} color={colors.brand} />
+              <Text style={styles.linkText}>How to play</Text>
+            </Pressable>
+            <Pressable testID="setup-previous-games-link" accessibilityRole="link" onPress={() => router.push(PREVIOUS_GAMES)} style={styles.link} hitSlop={6}>
+              <Ionicons name="library-outline" size={18} color={colors.brand} />
+              <Text style={styles.linkText}>Previous games</Text>
+            </Pressable>
+          </View>
         </View>
+
+        {gone ? <ErrorText testID="setup-game-gone" message="Your game was ended on another phone." /> : null}
 
         <View style={styles.summary} testID="setup-summary">
           <Ionicons name="skull-outline" size={20} color={colors.brand} />
@@ -317,6 +348,9 @@ const useStyles = makeStyles((c) => ({
   check: { flexDirection: "row", alignItems: "center", gap: 4 },
   checkText: { color: c.muted, fontSize: 14, fontWeight: "600" },
   showRow: { flexDirection: "row", alignItems: "center", gap: spacing.xs, alignSelf: "flex-start", minHeight: 32 },
+  links: { flexDirection: "row", flexWrap: "wrap", columnGap: spacing.lg, rowGap: spacing.xs },
+  link: { flexDirection: "row", alignItems: "center", gap: spacing.xs, minHeight: 44 },
+  linkText: { color: c.brand, fontSize: 15, fontWeight: "700" },
   showText: { color: c.brand, fontSize: 14, fontWeight: "700" },
   warnRow: { flexDirection: "row", gap: spacing.sm, alignItems: "flex-start" },
   warnText: { color: c.onSurfaceSecondary, fontSize: 14, lineHeight: 20, flex: 1 },

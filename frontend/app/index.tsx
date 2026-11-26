@@ -1,6 +1,5 @@
 import Ionicons from "@react-native-vector-icons/ionicons";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Image } from "expo-image";
 import { type Href, useRouter } from "expo-router";
 import { useEffect, useState } from "react";
 import { ActivityIndicator, Modal, Pressable, RefreshControl, ScrollView, Text, TextInput, View } from "react-native";
@@ -8,23 +7,24 @@ import { KeyboardAvoidingView } from "react-native-keyboard-controller";
 import Animated, { FadeInDown } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-import { api, ApiError, DayResult, exitOf, GameState, passphraseProblem, PublicPlayer, roundLabel } from "@/src/api";
+import { api, ApiError, DayResult, exitOf, GameState, passphraseProblem, personalise, PublicPlayer, roundLabel } from "@/src/api";
 import { ConfirmSheet } from "@/src/components/confirm-sheet";
 import { HoldRole } from "@/src/components/hold-reveal";
 import { PinPad } from "@/src/components/pin-pad";
 import { QrCode } from "@/src/components/qr-code";
 import { VoteBoard } from "@/src/components/vote-board";
-import { Backdrop, Body, Button, ErrorText, Eyebrow, IMAGES, Title } from "@/src/components/ui";
+import { Body, Button, ErrorText, Eyebrow, Title } from "@/src/components/ui";
 import { useGameCode } from "@/src/game-code";
 import { useMe } from "@/src/me";
 import { inviteLink, shareInvite, shareToWhatsApp } from "@/src/utils/invite";
 import { fonts, makeStyles, radius, spacing, useTheme } from "@/src/theme";
 
+import Setup from "./setup";
+
 type ActiveGame = Extract<GameState, { exists: true }>;
 
-// The archive screens (app/previous-games.tsx, app/story.tsx). Cast so this file type-checks even
-// before the generated typed-routes list has caught up with those new files.
-const PREVIOUS_GAMES = "/previous-games" as Href;
+// The archive's story screen (app/story.tsx). Cast so this file type-checks even before the
+// generated typed-routes list has caught up with it.
 const storyHref = (code: string) => `/story?code=${encodeURIComponent(code)}` as Href;
 
 /** "Day 3 of 12 · Lunch": the current round's label with the length of the holiday. */
@@ -237,6 +237,17 @@ function Dashboard({ game, refreshing, onRefresh }: { game: ActiveGame; refreshi
   if (copy === PHASE_COPY.banished && game.session === "lunch") {
     copy = { ...copy, body: "Gather everyone together to see who the table has banished. Then the afternoon begins — the next Round Table is at about 8pm." };
   }
+  // The day's body fits the session (one table a day keeps the night-time wording) and the endgame.
+  if (copy === PHASE_COPY.day) {
+    if (game.endgame) {
+      copy = { ...copy, body: "Only a few of you remain, so there are no more murders — the final vote decides it. Mingle, watch everyone closely, then gather for the final vote." };
+    } else if (game.session === "lunch") {
+      copy = { ...copy, body: "Mingle, relax and watch everyone closely. Before lunch the Traitors choose their victim and the murder in plain sight — then you gather at the lunch Round Table." };
+    } else if (game.session === "evening") {
+      copy = { ...copy, body: "Mingle, relax and watch everyone closely. This afternoon the Traitors choose their victim and the murder in plain sight — then you gather at the Round Table at about 8pm." };
+    }
+  }
+  const startLabel = game.tables_per_day === 2 ? "Begin Day 1 · Lunch" : "Begin Day 1";
   const plotLabel = game.endgame ? "Gather for the final vote" : game.session === "evening" ? "The Traitors move" : "Night falls — the Traitors move";
   // Murders can't come in quick succession: the next night opens at this local time. (The server
   // only sends it while it's still in the future; the 4-second refresh clears it when it passes.)
@@ -354,7 +365,7 @@ function Dashboard({ game, refreshing, onRefresh }: { game: ActiveGame; refreshi
             ) : null}
             <ErrorText testID="advance-error" message={advance.error?.message} />
             {phase === "setup" ? (
-              <Button testID="advance-start-day-button" label="Begin Day 1" icon="sunny" disabled={!allDone} loading={advance.isPending} onPress={() => setConfirmGo({ label: "Begin Day 1", run: () => advance.mutate() })} />
+              <Button testID="advance-start-day-button" label={startLabel} icon="sunny" disabled={!allDone} loading={advance.isPending} onPress={() => setConfirmGo({ label: startLabel, run: () => advance.mutate() })} />
             ) : phase === "day" && plotAt ? (
               <>
                 <Button testID="advance-round-table-button" label={`${game.session === "evening" ? "The Traitors move" : "Night falls"} at ${plotAt}`} icon="time-outline" disabled onPress={() => {}} />
@@ -528,16 +539,16 @@ function PlayerRow({
 function MurderMethods({ game }: { game: ActiveGame }) {
   const styles = useStyles();
   // Methods are only sent by the server once the game has ended.
-  const murders = game.history.filter((h) => h.murder?.success && h.murder?.action);
+  const murders = game.history.flatMap((h) => (h.murder?.success && h.murder.action ? [{ h, murder: h.murder }] : []));
   if (!murders.length) return null;
   return (
     <View style={styles.methodsCard} testID="murder-methods">
       <Text style={styles.methodsTitle}>How the murders were done</Text>
-      {murders.map((h) => (
+      {murders.map(({ h, murder }) => (
         <View key={h.day} style={styles.methodRow}>
           <Text style={styles.methodDay}>{roundLabel(h)}</Text>
           <Text style={styles.methodText}>
-            <Text style={{ fontWeight: "700" }}>{h.murder.victim_name}</Text> — {h.murder.action}
+            <Text style={{ fontWeight: "700" }}>{murder.victim_name}</Text> — {personalise(murder.action, murder.victim_name)}
           </Text>
         </View>
       ))}
@@ -609,7 +620,7 @@ function InviteSheet({ visible, onClose }: { visible: boolean; onClose: () => vo
             <QrCode value={inviteLink()} size={224} />
           </View>
         ) : null}
-        <Body style={{ textAlign: "center" }}>Point a phone camera at the QR code to open the app, then tap “Join the game”. No codes needed.</Body>
+        <Body style={{ textAlign: "center" }}>Point a phone camera at the QR code to open the app — it goes straight into this game. No codes needed.</Body>
         <Button testID="invite-whatsapp-button" label="Share on WhatsApp" icon="logo-whatsapp" onPress={() => shareToWhatsApp()} />
         <Button testID="invite-share-button" label="Share another way" variant="secondary" icon="share-social-outline" onPress={() => shareInvite()} />
         <Button testID="invite-close-button" label="Done" variant="ghost" onPress={onClose} />
@@ -620,17 +631,21 @@ function InviteSheet({ visible, onClose }: { visible: boolean; onClose: () => vo
 
 /**
  * The game's host nominates a ClaudAI host by giving the game its ClaudAI passphrase: first the
- * host's own PIN, then the new passphrase, typed twice. Only possible while the game has none.
- * The passphrase can never be recovered — there is no master key.
+ * host's own PIN, then the phone goes to the ClaudAI host, who chooses the passphrase (typed
+ * twice) without the host seeing it. Only possible while the game has none. The passphrase can
+ * never be recovered — there is no master key.
  */
 function NominateSheet({ hostId, hostName, onClose }: { hostId: string; hostName: string; onClose: () => void }) {
   const styles = useStyles();
+  const { colors } = useTheme();
   const insets = useSafeAreaInsets();
   const qc = useQueryClient();
   const [hostPin, setHostPin] = useState("");
   const [pass, setPass] = useState("");
   const [pass2, setPass2] = useState("");
-  const [step, setStep] = useState<"host" | "claudai">("host");
+  // host PIN → hand the phone over → the ClaudAI host's passphrase. The host's PIN is always
+  // followed by the hand-over, so the host never lands on the passphrase fields.
+  const [step, setStep] = useState<"host" | "handoff" | "claudai">("host");
   const ok = !passphraseProblem(pass) && pass === pass2;
   const save = useMutation({
     mutationFn: () => api.nominateClaudai(hostId, hostPin, pass),
@@ -639,14 +654,29 @@ function NominateSheet({ hostId, hostName, onClose }: { hostId: string; hostName
       onClose();
     },
     onError: (e) => {
+      if (!(e instanceof ApiError)) return;
+      // Someone got there first: nothing to do here — close and show the game as it is now.
+      if (e.status === 400 && /already has a ClaudAI host/i.test(e.message)) {
+        void qc.invalidateQueries({ queryKey: ["game"] });
+        onClose();
+        return;
+      }
       // Wrong host PIN (or too many tries): back to the host's PIN, keeping the passphrase.
-      // Anything else (e.g. the passphrase isn't strong enough) is fixed on this step.
-      if (e instanceof ApiError && [401, 403, 404, 429].includes(e.status)) {
+      // Anything else (e.g. the passphrase isn't strong enough) stays on this step to be fixed.
+      if ([401, 404, 429].includes(e.status)) {
         setHostPin("");
         setStep("host");
       }
     },
   });
+  const body =
+    step === "host"
+      ? pass
+        ? `Hand the phone back to ${hostName} to enter the host PIN again — the passphrase that was typed is kept.`
+        : `ClaudAI sees every role and move. Only ${hostName} (the host) can set it up — enter ${hostName}'s PIN.`
+      : step === "handoff"
+        ? "Hand the phone to your ClaudAI host — they choose the passphrase, unseen."
+        : "Choose the ClaudAI passphrase — only you should know it. Type it twice: it can never be recovered or reset, so write it down somewhere safe.";
   return (
     <Modal visible transparent animationType="fade" onRequestClose={onClose}>
       <KeyboardAvoidingView behavior="padding" style={{ flex: 1 }}>
@@ -658,11 +688,7 @@ function NominateSheet({ hostId, hostName, onClose }: { hostId: string; hostName
           testID="nominate-sheet"
         >
           <Title style={{ fontSize: 28, lineHeight: 34 }}>Nominate a ClaudAI host</Title>
-          <Body>
-            {step === "host"
-              ? `ClaudAI sees every role and move. Only ${hostName} (the host) can set it up — enter ${hostName}'s PIN.`
-              : "Now choose the ClaudAI passphrase and give it only to the ClaudAI host. Type it twice: it can never be recovered or reset, so write it down somewhere safe."}
-          </Body>
+          <Body testID="nominate-step-text">{body}</Body>
           <ErrorText testID="nominate-error" message={save.error?.message} />
           {step === "host" ? (
             <PinPad
@@ -670,9 +696,15 @@ function NominateSheet({ hostId, hostName, onClose }: { hostId: string; hostName
               onChange={(v) => {
                 save.reset();
                 setHostPin(v);
-                if (v.length === 4) setStep("claudai");
+                if (v.length === 4) setStep("handoff");
               }}
             />
+          ) : step === "handoff" ? (
+            <View style={styles.handoff} testID="nominate-handoff">
+              <Ionicons name="phone-portrait-outline" size={36} color={colors.brand} style={{ alignSelf: "center" }} />
+              <Button testID="nominate-handoff-continue" label="I'm the ClaudAI host — continue" icon="shield-half" onPress={() => setStep("claudai")} />
+              <Button testID="nominate-back-button" label="Re-enter the host PIN" variant="ghost" icon="keypad-outline" onPress={() => { save.reset(); setHostPin(""); setStep("host"); }} />
+            </View>
           ) : (
             <>
               <PassphraseFields
@@ -823,6 +855,7 @@ const useStyles = makeStyles((c) => ({
     borderColor: c.brandSecondary,
   },
   endSheetContent: { padding: spacing.lg, gap: spacing.md },
+  handoff: { gap: spacing.sm, alignItems: "stretch" },
   passInput: {
     height: 56,
     borderRadius: radius.md,
@@ -867,8 +900,7 @@ const useStyles = makeStyles((c) => ({
     borderTopWidth: 1,
     borderColor: c.brandSecondary,
   },
-  welcome: { flex: 1, paddingHorizontal: spacing.lg, justifyContent: "space-between" },
-  heroLogo: { width: "100%", aspectRatio: 592 / 400, maxHeight: 240, alignSelf: "center" },
+  joiningText: { color: c.onSurfaceSecondary, fontSize: 17, fontWeight: "600" },
   header: {
     flexDirection: "row",
     alignItems: "center",
@@ -903,7 +935,6 @@ const useStyles = makeStyles((c) => ({
     borderColor: c.brandTertiary,
   },
   phaseTitle: { fontSize: 36, lineHeight: 40, color: c.brand },
-  liveNote: { color: c.onSurfaceSecondary, fontSize: 15, textAlign: "center", marginTop: -spacing.xs },
   helpLink: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: spacing.sm, minHeight: 44 },
   helpLinkText: { color: c.brand, fontSize: 15, fontWeight: "700" },
   turnRow: { flexDirection: "row", alignItems: "center", gap: spacing.sm },
