@@ -17,7 +17,7 @@ const STEPS: { icon: React.ComponentProps<typeof Ionicons>["name"]; title: strin
   {
     icon: "moon",
     title: "2. The Traitors plot (night)",
-    body: "Each day opens with the Traitors. On the phone they secretly pick their victim and a method; everyone else just passes the phone on, so every turn looks the same. Instead of murdering, the Traitors may recruit a Faithful — but only to replace a banished Traitor, or when just one Traitor is left.",
+    body: "Each day opens with the Traitors. On the phone they secretly pick their victim and one of five methods, chatting privately as they decide; everyone else picks who they suspect on an identical-looking screen, so every turn looks the same. Instead of murdering, the Traitors may recruit a Faithful — but only to replace a banished Traitor, or when just one Traitor is left.",
   },
   {
     icon: "sunny",
@@ -37,7 +37,7 @@ const STEPS: { icon: React.ComponentProps<typeof Ionicons>["name"]; title: strin
   {
     icon: "phone-portrait-outline",
     title: "Playing on several phones",
-    body: "Open the app on as many phones as you like, for example one per couple. There are no codes: once a game has started, every other phone just opens the app and taps \"Join the game\". Every phone then shows the same game and updates by itself. Anyone can take their turn on any phone: tap your own name and enter your PIN, then hide the screen before handing it back. There is only ever one game at a time. Traitors also get a secret group chat on their private screen. You need an internet connection.",
+    body: "Open the app on as many phones as you like, for example one per couple. There are no codes: once a game has started, every other phone just opens the app and taps \"Join the game\". Every phone then shows the same game and updates by itself. Anyone can take their turn on any phone: tap your own name and enter your PIN, then hide the screen before handing it back. There is only ever one game at a time. At night, while they decide the murder, the Traitors can message each other in a secret chat on the night screen. You need an internet connection.",
   },
   {
     icon: "eye-off",

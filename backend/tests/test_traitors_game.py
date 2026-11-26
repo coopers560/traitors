@@ -17,6 +17,10 @@ STATE = {}
 CUR = {"code": None}
 
 
+MOD_PIN = "9999"  # the ClaudAI PIN every test game is set up with (no player uses it)
+MOD = {"pin": MOD_PIN}
+
+
 def G(code=None):
     """Base URL of the current (or given) game."""
     return f"{API}/games/{code or CUR['code']}"
@@ -56,7 +60,7 @@ def del_game(code=None):
 def setup_game(n=10):
     if CUR["code"]:
         del_game()  # clean up previous test game
-    r = S.post(f"{API}/games", json={"players": mk_players(n)})
+    r = S.post(f"{API}/games", json={"players": mk_players(n), "moderator_pin": MOD_PIN})
     assert r.status_code == 200, r.text
     g = r.json()
     CUR["code"] = g["code"]
@@ -113,7 +117,7 @@ def do_night(roles, murder_target=None):
             r = S.post(f"{G()}/turn", json={"player_id": p["id"], "pin": pin_of(p["name"]), "target_id": murder_target})
             assert r.status_code == 200, r.text
             choices = r.json()["action_choices"]
-            assert len(choices) == 3
+            assert len(choices) == 5
             r2 = S.post(f"{G()}/turn", json={"player_id": p["id"], "pin": pin_of(p["name"]), "action": choices[0]})
             assert r2.status_code == 200 and r2.json()["murder_confirmed"] is True, r2.text
             committed = True
@@ -229,7 +233,7 @@ class TestFlow:
         r = S.post(f"{G()}/turn", json={"player_id": t0["id"], "pin": pin_of(t0["name"]), "target_id": victim["id"]})
         assert r.status_code == 200 and r.json()["target"]["id"] == victim["id"]
         choices = r.json()["action_choices"]
-        assert len(choices) == 3 and r.json()["action"] is None and r.json()["murder_confirmed"] is False
+        assert len(choices) == 5 and r.json()["action"] is None and r.json()["murder_confirmed"] is False
         # an action that was not offered is rejected
         assert S.post(f"{G()}/turn", json={"player_id": t0["id"], "pin": pin_of(t0["name"]), "action": "not a real option"}).status_code == 400
         # step 2: confirm one of the three
@@ -357,7 +361,7 @@ class TestMurderChoice:
         # picking a victim offers three distinct actions and commits nothing yet
         r = S.post(f"{G()}/turn", json={"player_id": tr["id"], "pin": pin_of(tr["name"]), "target_id": fa[2]["id"]})
         ch = r.json()["action_choices"]
-        assert len(ch) == 3 and len(set(ch)) == 3 and r.json()["action"] is None and r.json()["murder_confirmed"] is False
+        assert len(ch) == 5 and len(set(ch)) == 5 and r.json()["action"] is None and r.json()["murder_confirmed"] is False
         # the traitor can still lie low after seeing the choices -> nothing sealed, turn taken
         assert S.post(f"{G()}/turn", json={"player_id": tr["id"], "pin": pin_of(tr["name"])}).status_code == 200
         for p in ps:
@@ -497,7 +501,7 @@ class TestRecruitOnlyToReplace:
         do_gather(roles)
         assert S.post(f"{G()}/advance").json()["history"][-1]["recruited"] is True
         # the replacement is used up and there are two Traitors again: no more recruiting
-        mod = S.post(f"{G()}/moderator", json={"passphrase": "!Uganda02!"}).json()
+        mod = S.post(f"{G()}/moderator", json=MOD).json()
         assert mod["counts"]["traitors_alive"] == 2
         S.post(f"{G()}/advance")  # -> roundtable
         cast_votes({p["id"]: (fa[1]["id"] if p["id"] != fa[1]["id"] else fa[2]["id"]) for p in S.get(G()).json()["players"] if p["alive"]})
@@ -618,7 +622,7 @@ class TestModeratorLog:
         pub = S.post(f"{G()}/advance").json()
         # never in the player-facing state
         assert "event_log" not in pub and "event_log" not in S.get(G()).json()
-        mod = S.post(f"{G()}/moderator", json={"passphrase": "!Uganda02!"}).json()
+        mod = S.post(f"{G()}/moderator", json=MOD).json()
         texts = [e["text"] for e in mod["event_log"]]
         kinds = {e["kind"] for e in mod["event_log"]}
         assert {"setup", "role", "stage", "victim", "murder", "pass", "plan", "checkin", "confirm", "reveal", "vote", "banish"} <= kinds
@@ -637,7 +641,7 @@ class TestModeratorLog:
 
 class TestModeratorNow:
     def _mod(self):
-        return S.post(f"{G()}/moderator", json={"passphrase": "!Uganda02!"}).json()
+        return S.post(f"{G()}/moderator", json=MOD).json()
 
     def test_now_says_who_we_are_waiting_for_and_what_is_next(self):
         g, roles = setup_game_traitors(6, 2)
@@ -722,7 +726,7 @@ class TestTieRevote:
         assert h["tie_vote"]["tie"] and len(h["tie_vote"]["votes"]) == 8
         st = S.post(f"{G()}/advance").json()
         assert st["phase"] == "day" and st["day"] == 2
-        mod = S.post(f"{G()}/moderator", json={"passphrase": "!Uganda02!"}).json()
+        mod = S.post(f"{G()}/moderator", json=MOD).json()
         assert [v["round"] for v in mod["vote_log"]] == [1, 2]
         assert mod["revote_available"] is False
 
@@ -740,11 +744,11 @@ class TestTieRevote:
         assert st["revote"] is None and all(p["alive"] for p in st["players"])
         assert S.post(f"{G()}/advance").json()["phase"] == "day"  # no third round
 
-    def test_moderator_revote_needs_passphrase_and_a_tie(self):
+    def test_moderator_revote_needs_the_claudai_pin_and_a_tie(self):
         ps, roles, a, b, others = self._tie()
-        assert S.post(f"{G()}/moderator/revote", json={"passphrase": "nope"}).status_code == 403
+        assert S.post(f"{G()}/moderator/revote", json={"pin": "0000"}).status_code == 403
         S.post(f"{G()}/advance")  # tie reveal: the revote is already pending
-        r = S.post(f"{G()}/moderator/revote", json={"passphrase": "!Uganda02!"})
+        r = S.post(f"{G()}/moderator/revote", json=MOD)
         assert r.status_code == 400 and "already pending" in r.json()["detail"]
 
 
@@ -793,9 +797,11 @@ class TestTraitorChat:
         fa = next(p for p in ps if roles[p["id"]] == "faithful")
         send = lambda p, text: S.post(f"{G()}/chat/send", json={"player_id": p["id"], "pin": pin_of(p["name"]), "text": text})
         read = lambda p: S.post(f"{G()}/chat", json={"player_id": p["id"], "pin": pin_of(p["name"])})
-        # not during setup
+        # not during setup, nor in the day: the chat is for planning at night
         assert send(t1, "too early").status_code == 403
         finish_setup(ps)
+        assert send(t1, "daytime").status_code == 400
+        assert S.post(f"{G()}/advance").json()["phase"] == "night"
         assert send(t1, "  Who first?  ").status_code == 200
         assert send(t2, "Not me").status_code == 200
         msgs = read(t2).json()
@@ -808,7 +814,7 @@ class TestTraitorChat:
         assert send(t1, "").status_code == 400 and send(t1, "x" * 501).status_code == 400
         # never in the public state; the moderator sees it
         assert "traitor_chat" not in S.get(G()).json()
-        mod = S.post(f"{G()}/moderator", json={"passphrase": "!Uganda02!"}).json()
+        mod = S.post(f"{G()}/moderator", json=MOD).json()
         assert len(mod["traitor_chat"]) == 2
 
 
@@ -823,18 +829,18 @@ class TestClaudAIPin:
         r = S.post(f"{API}/games", json={"players": mk_players(5), "moderator_pin": "7777"})
         assert r.status_code == 200
         CUR["code"] = r.json()["code"]
-        assert "moderator_pin_hash" not in r.json()
-        # the PIN opens this game's ClaudAI; the passphrase still works; nothing else does
+        assert r.json()["claudai"] is True and "moderator_pin_hash" not in r.json()
         mod = S.post(f"{G()}/moderator", json={"pin": "7777"}).json()
         assert mod["code"] == CUR["code"] and mod["has_moderator_pin"] is True and len(mod["players"]) == 5
-        assert S.post(f"{G()}/moderator", json={"passphrase": "!Uganda02!"}).status_code == 200
         assert S.post(f"{G()}/moderator", json={"pin": "7778"}).status_code == 403
         assert S.post(f"{G()}/moderator", json={}).status_code == 403
-        # a game PIN can't list every game or unlock the master view
-        assert S.post(f"{API}/moderator/games", json={"pin": "7777"}).status_code == 403
+        # there is no master key any more
+        assert S.post(f"{G()}/moderator", json={"passphrase": "!Uganda02!"}).status_code == 403
+        assert S.post(f"{API}/moderator/games", json={"passphrase": "!Uganda02!"}).status_code in (404, 405)
+        assert S.post(f"{API}/moderator/unlock", json={"passphrase": "!Uganda02!"}).status_code in (404, 405)
         # PIN login finds the game in progress
         assert S.post(f"{API}/moderator/pin", json={"pin": "7777"}).json() == {"code": CUR["code"]}
-        # change it (needs the current PIN or the passphrase)
+        # change it (needs the current PIN)
         assert S.post(f"{G()}/moderator/pin", json={"pin": "0000", "new_pin": "1212"}).status_code == 403
         assert S.post(f"{G()}/moderator/pin", json={"pin": "7777", "new_pin": "1212"}).status_code == 200
         assert S.post(f"{G()}/moderator", json={"pin": "1212"}).status_code == 200
@@ -850,11 +856,22 @@ class TestClaudAIPin:
         r = S.post(f"{G()}/moderator", json={"pin": "4321"})
         assert r.status_code == 429  # even the right PIN waits
 
-    def test_game_without_pin_needs_the_passphrase(self):
-        g, roles = setup_game(5)
-        assert S.post(f"{G()}/moderator", json={"pin": "1234"}).status_code == 403
-        mod = S.post(f"{G()}/moderator", json={"passphrase": "!Uganda02!"}).json()
-        assert mod["has_moderator_pin"] is False
-        # the passphrase can give an existing game a ClaudAI PIN
-        assert S.post(f"{G()}/moderator/pin", json={"passphrase": "!Uganda02!", "new_pin": "5656"}).status_code == 200
+    def test_host_nominates_a_claudai_host_for_a_game_without_one(self):
+        if CUR["code"]:
+            del_game()
+        r = S.post(f"{API}/games", json={"players": mk_players(5)})
+        g = r.json()
+        CUR["code"] = g["code"]
+        assert g["claudai"] is False
+        host = next(p for p in g["players"] if p["id"] == g["host_id"])
+        other = next(p for p in g["players"] if p["id"] != g["host_id"])
+        assert S.post(f"{API}/moderator/pin", json={"pin": "5656"}).status_code == 403  # nobody can open it yet
+        nominate = lambda p, pin, new: S.post(f"{G()}/claudai", json={"player_id": p["id"], "pin": pin, "new_pin": new})
+        assert nominate(other, pin_of(other["name"]), "5656").status_code == 403  # only the host
+        assert nominate(host, "0000", "5656").status_code == 401  # with the host's own PIN
+        assert nominate(host, pin_of(host["name"]), pin_of(other["name"])).status_code == 400  # not a player's PIN
+        r = nominate(host, pin_of(host["name"]), "5656")
+        assert r.status_code == 200 and r.json()["claudai"] is True
         assert S.post(f"{G()}/moderator", json={"pin": "5656"}).status_code == 200
+        # once set, the host can't overwrite it (only ClaudAI can change its PIN)
+        assert nominate(host, pin_of(host["name"]), "5757").status_code == 400

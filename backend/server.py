@@ -41,10 +41,8 @@ ENDGAME_AT = 4  # at this many (or fewer) remain, each round is a "banish again 
 CODE_CHARS = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"  # no 0/O, 1/I/L mix-ups
 CODE_LEN = 5
 
-# The moderator ("Claudia") god-view passphrase. Kept out of the app bundle and
-# checked only here on the server, so players can't see it in the frontend JS.
-# Override it in deployment by setting MODERATOR_PASSPHRASE; this is the default.
-MODERATOR_PASSPHRASE = os.environ.get("MODERATOR_PASSPHRASE", "!Uganda02!")
+# ClaudAI (the moderator god-view) has no master key: each game nominates its own host,
+# who opens that game's ClaudAI with a 4-digit ClaudAI PIN.
 
 # Simple, family friendly "murders in plain sight" — subtle holiday small talk
 # and gestures that look completely natural around a resort or by the pool.
@@ -131,7 +129,7 @@ class Game(BaseModel):
     revote_ids: List[str] = []
     target_id: Optional[str] = None
     action: Optional[str] = None
-    action_choices: List[str] = []  # the three options a Traitor picks tonight's action from
+    action_choices: List[str] = []  # the five options a Traitor picks tonight's action from
     recruit_id: Optional[str] = None  # a Faithful the Traitors recruit tonight (instead of murdering)
     # Recruits the Traitors have earned: +1 each time a Traitor is banished, -1 when they use it.
     recruit_credits: int = 0
@@ -176,7 +174,7 @@ class Game(BaseModel):
         self.used_actions.append(a)
         return a
 
-    def pick_actions(self, actions: List[str], n: int = 3) -> List[str]:
+    def pick_actions(self, actions: List[str], n: int = 5) -> List[str]:
         """Offer n fresh action options (not yet used) for the Traitor to choose from."""
         pool = [a for a in actions if a not in self.used_actions]
         if len(pool) < n:
@@ -209,9 +207,7 @@ class ChatIn(AuthIn):
 
 
 class ModeratorIn(BaseModel):
-    # Either the master passphrase (every game) or this game's ClaudAI PIN (that game only).
-    passphrase: Optional[str] = None
-    pin: Optional[str] = None
+    pin: Optional[str] = None  # this game's ClaudAI PIN
 
 
 class ModeratorPinIn(ModeratorIn):
@@ -223,7 +219,7 @@ class TurnIn(AuthIn):
     end_vote: Optional[bool] = None  # endgame: vote to end the game instead of banishing
     murder_done: Optional[bool] = None
     target_id: Optional[str] = None
-    action: Optional[str] = None  # the chosen murder action (one of the three offered)
+    action: Optional[str] = None  # the chosen murder action (one of the five offered)
     recruit_id: Optional[str] = None  # a Faithful to recruit into the Traitors
 
 
@@ -301,6 +297,7 @@ def public_state(g: Game) -> dict:
             for p in g.players
         ],
         "revote": _revote_info(g),
+        "claudai": bool(g.moderator_pin_hash),  # whether this game has a ClaudAI host (never the PIN)
         "turns_needed": len(g.players) if g.phase == "setup" else len(g.alive()),
         "turns_done": len(g.turns_done),
         # never reveal which secret action was used (strip from older records too);
@@ -339,13 +336,6 @@ def _public_history(h: dict, reveal_actions: bool = False) -> dict:
     return {**h, "murder": pub}
 
 
-def check_moderator(passphrase: Optional[str]):
-    """Gate the god-view. Constant-time compare so the passphrase can't be timed out."""
-    import hmac
-    if not passphrase or not hmac.compare_digest(passphrase, MODERATOR_PASSPHRASE):
-        raise HTTPException(403, "Wrong moderator passphrase")
-
-
 # Wrong ClaudAI PINs per game, to stop anyone working through all 10,000 PINs.
 PIN_FAILS: Dict[str, List[float]] = {}
 PIN_FAIL_LIMIT = 8
@@ -370,11 +360,8 @@ def check_moderator_pin(g: "Game", pin: Optional[str]) -> None:
 
 
 def check_game_moderator(g: "Game", data: "ModeratorIn") -> None:
-    """ClaudAI for one game: the master passphrase, or that game's own ClaudAI PIN."""
-    if data.passphrase:
-        check_moderator(data.passphrase)
-    else:
-        check_moderator_pin(g, data.pin)
+    """ClaudAI for one game: only that game's own ClaudAI PIN opens it."""
+    check_moderator_pin(g, data.pin)
 
 
 STAGE_LABEL = {
@@ -627,6 +614,7 @@ def in_endgame(g: Game) -> bool:
 
 
 RECRUIT_MIN_PLAYERS = 6
+ACTION_CHOICES = 5  # secret murder methods a Traitor chooses from each night
 
 
 def recruit_reason(g: Game) -> Optional[str]:
@@ -757,43 +745,6 @@ async def reset_actions(code: str):
     return actions_out(g)
 
 
-@api_router.post("/moderator/unlock")
-async def moderator_unlock(data: ModeratorIn):
-    """Check the moderator passphrase alone, so the view can gate before a code is entered."""
-    check_moderator(data.passphrase)
-    return {"ok": True}
-
-
-@api_router.post("/moderator/games")
-async def moderator_games(data: ModeratorIn):
-    """List games for the moderator, most recently played first (live games on top)."""
-    check_moderator(data.passphrase)
-    docs = await db.games.find(
-        {"code": {"$exists": True}},
-        {"_id": 0, "code": 1, "phase": 1, "day": 1, "players": 1, "winner": 1, "updated_at": 1, "created_at": 1},
-    ).to_list(500)
-
-    def sort_key(d):
-        return d.get("updated_at") or d.get("created_at") or ""
-
-    out = []
-    for d in sorted(docs, key=sort_key, reverse=True):
-        players = d.get("players", [])
-        out.append({
-            "code": d.get("code"),
-            "phase": d.get("phase"),
-            "stage": STAGE_LABEL.get(d.get("phase"), d.get("phase")),
-            "day": d.get("day"),
-            "total_days": TOTAL_DAYS,
-            "players": len(players),
-            "alive": sum(1 for p in players if p.get("lives", 0) > 0),
-            "winner": d.get("winner"),
-            "live": d.get("phase") != "ended",
-            "updated_at": d.get("updated_at") or d.get("created_at"),
-        })
-    return {"games": out}
-
-
 @api_router.post("/games/{code}/moderator")
 async def moderator_view(code: str, data: ModeratorIn):
     """The god-view for one game. Passphrase- or ClaudAI-PIN-gated; reveals every secret."""
@@ -811,15 +762,40 @@ async def moderator_pin_login(data: ModeratorIn):
         raise HTTPException(404, "There is no game in progress")
     g = await require_game(d["code"])
     if not g.moderator_pin_hash:
-        raise HTTPException(403, "This game has no ClaudAI PIN — use the passphrase")
+        raise HTTPException(403, "This game has no ClaudAI host yet — the game's host can nominate one from the ⋯ menu")
     check_moderator_pin(g, data.pin)
     return {"code": g.code}
+
+
+class NominateIn(AuthIn):
+    new_pin: str
+
+
+@api_router.post("/games/{code}/claudai")
+@locked
+async def nominate_claudai(code: str, data: NominateIn):
+    """The game's host nominates a ClaudAI host by giving the game its ClaudAI PIN — for a
+    game set up without one. Once set, only the ClaudAI PIN itself can change it."""
+    g = await require_game(code)
+    p = auth(g, data)
+    if p.id != g.host_id:
+        raise HTTPException(403, "Only the game's host can nominate a ClaudAI host")
+    if g.moderator_pin_hash:
+        raise HTTPException(400, "This game already has a ClaudAI host — change the PIN from ClaudAI")
+    if not (data.new_pin.isdigit() and len(data.new_pin) == 4):
+        raise HTTPException(400, "The ClaudAI PIN must be 4 digits")
+    if any(pl.pin_hash == hash_pin(data.new_pin) for pl in g.players):
+        raise HTTPException(400, "Choose a ClaudAI PIN that no player is using")
+    g.moderator_pin_hash = hash_pin(data.new_pin)
+    log(g, "stage", f"{p.name} (host) nominated a ClaudAI host")
+    await save(g)
+    return public_state(g)
 
 
 @api_router.post("/games/{code}/moderator/pin")
 @locked
 async def moderator_set_pin(code: str, data: ModeratorPinIn):
-    """Set or change this game's ClaudAI PIN (needs the passphrase or the current PIN)."""
+    """Change this game's ClaudAI PIN (needs the current ClaudAI PIN)."""
     g = await require_game(code)
     check_game_moderator(g, data)
     if not (data.new_pin.isdigit() and len(data.new_pin) == 4):
@@ -827,7 +803,7 @@ async def moderator_set_pin(code: str, data: ModeratorPinIn):
     if any(p.pin_hash == hash_pin(data.new_pin) for p in g.players):
         raise HTTPException(400, "Choose a ClaudAI PIN that no player is using")
     g.moderator_pin_hash = hash_pin(data.new_pin)
-    log(g, "stage", "The ClaudAI PIN was set" if not data.pin else "The ClaudAI PIN was changed")
+    log(g, "stage", "The ClaudAI PIN was changed")
     await save(g)
     return moderator_state(g)
 
@@ -919,6 +895,8 @@ async def send_chat(code: str, data: ChatIn):
     p = auth(g, data)
     if not chat_allowed(g, p):
         raise HTTPException(403, "Only the Traitors can send messages here")
+    if g.phase != "night":
+        raise HTTPException(400, "The Traitors' chat opens at night, while you plan")
     text = (data.text or "").strip()
     if not text:
         raise HTTPException(400, "Write a message first")
@@ -1117,7 +1095,7 @@ async def take_turn(code: str, data: TurnIn):
                 g.end_votes.remove(p.id)
     elif g.phase == "night":
         # The murder is chosen BEFORE the Round Table, in two steps. A Traitor names
-        # the victim and is offered three secret actions (step 1, not yet committed),
+        # the victim and is offered five secret actions (step 1, not yet committed),
         # then picks one to confirm the murder (step 2). Everyone else — and a
         # Traitor lying low — just passes, so watching who taps never reveals them.
         if is_traitor and p.lives > 0 and data.recruit_id:
@@ -1135,14 +1113,14 @@ async def take_turn(code: str, data: TurnIn):
             log(g, "recruit", f"{p.name} (Traitor) {'CHANGED the plan (was: ' + before + ') — now ' if before else 'chose to '}recruit {r.name} instead of murdering",
                 f"{p.name} took their night turn" if first_turn else None)
         elif is_traitor and p.lives > 0 and data.target_id:
-            # Step 1: choose the victim, get three action options (no turn taken yet)
+            # Step 1: choose the victim, get five action options (no turn taken yet)
             valid_victim(g, data.target_id)
             before = _plan_text(g)
             g.recruit_id = None
             g.target_id = data.target_id
             g.action = None
             g.murder_confirmed = False
-            g.action_choices = g.pick_actions(g.actions, 3)
+            g.action_choices = g.pick_actions(g.actions, ACTION_CHOICES)
             log(g, "victim", f"{p.name} (Traitor) {'CHANGED the plan (was: ' + before + ') — now picking ' if before else 'picked '}{name_of(g, g.target_id)} as the victim — offered: "
                 + " · ".join(f"“{a}”" for a in g.action_choices), None)
             await save(g)

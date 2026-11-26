@@ -69,6 +69,8 @@ export type GameState =
       turns_done: number;
       history: DayResult[];
       revote?: Revote | null;
+      /** Whether this game has a ClaudAI host (a ClaudAI PIN is set). */
+      claudai?: boolean;
     };
 
 export type PrivateView = {
@@ -258,8 +260,9 @@ export const api = {
   }) => request<PrivateView>(`/games/${currentCode}/turn`, "POST", body),
   advance: (expected: Phase, day: number, force?: boolean) =>
     request<GameState>(`/games/${currentCode}/advance?expected=${expected}&expected_day=${day}${force ? "&force=true" : ""}`, "POST"),
-  moderatorUnlock: (passphrase: string) => request<{ ok: boolean }>("/moderator/unlock", "POST", { passphrase }),
-  moderatorGames: (passphrase: string) => request<{ games: ModeratorGame[] }>("/moderator/games", "POST", { passphrase }),
+  /** The game's host nominates a ClaudAI host by giving the game its first ClaudAI PIN. */
+  nominateClaudai: (player_id: string, pin: string, new_pin: string) =>
+    request<GameState>(`/games/${currentCode}/claudai`, "POST", { player_id, pin, new_pin }),
   moderatorRevote: (code: string, auth: ModAuth) =>
     request<ModeratorView>(`/games/${encodeURIComponent(code.trim().toUpperCase())}/moderator/revote`, "POST", auth),
   moderatorView: (code: string, auth: ModAuth) =>
@@ -275,8 +278,8 @@ export const api = {
 
 export type ActionList = { actions: string[]; is_default: boolean };
 
-/** ClaudAI access: the master passphrase (every game) or one game's ClaudAI PIN. */
-export type ModAuth = { passphrase?: string; pin?: string };
+/** ClaudAI access: the game's own ClaudAI PIN (there is no master key). */
+export type ModAuth = { pin: string };
 
 export type CurrentGame = { code: string | null; phase?: Phase; day?: number; players?: number };
 

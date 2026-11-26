@@ -166,6 +166,7 @@ function Dashboard({ game, refreshing, onRefresh }: { game: ActiveGame; refreshi
   const [menu, setMenu] = useState(false);
   const [invite, setInvite] = useState(false);
   const [confirmEnd, setConfirmEnd] = useState(false);
+  const [nominate, setNominate] = useState(false);
   // Reconfirm the big "move the whole game on" taps so no one skips a stage by accident.
   const [confirmGo, setConfirmGo] = useState<{ label: string; run: () => void } | null>(null);
   const [endPin, setEndPin] = useState("");
@@ -277,6 +278,9 @@ function Dashboard({ game, refreshing, onRefresh }: { game: ActiveGame; refreshi
             <Button testID="menu-forget-me-button" label={`Forget me on this phone (${boundPlayer.name})`} variant="secondary" icon="phone-portrait-outline" onPress={() => { setMenu(false); clearMe(); }} />
           ) : null}
           <Button testID="menu-leave-game-button" label="Leave game on this phone" variant="secondary" icon="exit-outline" onPress={() => { setMenu(false); setConfirmLeave(true); }} />
+          {!game.claudai && phase !== "ended" ? (
+            <Button testID="menu-nominate-claudai-button" label="Nominate a ClaudAI host" variant="secondary" icon="shield-half-outline" onPress={() => { setMenu(false); setNominate(true); }} />
+          ) : null}
           <Button testID="menu-end-game-button" label="End this game for everyone" variant="danger" icon="trash-outline" onPress={() => { setMenu(false); setEndPin(""); endGame.reset(); setConfirmEnd(true); }} />
         </View>
       ) : null}
@@ -410,6 +414,7 @@ function Dashboard({ game, refreshing, onRefresh }: { game: ActiveGame; refreshi
         onCancel={() => setConfirmGo(null)}
       />
 
+      {nominate ? <NominateSheet hostId={game.host_id ?? ""} hostName={game.host_name ?? "the host"} onClose={() => setNominate(false)} /> : null}
       <EndGameSheet
         visible={confirmEnd}
         hostName={game.host_name ?? "the host"}
@@ -583,6 +588,61 @@ function InviteSheet({ visible, onClose }: { visible: boolean; onClose: () => vo
         <Button testID="invite-whatsapp-button" label="Share on WhatsApp" icon="logo-whatsapp" onPress={() => shareToWhatsApp()} />
         <Button testID="invite-share-button" label="Share another way" variant="secondary" icon="share-social-outline" onPress={() => shareInvite()} />
         <Button testID="invite-close-button" label="Done" variant="ghost" onPress={onClose} />
+      </View>
+    </Modal>
+  );
+}
+
+/**
+ * The game's host nominates a ClaudAI host by giving the game its ClaudAI PIN: first the
+ * host's own PIN, then the new ClaudAI PIN. Only possible while the game has none.
+ */
+function NominateSheet({ hostId, hostName, onClose }: { hostId: string; hostName: string; onClose: () => void }) {
+  const styles = useStyles();
+  const insets = useSafeAreaInsets();
+  const qc = useQueryClient();
+  const [hostPin, setHostPin] = useState("");
+  const [newPin, setNewPin] = useState("");
+  const [step, setStep] = useState<"host" | "claudai">("host");
+  const save = useMutation({
+    mutationFn: () => api.nominateClaudai(hostId, hostPin, newPin),
+    onSuccess: (s) => {
+      qc.setQueryData(["game"], s);
+      onClose();
+    },
+    onError: () => {
+      setHostPin("");
+      setNewPin("");
+      setStep("host");
+    },
+  });
+  return (
+    <Modal visible transparent animationType="fade" onRequestClose={onClose}>
+      <Pressable style={styles.scrim} onPress={onClose} testID="nominate-scrim" />
+      <View style={[styles.endSheet, { paddingBottom: insets.bottom + spacing.lg }]} testID="nominate-sheet">
+        <Title style={{ fontSize: 28, lineHeight: 34 }}>Nominate a ClaudAI host</Title>
+        <Body>
+          {step === "host"
+            ? `ClaudAI sees every role and move. Only ${hostName} (the host) can set it up — enter ${hostName}'s PIN.`
+            : "Now choose a 4-digit ClaudAI PIN and give it only to the ClaudAI host. It must differ from every player's PIN."}
+        </Body>
+        <ErrorText testID="nominate-error" message={save.error?.message} />
+        {step === "host" ? (
+          <PinPad
+            value={hostPin}
+            onChange={(v) => {
+              save.reset();
+              setHostPin(v);
+              if (v.length === 4) setStep("claudai");
+            }}
+          />
+        ) : (
+          <>
+            <PinPad value={newPin} onChange={setNewPin} disabled={save.isPending} />
+            <Button testID="nominate-save-button" label="Set the ClaudAI PIN" icon="shield-half" disabled={newPin.length !== 4} loading={save.isPending} onPress={() => save.mutate()} />
+          </>
+        )}
+        <Button testID="nominate-cancel-button" label="Cancel" variant="secondary" onPress={onClose} />
       </View>
     </Modal>
   );
