@@ -81,6 +81,9 @@ export type GameState =
       session?: "" | "lunch" | "evening";
       /** Round Tables per day: 1, or 2 (lunch and 8pm). */
       tables_per_day?: number;
+      /** Murders can't come in quick succession: the next night can't start before this (ISO time). */
+      next_plot_at?: string | null;
+      murder_gap_hours?: number;
     };
 
 export type PrivateView = {

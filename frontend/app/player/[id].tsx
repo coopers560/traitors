@@ -3,7 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useEffect, useRef, useState, type ComponentRef } from "react";
 import { Pressable, ScrollView, Text, TextInput, View } from "react-native";
-import { KeyboardAwareScrollView } from "react-native-keyboard-controller";
+import { KeyboardAvoidingView, KeyboardAwareScrollView } from "react-native-keyboard-controller";
 import Animated, { FadeIn, FadeInDown } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
@@ -47,6 +47,7 @@ export default function PlayerTurn() {
   // looking at their phone never stands out.
   const [roleChecked, setRoleChecked] = useState(false);
   const [roleSeen, setRoleSeen] = useState(false);
+  const [chatOpen, setChatOpen] = useState(false);
   const autoTried = useRef(false);
 
   const players = game?.exists ? game.players : [];
@@ -118,6 +119,8 @@ export default function PlayerTurn() {
         </View>
       ) : sealed ? (
         <Sealed onDone={leave} />
+      ) : chatOpen ? (
+        <SecretChat view={view} pin={pin} onClose={() => setChatOpen(false)} />
       ) : mode === "turn" && view.phase === "roundtable" && view.alive && !roleChecked ? (
         <RoleCheck view={view} onDone={() => setRoleChecked(true)} />
       ) : (
@@ -149,6 +152,16 @@ export default function PlayerTurn() {
               </View>
             </Pressable>
           )}
+          {view.phase !== "setup" ? (
+            <Pressable testID="secret-chat-button" onPress={() => setChatOpen(true)} style={styles.remember}>
+              <Ionicons name="chatbubbles-outline" size={20} color={colors.brand} />
+              <View style={{ flex: 1 }}>
+                <Text style={styles.rememberText}>Secret chat</Text>
+                <Text style={styles.rememberSub}>The Traitors&apos; private group chat.</Text>
+              </View>
+              <Ionicons name="chevron-forward" size={18} color={colors.muted} />
+            </Pressable>
+          ) : null}
           {mode === "turn" && view.phase === "setup" ? (
             <SetupTurn view={view} pin={pin} seen={roleSeen} onSealed={() => setSealed(true)} />
           ) : mode === "turn" && view.phase === "gather" && view.alive ? (
@@ -462,7 +475,6 @@ function NightTurn({
         <ErrorText testID="turn-error" message={confirm.error?.message || pass.error?.message} />
         <Button testID="night-confirm-button" label="Seal the murder" icon="lock-closed" disabled={!chosen} loading={confirm.isPending} onPress={() => chosen && confirm.mutate(chosen)} />
         <Button testID="night-skip-button" label="Lie low — no murder this time" variant="secondary" icon="play-skip-forward-outline" loading={pass.isPending} onPress={() => pass.mutate(false)} />
-        <NightChat view={view} pin={pin} />
       </>
     );
   }
@@ -520,7 +532,6 @@ function NightTurn({
           />
         </>
       )}
-      <NightChat view={view} pin={pin} />
     </>
   );
 }
@@ -575,7 +586,6 @@ function FaithfulNight({
         <ErrorText testID="turn-error" message={error} />
         <Button testID="night-confirm-button" label="Seal my suspicion" icon="lock-closed" disabled={!sure} loading={seal.isPending} onPress={() => seal.mutate()} />
         <Button testID="night-skip-button" label="Skip — pass the phone on" variant="secondary" icon="play-skip-forward-outline" loading={skip.isPending} onPress={() => skip.mutate()} />
-        <NightChat view={view} pin={pin} />
       </>
     );
   }
@@ -589,19 +599,18 @@ function FaithfulNight({
       <ErrorText testID="turn-error" message={error} />
       <Button testID="night-pick-button" label="Choose how sure" icon="arrow-forward" disabled={!suspect} onPress={() => setStep(2)} />
       <Button testID="night-skip-button" label="Skip — pass the phone on" variant="secondary" icon="play-skip-forward-outline" loading={skip.isPending} onPress={() => skip.mutate()} />
-      <NightChat view={view} pin={pin} />
     </>
   );
 }
 
 /**
- * The Traitors' group chat, on the night screen while tonight's plan is being decided. It
- * disappears once the murder (or recruit, or lying low) is sealed. Everyone's night screen has
- * the same panel; only a Traitor still in the game gets messages back or can send.
+ * The Traitors' secret group chat. Everyone has the same button and sees the same screen;
+ * only a Traitor still in the game gets messages back, and only they can send.
  */
-function NightChat({ view, pin }: { view: PrivateView; pin: string }) {
+function SecretChat({ view, pin, onClose }: { view: PrivateView; pin: string; onClose: () => void }) {
   const styles = useStyles();
   const { colors } = useTheme();
+  const insets = useSafeAreaInsets();
   const qc = useQueryClient();
   const scroll = useRef<ComponentRef<typeof ScrollView>>(null);
   const [text, setText] = useState("");
@@ -620,22 +629,28 @@ function NightChat({ view, pin }: { view: PrivateView; pin: string }) {
   const messages = data?.messages ?? [];
   const time = (t: string) => new Date(t).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false });
   return (
-    <View style={styles.chatCard} testID="night-chat">
-      <View style={styles.chatCardHead}>
-        <Ionicons name="chatbubbles-outline" size={18} color={colors.brand} />
-        <Text style={styles.chatCardTitle}>Traitors&apos; chat</Text>
+    <KeyboardAvoidingView behavior="padding" style={{ flex: 1 }} testID="secret-chat">
+      <View style={styles.chatHead}>
+        <Pressable testID="chat-close-button" onPress={onClose} style={styles.iconBtn} hitSlop={8} accessibilityLabel="Back">
+          <Ionicons name="chevron-back" size={24} color={colors.onSurface} />
+        </Pressable>
+        <View style={{ flex: 1 }}>
+          <Text style={styles.chatTitle}>Secret chat</Text>
+          <Text style={styles.chatSub}>Only the Traitors can see or send messages here.</Text>
+        </View>
       </View>
-      <Text style={styles.chatSub}>Only the Traitors can see or send messages here. It closes once the plan is sealed.</Text>
       <ScrollView
         ref={scroll}
-        nestedScrollEnabled
-        style={styles.chatScroll}
+        style={{ flex: 1 }}
         contentContainerStyle={styles.chatList}
         onContentSizeChange={() => scroll.current?.scrollToEnd({ animated: false })}
         keyboardShouldPersistTaps="handled"
       >
         {messages.length === 0 ? (
-          <Text style={styles.chatEmptyText} testID="chat-empty">No messages.</Text>
+          <View style={styles.chatEmpty} testID="chat-empty">
+            <Ionicons name="chatbubbles-outline" size={34} color={colors.muted} />
+            <Text style={styles.chatEmptyText}>No messages.</Text>
+          </View>
         ) : (
           messages.map((m) => {
             const mine = m.from_id === view.player_id;
@@ -650,11 +665,11 @@ function NightChat({ view, pin }: { view: PrivateView; pin: string }) {
         )}
       </ScrollView>
       <ErrorText testID="chat-error" message={send.error?.message} />
-      <View style={styles.chatBar}>
+      <View style={[styles.chatBar, { paddingBottom: insets.bottom + spacing.sm }]}>
         <TextInput
           testID="chat-input"
           value={text}
-          onChangeText={(t) => { send.reset(); setText(t); }}
+          onChangeText={setText}
           placeholder="Message…"
           placeholderTextColor={colors.muted}
           style={styles.chatInput}
@@ -671,7 +686,7 @@ function NightChat({ view, pin }: { view: PrivateView; pin: string }) {
           <Ionicons name="send" size={20} color={colors.onBrandPrimary} />
         </Pressable>
       </View>
-    </View>
+    </KeyboardAvoidingView>
   );
 }
 
@@ -859,20 +874,19 @@ const useStyles = makeStyles((c) => ({
   },
   pickOn: { backgroundColor: c.brandPrimary, borderColor: c.brandPrimary },
   pickText: { color: c.onSurface, fontSize: 19, fontWeight: "600" },
-  chatCard: { gap: spacing.sm, padding: spacing.md, borderRadius: radius.lg, borderWidth: 1, borderColor: c.brandSecondary, backgroundColor: c.surfaceSecondary },
-  chatCardHead: { flexDirection: "row", alignItems: "center", gap: spacing.sm },
-  chatCardTitle: { color: c.onSurface, fontSize: 17, fontWeight: "700" },
-  chatSub: { color: c.muted, fontSize: 13, lineHeight: 18 },
-  chatScroll: { maxHeight: 240, minHeight: 72 },
-  chatList: { gap: spacing.sm, paddingVertical: spacing.xs, flexGrow: 1, justifyContent: "flex-end" },
-  chatEmptyText: { color: c.muted, fontSize: 15, textAlign: "center", paddingVertical: spacing.md },
+  chatHead: { flexDirection: "row", alignItems: "center", gap: spacing.md, paddingHorizontal: spacing.lg, paddingBottom: spacing.sm },
+  chatTitle: { fontFamily: fonts.display, fontSize: 28, lineHeight: 32, color: c.onSurface },
+  chatSub: { color: c.muted, fontSize: 14, lineHeight: 19 },
+  chatList: { padding: spacing.lg, gap: spacing.sm, flexGrow: 1, justifyContent: "flex-end" },
+  chatEmpty: { flex: 1, alignItems: "center", justifyContent: "center", gap: spacing.sm, paddingVertical: spacing.xl },
+  chatEmptyText: { color: c.muted, fontSize: 16 },
+  chatBar: { flexDirection: "row", alignItems: "flex-end", gap: spacing.sm, paddingHorizontal: spacing.md, paddingTop: spacing.sm, borderTopWidth: 1, borderTopColor: c.divider },
   bubble: { maxWidth: "82%", borderRadius: radius.lg, paddingHorizontal: spacing.md, paddingVertical: spacing.sm, gap: 2 },
   bubbleMine: { alignSelf: "flex-end", backgroundColor: c.brandTertiary, borderBottomRightRadius: 4 },
   bubbleTheirs: { alignSelf: "flex-start", backgroundColor: c.surfaceSecondary, borderWidth: 1, borderColor: c.border, borderBottomLeftRadius: 4 },
   bubbleName: { color: c.brand, fontSize: 13, fontWeight: "700" },
   bubbleText: { color: c.onSurface, fontSize: 17, lineHeight: 23 },
   bubbleTime: { color: c.muted, fontSize: 11, alignSelf: "flex-end" },
-  chatBar: { flexDirection: "row", alignItems: "flex-end", gap: spacing.sm },
   chatInput: {
     flex: 1,
     minHeight: 48,

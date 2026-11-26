@@ -303,7 +303,9 @@ function Breakdown({
   const { data, isLoading, error, refetch, isRefetching } = useQuery({
     queryKey: ["moderator", code],
     queryFn: () => api.moderatorView(code, auth),
-    refetchInterval: 4000,
+    // Stop asking once the passphrase is refused (changed elsewhere, or locked out): a phone left
+    // open here must not keep sending a stale passphrase.
+    refetchInterval: (q) => (q.state.error instanceof ApiError && [403, 429].includes(q.state.error.status) ? false : 4000),
     retry: false,
   });
   // Re-run the last tied Round Table as a revote (also for ties settled before revotes existed).
@@ -324,14 +326,25 @@ function Breakdown({
       </View>
     );
   }
-  if (!data) {
+  // Refused (the passphrase was changed on another phone, or too many wrong tries): stop showing
+  // what was loaded before and send them back to sign in.
+  const refused = error instanceof ApiError && (error.status === 403 || error.status === 429);
+  if (!data || refused) {
     return (
       <View style={styles.root} testID="moderator-screen">
         <ScreenHeader title="ClaudAI" testID="moderator" />
         <View style={[styles.scroll, { gap: spacing.md }]}>
           <ErrorText
             testID="moderator-view-error"
-            message={error instanceof ApiError && error.status !== 404 ? error.message : error ? `No game found with the code ${code}.` : "Could not load the game."}
+            message={
+              refused && error.status === 403
+                ? "ClaudAI was locked: the passphrase was refused (it may have been changed). Lock and sign in again."
+                : error instanceof ApiError && error.status !== 404
+                  ? error.message
+                  : error
+                    ? `No game found with the code ${code}.`
+                    : "Could not load the game."
+            }
           />
           <Button testID="moderator-lock-button" label="Lock and leave" icon="lock-closed" onPress={onLock} />
         </View>

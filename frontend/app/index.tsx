@@ -268,6 +268,11 @@ function Dashboard({ game, refreshing, onRefresh }: { game: ActiveGame; refreshi
     copy = { ...copy, body: "Gather everyone together to see who the table has banished. Then the afternoon begins — the next Round Table is at about 8pm." };
   }
   const plotLabel = game.endgame ? "Gather for the final vote" : game.session === "evening" ? "The Traitors move" : "Night falls — the Traitors move";
+  // Murders can't come in quick succession: the next night opens at this local time. (The server
+  // only sends it while it's still in the future; the 4-second refresh clears it when it passes.)
+  const plotAt = game.next_plot_at
+    ? new Date(game.next_plot_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false })
+    : null;
   const takingTurns = phase === "setup" || phase === "night" || phase === "gather" || phase === "roundtable";
   const alive = game.players.filter((p) => p.alive);
   const out = game.players.filter((p) => !p.alive);
@@ -381,6 +386,13 @@ function Dashboard({ game, refreshing, onRefresh }: { game: ActiveGame; refreshi
             <ErrorText testID="advance-error" message={advance.error?.message} />
             {phase === "setup" ? (
               <Button testID="advance-start-day-button" label="Begin Day 1" icon="sunny" disabled={!allDone} loading={advance.isPending} onPress={() => setConfirmGo({ label: "Begin Day 1", run: () => advance.mutate() })} />
+            ) : phase === "day" && plotAt ? (
+              <>
+                <Button testID="advance-round-table-button" label={`${game.session === "evening" ? "The Traitors move" : "Night falls"} at ${plotAt}`} icon="time-outline" disabled onPress={() => {}} />
+                <Text style={styles.waitNote} testID="murder-gap-note">
+                  Murders must be at least {game.murder_gap_hours ?? 3} hours apart, so the Traitors can strike again from {plotAt}.
+                </Text>
+              </>
             ) : phase === "day" ? (
               <Button testID="advance-round-table-button" label={plotLabel} icon={game.endgame ? "flame" : "moon"} loading={advance.isPending} onPress={() => setConfirmGo({ label: plotLabel, run: () => advance.mutate() })} />
             ) : phase === "roundtable" ? (

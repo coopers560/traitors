@@ -160,8 +160,8 @@ def test_login_with_the_passphrase_finds_the_game_in_progress():
             r = c.post("/api/moderator/login", json=body)
             assert r.status_code == 403 and r.json()["detail"] == "Wrong ClaudAI passphrase", body
         # 8 wrong guesses in 10 minutes lock it — even the right passphrase waits
-        for _ in range(5):
-            assert c.post("/api/moderator/login", json={"passphrase": "Wrong#Guess1"}).status_code == 403
+        for i in range(6):  # (the empty body above isn't a guess; repeats of one wrong value count once)
+            assert c.post("/api/moderator/login", json={"passphrase": f"Wrong#Guess{i}"}).status_code == 403
         r = c.post("/api/moderator/login", json={"passphrase": PASS})
         assert r.status_code == 429
         assert mod_view(c, code).status_code == 429

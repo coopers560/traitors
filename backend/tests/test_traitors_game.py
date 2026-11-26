@@ -61,7 +61,7 @@ def del_game(code=None):
 def setup_game(n=10, **extra):
     if CUR["code"]:
         del_game()  # clean up previous test game
-    r = S.post(f"{API}/games", json={"players": mk_players(n), "claudai_passphrase": MOD_PASS, **extra})
+    r = S.post(f"{API}/games", json={"players": mk_players(n), "claudai_passphrase": MOD_PASS, "murder_gap_hours": 0, **extra})
     assert r.status_code == 200, r.text
     g = r.json()
     CUR["code"] = g["code"]
@@ -827,15 +827,15 @@ class TestTraitorChat:
         fa = next(p for p in ps if roles[p["id"]] == "faithful")
         send = lambda p, text: S.post(f"{G()}/chat/send", json={"player_id": p["id"], "pin": pin_of(p["name"]), "text": text})
         read = lambda p: S.post(f"{G()}/chat", json={"player_id": p["id"], "pin": pin_of(p["name"])})
-        # not during setup, nor in the day: the chat is for planning at night
+        # not during setup; after that, any time — day or night (scheming never stops)
         assert send(t1, "too early").status_code == 403
         finish_setup(ps)
-        assert send(t1, "daytime").status_code == 400
+        assert send(t1, "daytime").status_code == 200
         assert S.post(f"{G()}/advance").json()["phase"] == "night"
         assert send(t1, "  Who first?  ").status_code == 200
         assert send(t2, "Not me").status_code == 200
         msgs = read(t2).json()
-        assert msgs["allowed"] is True and [m["text"] for m in msgs["messages"]] == ["Who first?", "Not me"]
+        assert msgs["allowed"] is True and [m["text"] for m in msgs["messages"]] == ["daytime", "Who first?", "Not me"]
         assert msgs["messages"][0]["from_name"] == t1["name"]
         # a Faithful sees nothing and cannot post; a wrong PIN is refused
         assert read(fa).json() == {"allowed": False, "messages": []}
@@ -845,7 +845,7 @@ class TestTraitorChat:
         # never in the public state; the moderator sees it
         assert "traitor_chat" not in S.get(G()).json()
         mod = S.post(f"{G()}/moderator", json=MOD).json()
-        assert len(mod["traitor_chat"]) == 2
+        assert len(mod["traitor_chat"]) == 3
 
 
 class TestClaudAIPassphrase:
@@ -899,10 +899,22 @@ class TestClaudAIPassphrase:
             del_game()
         r = S.post(f"{API}/games", json={"players": mk_players(5), "claudai_passphrase": "Lock#Out123"})
         CUR["code"] = r.json()["code"]
-        for _ in range(8):
-            assert S.post(f"{G()}/moderator", json={"passphrase": "Wrong#Guess1"}).status_code == 403
+        for i in range(8):
+            assert S.post(f"{G()}/moderator", json={"passphrase": f"Wrong#Guess{i}"}).status_code == 403
         r = S.post(f"{G()}/moderator", json={"passphrase": "Lock#Out123"})
         assert r.status_code == 429  # even the right passphrase waits
+
+    def test_a_stale_passphrase_left_polling_never_locks_it(self):
+        # A phone left open on ClaudAI keeps re-sending the same old passphrase (or none at all):
+        # that's not guessing, so it must never lock the real ClaudAI host out.
+        if CUR["code"]:
+            del_game()
+        r = S.post(f"{API}/games", json={"players": mk_players(5), "claudai_passphrase": "Stay#Open42"})
+        CUR["code"] = r.json()["code"]
+        for _ in range(25):
+            assert S.post(f"{G()}/moderator", json={"passphrase": "Old#Phrase1"}).status_code == 403
+            assert S.post(f"{G()}/moderator", json={}).status_code == 403
+        assert S.post(f"{G()}/moderator", json={"passphrase": "Stay#Open42"}).status_code == 200
 
     def test_host_nominates_a_claudai_host_for_a_game_without_one(self):
         if CUR["code"]:

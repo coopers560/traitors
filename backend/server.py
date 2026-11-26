@@ -196,6 +196,9 @@ class Game(BaseModel):
     recruit_id: Optional[str] = None  # a Faithful the Traitors recruit tonight (instead of murdering)
     # Recruits the Traitors have earned: +1 each time a Traitor is banished, -1 when they use it.
     recruit_credits: int = 0
+    # When the last murder was revealed (ISO time), so murders can't come in quick succession.
+    last_murder_at: Optional[str] = None
+    murder_gap_hours: float = 3.0
     # Optional per-game ClaudAI login: the hashed ClaudAI passphrase that opens this game's
     # god-view (games from before passphrases may hold the plain hash of a 4-digit PIN).
     moderator_pin_hash: Optional[str] = None
@@ -268,6 +271,8 @@ class CreateGameIn(BaseModel):
     claudai_passphrase: Optional[str] = None
     moderator_pin: Optional[str] = None  # older apps' name for it (the same strength rule applies)
     tables_per_day: int = 1  # Round Tables a day: 1, or 2 (lunch and 8pm)
+    # Minimum hours between murders (default 3). Tests set 0.
+    murder_gap_hours: Optional[float] = None
 
 
 class AuthIn(BaseModel):
@@ -421,12 +426,40 @@ def public_state(g: Game) -> dict:
         ],
         "revote": _revote_info(g),
         "claudai": bool(g.moderator_pin_hash),  # whether this game has a ClaudAI host (never the secret)
+        # Murders can't come in quick succession: the next night can't start before this time.
+        "next_plot_at": (None if in_endgame(g) else (lambda t: t.isoformat() if t else None)(next_plot_at(g))),
+        "murder_gap_hours": g.murder_gap_hours,
         "turns_needed": len(g.players) if g.phase == "setup" else len(g.alive()),
         "turns_done": len(g.turns_done),
         # never reveal which secret action was used (strip from older records too);
         # a day's murder is None until the night step has resolved it
         "history": [_public_history(h, ended) for h in g.history],
     }
+
+
+def _last_murder_time(g: Game) -> Optional[datetime]:
+    """When the last murder was revealed. Games from before this was recorded fall back to the
+    event log's last 'Murder revealed' entry."""
+    t = g.last_murder_at
+    if not t:
+        for e in reversed(g.event_log):
+            if e.get("kind") == "reveal" and str(e.get("text", "")).startswith("Murder revealed"):
+                t = e.get("t")
+                break
+    try:
+        return datetime.fromisoformat(t) if t else None
+    except ValueError:
+        return None
+
+
+def next_plot_at(g: Game) -> Optional[datetime]:
+    """The earliest the Traitors may plot again (the next night), or None if they may now.
+    Murders must be at least murder_gap_hours apart."""
+    last = _last_murder_time(g)
+    if not last or g.murder_gap_hours <= 0:
+        return None
+    nxt = last + timedelta(hours=g.murder_gap_hours)
+    return nxt if nxt > datetime.now(timezone.utc) else None
 
 
 def _revote_info(g: Game) -> Optional[dict]:
@@ -472,15 +505,43 @@ def _pin_locked(code: str) -> bool:
     return len(recent) >= PIN_FAIL_LIMIT
 
 
+# Wrong secrets already seen per game (fingerprints). A phone left open on ClaudAI with an old or
+# retired secret keeps re-sending the SAME wrong value every few seconds; that is not guessing,
+# so a repeat is refused without counting towards the lockout (only new guesses count).
+PIN_WRONG: Dict[str, Dict[str, float]] = {}
+
+
+def _fingerprint(code: str, secret: str) -> str:
+    return hashlib.sha256(f"{code}:{secret}".encode()).hexdigest()
+
+
+def clear_pin_fails(code: str) -> None:
+    """Forget wrong guesses for a game (after its ClaudAI secret is set or changed)."""
+    PIN_FAILS.pop(code, None)
+    PIN_WRONG.pop(code, None)
+
+
 async def check_moderator_secret(g: "Game", secret: Optional[str]) -> None:
+    # Nothing to check: no secret sent, or the game has none yet. Not a guess, so never counted.
+    if not secret or not g.moderator_pin_hash:
+        raise HTTPException(403, "Wrong ClaudAI passphrase")
+    fp = _fingerprint(g.code, secret)
+    if fp in PIN_WRONG.get(g.code, {}):
+        raise HTTPException(403, "Wrong ClaudAI passphrase")  # the same wrong secret again: not a new guess
     if _pin_locked(g.code):
         raise HTTPException(429, "Too many wrong ClaudAI passphrases — wait a few minutes and try again")
     # Counted as a miss until proven right, so parallel guesses can't slip past the lockout
     # while the (deliberately slow) hash is being checked.
-    PIN_FAILS.setdefault(g.code, []).append(datetime.now(timezone.utc).timestamp())
+    stamp = datetime.now(timezone.utc).timestamp()
+    PIN_FAILS.setdefault(g.code, []).append(stamp)
     if not await asyncio.to_thread(verify_secret, g.moderator_pin_hash, secret):
+        wrong = PIN_WRONG.setdefault(g.code, {})
+        wrong[fp] = stamp
+        if len(wrong) > 200:  # keep it small
+            for k in sorted(wrong, key=wrong.get)[:100]:
+                wrong.pop(k, None)
         raise HTTPException(403, "Wrong ClaudAI passphrase")
-    PIN_FAILS.pop(g.code, None)
+    clear_pin_fails(g.code)
 
 
 async def check_game_moderator(g: "Game", data: "ModeratorIn") -> None:
@@ -590,7 +651,10 @@ def _now(g: Game) -> dict:
         nxt = tap("Begin Day 1") if ready else "Pass the phone round until everyone has seen their role"
     elif g.phase == "day":
         doing, what, waiting = f"{round_label(g)} — enjoy the holiday", "", []
-        nxt = tap("Gather for the final vote") if in_endgame(g) else tap("Night falls — the Traitors move")
+        wait = None if in_endgame(g) else next_plot_at(g)
+        nxt = (tap("Gather for the final vote") if in_endgame(g)
+               else f"Wait — murders must be {g.murder_gap_hours:g} hours apart (the dashboard shows when)" if wait
+               else tap("Night falls — the Traitors move"))
     elif g.phase == "night":
         doing, what = "Night — everyone takes a turn while the Traitors secretly plot", "to take their night turn"
         nxt = tap("Everyone to the Round Table") if ready else "Everyone still listed takes their night turn"
@@ -928,6 +992,7 @@ async def nominate_claudai(code: str, data: NominateIn):
     if passphrase_problem(new):
         raise HTTPException(400, PASSPHRASE_RULE)
     g.moderator_pin_hash = await asyncio.to_thread(hash_passphrase, new)
+    clear_pin_fails(g.code)  # earlier wrong guesses were against a different (or no) secret
     log(g, "stage", f"{p.name} (host) nominated a ClaudAI host")
     await save(g)
     return public_state(g)
@@ -943,6 +1008,7 @@ async def moderator_set_pin(code: str, data: ModeratorPinIn):
     if passphrase_problem(new):
         raise HTTPException(400, PASSPHRASE_RULE)
     g.moderator_pin_hash = await asyncio.to_thread(hash_passphrase, new)
+    clear_pin_fails(g.code)  # earlier wrong guesses were against a different (or no) secret
     log(g, "stage", "The ClaudAI passphrase was changed")
     await save(g)
     return moderator_state(g)
@@ -1064,8 +1130,6 @@ async def send_chat(code: str, data: ChatIn):
     p = auth(g, data)
     if not chat_allowed(g, p):
         raise HTTPException(403, "Only the Traitors can send messages here")
-    if g.phase != "night":
-        raise HTTPException(400, "The Traitors' chat opens at night, while you plan")
     text = (data.text or "").strip()
     if not text:
         raise HTTPException(400, "Write a message first")
@@ -1248,6 +1312,8 @@ async def create_game(data: CreateGameIn):
     g.host_id = players[0].id  # the first player entered is the host/creator
     if secret:
         g.moderator_pin_hash = await asyncio.to_thread(hash_passphrase, secret)
+    if data.murder_gap_hours is not None:
+        g.murder_gap_hours = max(0.0, min(24.0, data.murder_gap_hours))
     traitors = ", ".join(pl.name for pl in players if pl.role == "traitor")
     tables = "two Round Tables a day (lunch and 8pm)" if g.tables_per_day == 2 else "one Round Table a day"
     log(g, "setup", f"Game created: {len(players)} players, host {players[0].name}, {tables}. Traitors: {traitors}",
@@ -1461,6 +1527,12 @@ async def advance(code: str, expected: Optional[str] = None, expected_day: Optio
             g.turns_done, g.votes, g.end_votes = [], {}, []
             log(g, "stage", "Endgame: straight to the final vote — banish one more, or end the game")
         else:
+            wait = next_plot_at(g)
+            if wait:
+                raise HTTPException(
+                    400,
+                    f"Too soon after the last murder — the Traitors can strike again {g.murder_gap_hours:g} hours after it.",
+                )
             g.phase = "night"
             g.turns_done, g.target_id, g.action, g.murder_confirmed, g.action_choices, g.recruit_id = [], None, None, False, [], None
             g.murder_done = False
@@ -1503,6 +1575,8 @@ async def advance(code: str, expected: Optional[str] = None, expected_day: Optio
             murder = {"success": False}
         elif g.murder_confirmed and g.murder_done:
             murder = resolve_murder(g)
+            if murder.get("success"):
+                g.last_murder_at = datetime.now(timezone.utc).isoformat()
         else:
             murder = {"success": False}
         g.winner = winner_by_roles(g)  # the murder alone can win it for the Traitors
@@ -1517,7 +1591,12 @@ async def advance(code: str, expected: Optional[str] = None, expected_day: Optio
             log(g, "reveal", f"Murder reveal: nobody died — the murder of {name_of(g, g.target_id)} was not carried out",
                 "Murder reveal: nobody died")
         else:
-            log(g, "reveal", "Murder reveal: nobody died — the Traitors lay low", "Murder reveal: nobody died")
+            if rp and not recruited:
+                # A recruit was planned but not allowed (never more than two Traitors).
+                log(g, "reveal", f"Murder reveal: nobody died — the recruit of {rp.name} was not allowed "
+                    f"(never more than {MAX_TRAITORS} Traitors)", "Murder reveal: nobody died")
+            else:
+                log(g, "reveal", "Murder reveal: nobody died — the Traitors lay low", "Murder reveal: nobody died")
         g.phase = "reveal"
     elif g.phase == "reveal":
         # The murder has been shown. If it won the game, stop; otherwise the table votes.

@@ -23,7 +23,7 @@ NAMES = ["Ada", "Ben", "Cleo", "Dev", "Esme", "Finn", "Gus", "Hana"]
 def _legacy_tie(c):
     """Play to a tied Day 1 Round Table, then make it look like the old code resolved it
     (no revote pending) and the host began Day 2."""
-    g = c.post("/api/games", json={"players": [{"name": n, "pin": f"{1000 + i}"} for i, n in enumerate(NAMES)], "claudai_passphrase": "Rewind#Tie9"}).json()
+    g = c.post("/api/games", json={"players": [{"name": n, "pin": f"{1000 + i}"} for i, n in enumerate(NAMES)], "claudai_passphrase": "Rewind#Tie9", "murder_gap_hours": 0}).json()
     code = g["code"]
     ids = {p["name"]: p["id"] for p in g["players"]}
     pin = {n: f"{1000 + i}" for i, n in enumerate(NAMES)}
