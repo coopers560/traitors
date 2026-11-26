@@ -782,7 +782,7 @@ def _now(g: Game) -> dict:
         wait = None if in_endgame(g) else next_plot_at(g)
         nxt = (tap("Gather for the final vote") if in_endgame(g)
                else f"Wait — murders must be {g.murder_gap_hours:g} hours apart (the dashboard shows when)" if wait
-               else tap("Night falls — the Traitors move"))
+               else tap("Start the plot"))
     elif g.phase == "night":
         doing, what = "Night — everyone takes a turn while the Traitors secretly plot", "to take their night turn"
         nxt = ("Wait — the Round Table opens a while after the plot (the dashboard shows when)" if ready and round_table_at(g)

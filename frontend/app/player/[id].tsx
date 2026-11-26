@@ -744,7 +744,7 @@ function TraitorsMenu({ view: initial, pin, round, onClose }: { view: PrivateVie
     if (plotting) return "No victim chosen yet — or you're lying low." + next;
     if (v.phase === "reveal") return "The murder has been revealed. The next plot starts after the Round Table." + next;
     if (v.phase === "roundtable" || v.phase === "banished") return "The next plot starts after the Round Table." + next;
-    if (v.phase === "day") return "The next plot starts when night falls." + next;
+    if (v.phase === "day") return "The next plot starts soon." + next;
     return "Nothing to plan right now.";
   };
   const time = (t: string) => new Date(t).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false });

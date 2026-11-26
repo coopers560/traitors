@@ -147,8 +147,8 @@ const PHASE_COPY: Record<string, { eyebrow: string; title: string; body: string 
   },
   night: {
     eyebrow: "The plot",
-    title: "The Traitors move",
-    body: "Everyone takes a turn in private — nobody can tell who's plotting.",
+    title: "Everyone take your turn",
+    body: "Tap your name below, in private — nobody can tell who's plotting.",
   },
   gather: {
     eyebrow: "This evening",
@@ -248,7 +248,7 @@ function Dashboard({ game, refreshing, onRefresh }: { game: ActiveGame; refreshi
     }
   }
   const startLabel = game.tables_per_day === 2 ? "Begin Day 1 · Lunch" : "Begin Day 1";
-  const plotLabel = game.endgame ? "Gather for the final vote" : game.session === "evening" ? "The Traitors move" : "Night falls — the Traitors move";
+  const plotLabel = game.endgame ? "Gather for the final vote" : "Start the plot";
   // The Traitors get time to carry out the murder: after everyone has taken their plot turn the
   // Round Table opens at this local time. (The server only sends it while it's still in the
   // future; the 4-second refresh clears it when it passes.)
