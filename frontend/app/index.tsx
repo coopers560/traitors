@@ -1,6 +1,5 @@
 import Ionicons from "@react-native-vector-icons/ionicons";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Image } from "expo-image";
 import { type Href, useRouter } from "expo-router";
 import { useEffect, useState } from "react";
 import { ActivityIndicator, Modal, Pressable, RefreshControl, ScrollView, Text, TextInput, View } from "react-native";
@@ -8,23 +7,24 @@ import { KeyboardAvoidingView } from "react-native-keyboard-controller";
 import Animated, { FadeInDown } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-import { api, ApiError, DayResult, exitOf, GameState, passphraseProblem, PublicPlayer, roundLabel } from "@/src/api";
+import { api, ApiError, DayResult, exitOf, GameState, passphraseProblem, personalise, PublicPlayer, roundLabel } from "@/src/api";
 import { ConfirmSheet } from "@/src/components/confirm-sheet";
 import { HoldRole } from "@/src/components/hold-reveal";
 import { PinPad } from "@/src/components/pin-pad";
 import { QrCode } from "@/src/components/qr-code";
 import { VoteBoard } from "@/src/components/vote-board";
-import { Backdrop, Body, Button, ErrorText, Eyebrow, IMAGES, Title } from "@/src/components/ui";
+import { Body, Button, ErrorText, Eyebrow, Title } from "@/src/components/ui";
 import { useGameCode } from "@/src/game-code";
 import { useMe } from "@/src/me";
 import { inviteLink, shareInvite, shareToWhatsApp } from "@/src/utils/invite";
 import { fonts, makeStyles, radius, spacing, useTheme } from "@/src/theme";
 
+import Setup from "./setup";
+
 type ActiveGame = Extract<GameState, { exists: true }>;
 
-// The archive screens (app/previous-games.tsx, app/story.tsx). Cast so this file type-checks even
-// before the generated typed-routes list has caught up with those new files.
-const PREVIOUS_GAMES = "/previous-games" as Href;
+// The archive's story screen (app/story.tsx). Cast so this file type-checks even before the
+// generated typed-routes list has caught up with it.
 const storyHref = (code: string) => `/story?code=${encodeURIComponent(code)}` as Href;
 
 /** "Day 3 of 12 · Lunch": the current round's label with the length of the holiday. */
@@ -72,122 +72,93 @@ export default function Home() {
       </View>
     );
   }
-  if (!data.exists) return <Welcome gone={!!data.gone} />;
+  if (!data.exists) return <NoGame gone={!!data.gone} />;
   return <Dashboard game={data} refreshing={pulling} onRefresh={onRefresh} />;
 }
 
-function Welcome({ gone }: { gone: boolean }) {
+/**
+ * This phone has no game: go straight in. One group, one game — join the game in progress if
+ * there is one, otherwise straight into New game setup (shown right here, so there is nothing
+ * to go back to). If a game is started on another phone while this one is on setup, it joins.
+ */
+function NoGame({ gone }: { gone: boolean }) {
   const styles = useStyles();
   const { colors } = useTheme();
-  const router = useRouter();
-  const insets = useSafeAreaInsets();
-  const { code, gone: goneFlag, setCode } = useGameCode();
-  // The game this phone was in has been ended on another phone: forget its code
+  const { code, setCode } = useGameCode();
+  // The game this phone was in has been ended on another phone: forget its code (setup then
+  // says so, from the game-code context's `gone` flag).
+  const forgetting = gone && !!code;
   useEffect(() => {
-    if (gone && code) setCode(null, { gone: true });
-  }, [gone, code, setCode]);
-  const showGone = gone || goneFlag;
-  // One group, one game: find the game in progress so this phone can join it without a code.
-  const { data: current } = useQuery({ queryKey: ["current"], queryFn: api.currentGame, refetchInterval: 10000 });
-  const live = current?.code ? (current as { code: string; phase?: string; day?: number; players?: number }) : null;
-  // The live game's round label ("Day 3 · Lunch") — `day` alone is the round number.
-  const { data: liveGame } = useQuery({
-    queryKey: ["current-label", live?.code],
-    queryFn: () => api.findGame(live?.code ?? ""),
-    enabled: !!live?.code && live.phase !== "setup",
-    refetchInterval: 30000,
+    if (forgetting) void setCode(null, { gone: true });
+  }, [forgetting, setCode]);
+  const { data: current, error, refetch, isFetching, isFetchedAfterMount } = useQuery({
+    queryKey: ["current-boot"],
+    queryFn: api.currentGame,
+    enabled: !forgetting,
+    refetchInterval: 10000,
+    staleTime: 0,
+    gcTime: 0,
   });
-  const liveLabel = liveGame?.exists ? liveGame.label : undefined;
-  return (
-    <View style={styles.root} testID="welcome-screen">
-      <Backdrop image={IMAGES.castle} />
-      <View style={[styles.welcome, { paddingTop: insets.top + spacing.xl, paddingBottom: insets.bottom + spacing.lg }]}>
-        <Animated.View entering={FadeInDown.duration(700)} style={{ gap: spacing.sm }}>
-          <Image
-            testID="welcome-logo"
-            source={require("../assets/images/logo-transparent.png")}
-            style={styles.heroLogo}
-            contentFit="contain"
-            accessibilityLabel="The Traitors"
-          />
-          <Eyebrow style={{ textAlign: "center" }}>Holiday edition · Egypt</Eyebrow>
-          <Body>
-            Twelve days. Hidden among the family are Traitors who murder in plain sight. Find them
-            before it&apos;s too late.
-          </Body>
-        </Animated.View>
-        <Animated.View entering={FadeInDown.duration(400)} style={{ gap: spacing.md }}>
-          {showGone ? <ErrorText testID="welcome-game-gone" message="Your game was ended on another phone." /> : null}
-          {live ? (
-            <>
-              <Button testID="welcome-join-button" label="Join the game" icon="enter-outline" onPress={() => setCode(live.code)} />
-              <Text style={styles.liveNote} testID="welcome-live-note">
-                {live.phase === "setup" ? "A new game is being set up" : liveLabel ? `${liveLabel} is under way` : "A game is under way"} · {live.players} players
-              </Text>
-            </>
-          ) : (
-            <Button testID="welcome-new-game-button" label="Begin a new game" icon="flame" onPress={() => router.push("/setup")} />
-          )}
-          <Button
-            testID="welcome-how-to-play-button"
-            label="How to play"
-            variant="ghost"
-            icon="book-outline"
-            onPress={() => router.push("/how-to-play")}
-          />
-          <Button
-            testID="welcome-help-button"
-            label="Help · what do I tap?"
-            variant="ghost"
-            icon="help-circle-outline"
-            onPress={() => router.push({ pathname: "/help", params: { from: "welcome" } })}
-          />
-          {/* A compact link so the start screen still fits small phones */}
-          <Pressable testID="welcome-previous-games-button" accessibilityRole="button" onPress={() => router.push(PREVIOUS_GAMES)} style={styles.helpLink} hitSlop={6}>
-            <Ionicons name="library-outline" size={20} color={colors.brand} />
-            <Text style={styles.helpLinkText}>Previous games · the whole story of each</Text>
-          </Pressable>
-        </Animated.View>
+  // Only ever act on an answer fetched now, never on a cached one from before.
+  const live = isFetchedAfterMount && current?.code ? current.code : null;
+  useEffect(() => {
+    if (live) void setCode(live);
+  }, [live, setCode]);
+
+  if (!forgetting && isFetchedAfterMount && error && !current) {
+    return (
+      <View style={[styles.center, { padding: spacing.lg, gap: spacing.md }]} testID="home-current-error-screen">
+        <ErrorText testID="home-current-error" message="Could not reach the castle to find your game. Check your connection." />
+        <Button testID="home-current-retry" label="Try again" loading={isFetching} onPress={() => refetch()} />
       </View>
-    </View>
-  );
+    );
+  }
+  if (forgetting || !isFetchedAfterMount || live) {
+    return (
+      <View style={[styles.center, { gap: spacing.md }]} testID={live ? "home-joining" : "home-finding"}>
+        <ActivityIndicator color={colors.brand} size="large" />
+        <Text style={styles.joiningText}>{live ? "Joining the game…" : "Finding your game…"}</Text>
+      </View>
+    );
+  }
+  return <Setup />;
 }
 
 const PHASE_COPY: Record<string, { eyebrow: string; title: string; body: string }> = {
   setup: {
     eyebrow: "The Gathering",
     title: "Discover your role",
-    body: "Pass the phone around, or use several phones at once. Each player taps their own name, enters their PIN and secretly learns if they are Faithful or a Traitor. Tip: to use your own secret actions, edit them in the ⋯ menu before anyone takes a turn.",
+    body: "Tap your name, enter your PIN and secretly see your role.",
   },
   day: {
     eyebrow: "During the day",
     title: "Enjoy the holiday",
-    body: "Mingle, relax and watch everyone closely. When night falls the Traitors choose their victim and the murder in plain sight — then you gather at the Round Table.",
+    body: "Relax — and watch everyone closely.",
   },
   roundtable: {
     eyebrow: "This evening",
     title: "The Round Table",
-    body: "Argue, accuse, defend. Then everyone casts a secret vote to banish someone — on any phone, all at the same time if you like.",
+    body: "Accuse, defend — then vote in secret.",
   },
   banished: {
     eyebrow: "The verdict",
     title: "The banishment",
-    body: "Gather everyone together to see who the table has banished. That closes the day.",
+    body: "Gather round to see who's banished.",
   },
   night: {
     eyebrow: "The plot",
     title: "The Traitors move",
-    body: "Everyone taps their name in private. The Traitors secretly choose their victim and a plain-sight action; everyone else simply passes the phone on — so no one can tell who acted. The murder is carried out during the day.",
+    body: "Everyone takes a turn in private — nobody can tell who's plotting.",
   },
   gather: {
     eyebrow: "This evening",
     title: "Check in for the Round Table",
-    body: "Everyone taps their name to check in. The Traitors also confirm, in secret, whether the murder was carried out. Once everyone has checked in, the murder is revealed — before anyone votes.",
+    body: "Everyone checks in — then the murder is revealed.",
   },
   reveal: {
     eyebrow: "This evening",
     title: "Who did the Traitors take?",
-    body: "Gather everyone together before you open the envelope.",
+    body: "Gather round before you open the envelope.",
   },
 };
 
@@ -205,7 +176,6 @@ function Dashboard({ game, refreshing, onRefresh }: { game: ActiveGame; refreshi
   const [confirmGo, setConfirmGo] = useState<{ label: string; run: () => void } | null>(null);
   const [endPin, setEndPin] = useState("");
   const [peekMode, setPeekMode] = useState(false);
-  const [confirmLeave, setConfirmLeave] = useState(false);
   const { setCode } = useGameCode();
   const { me: boundMe, clearMe } = useMe();
   const boundPlayer = boundMe ? game.players.find((p) => p.id === boundMe.playerId) : null;
@@ -247,26 +217,37 @@ function Dashboard({ game, refreshing, onRefresh }: { game: ActiveGame; refreshi
       ? {
           eyebrow: "Tie-break revote",
           title: "Vote again",
-          body: `The Round Table was tied between ${tied}. Everyone votes again, in secret — this time you can only choose between them.`,
+          body: `Tied between ${tied} — vote again, only between them.`,
         }
       : phase === "banished" && game.revote && !game.revote.active
       ? {
           eyebrow: "The verdict",
           title: "The table is divided",
-          body: "Gather everyone together and open the reveal to see the tie and how everyone voted. Then everyone votes again.",
+          body: "Open the reveal to see the tie — then everyone votes again.",
         }
       : phase === "roundtable" && game.endgame
       ? {
           eyebrow: "The final vote",
           title: "Banish, or end the game",
-          body: "Only a few of you remain. Each player votes to banish one more — or to end the game now. If everyone votes to end while a Traitor is still among you, the Traitors win.",
+          body: "Banish one more, or end it — if a Traitor's still here, they win.",
         }
       : PHASE_COPY[phase];
   // Two Round Tables a day: the lunch table's stages happen at lunch, not "this evening".
   if (phase !== "ended" && game.session === "lunch" && copy.eyebrow === "This evening") copy = { ...copy, eyebrow: "At lunch" };
   if (copy === PHASE_COPY.banished && game.session === "lunch") {
-    copy = { ...copy, body: "Gather everyone together to see who the table has banished. Then the afternoon begins — the next Round Table is at about 8pm." };
+    copy = { ...copy, body: "Gather round to see who's banished. Next Round Table about 8pm." };
   }
+  // The day's body fits the session (one table a day keeps the night-time wording) and the endgame.
+  if (copy === PHASE_COPY.day) {
+    if (game.endgame) {
+      copy = { ...copy, body: "No more murders — the final vote decides it." };
+    } else if (game.session === "lunch") {
+      copy = { ...copy, body: "Relax — the Traitors strike before lunch." };
+    } else if (game.session === "evening") {
+      copy = { ...copy, body: "Relax — the Traitors strike this afternoon." };
+    }
+  }
+  const startLabel = game.tables_per_day === 2 ? "Begin Day 1 · Lunch" : "Begin Day 1";
   const plotLabel = game.endgame ? "Gather for the final vote" : game.session === "evening" ? "The Traitors move" : "Night falls — the Traitors move";
   // Murders can't come in quick succession: the next night opens at this local time. (The server
   // only sends it while it's still in the future; the 4-second refresh clears it when it passes.)
@@ -325,7 +306,6 @@ function Dashboard({ game, refreshing, onRefresh }: { game: ActiveGame; refreshi
           {boundPlayer ? (
             <Button testID="menu-forget-me-button" label={`Forget me on this phone (${boundPlayer.name})`} variant="secondary" icon="phone-portrait-outline" onPress={() => { setMenu(false); clearMe(); }} />
           ) : null}
-          <Button testID="menu-leave-game-button" label="Leave game on this phone" variant="secondary" icon="exit-outline" onPress={() => { setMenu(false); setConfirmLeave(true); }} />
           <Button testID="menu-claudai-button" label="ClaudAI (host)" variant="secondary" icon="shield-half" onPress={() => { setMenu(false); router.push("/moderator"); }} />
           {!game.claudai && phase !== "ended" ? (
             <Button testID="menu-nominate-claudai-button" label="Nominate a ClaudAI host" variant="secondary" icon="shield-half-outline" onPress={() => { setMenu(false); setNominate(true); }} />
@@ -372,7 +352,7 @@ function Dashboard({ game, refreshing, onRefresh }: { game: ActiveGame; refreshi
           <Animated.View entering={FadeInDown.duration(500)} style={styles.phaseCard} testID="phase-card">
             <Title style={styles.phaseTitle}>{copy.title}</Title>
             <Body>{copy.body}</Body>
-            {takingTurns ? (
+            {takingTurns && phase !== "night" ? (
               <View style={styles.turnRow} testID="turn-progress">
                 <Ionicons name="people" size={20} color={colors.brand} />
                 <Text style={styles.turnText}>
@@ -385,12 +365,12 @@ function Dashboard({ game, refreshing, onRefresh }: { game: ActiveGame; refreshi
             ) : null}
             <ErrorText testID="advance-error" message={advance.error?.message} />
             {phase === "setup" ? (
-              <Button testID="advance-start-day-button" label="Begin Day 1" icon="sunny" disabled={!allDone} loading={advance.isPending} onPress={() => setConfirmGo({ label: "Begin Day 1", run: () => advance.mutate() })} />
+              <Button testID="advance-start-day-button" label={startLabel} icon="sunny" disabled={!allDone} loading={advance.isPending} onPress={() => setConfirmGo({ label: startLabel, run: () => advance.mutate() })} />
             ) : phase === "day" && plotAt ? (
               <>
                 <Button testID="advance-round-table-button" label={`${game.session === "evening" ? "The Traitors move" : "Night falls"} at ${plotAt}`} icon="time-outline" disabled onPress={() => {}} />
                 <Text style={styles.waitNote} testID="murder-gap-note">
-                  Murders must be at least {game.murder_gap_hours ?? 3} hours apart, so the Traitors can strike again from {plotAt}.
+                  Murders are at least {game.murder_gap_hours ?? 3} hours apart.
                 </Text>
               </>
             ) : phase === "day" ? (
@@ -399,16 +379,16 @@ function Dashboard({ game, refreshing, onRefresh }: { game: ActiveGame; refreshi
               <>
                 <Button testID="advance-reveal-button" label={allDone ? (game.revote?.active ? "Reveal the revote" : game.endgame ? "Reveal the vote" : "Reveal the banishment") : "Everyone must vote first…"} icon="mail-open" disabled={!allDone} loading={advance.isPending && allDone} onPress={() => setConfirmGo({ label: game.revote?.active ? "Reveal the revote" : game.endgame ? "Reveal the vote" : "Reveal the banishment", run: () => advance.mutate() })} />
                 {!allDone ? (
-                  <Text style={styles.waitNote} testID="roundtable-wait-note">Everyone still in must vote before the reveal — otherwise the Traitors could be given away.</Text>
+                  <Text style={styles.waitNote} testID="roundtable-wait-note">Everyone must vote first.</Text>
                 ) : null}
               </>
             ) : phase === "night" ? (
-              <Button testID="advance-murder-button" label={allDone ? "Everyone to the Round Table" : "Waiting for the Traitors…"} icon="flame" disabled={!allDone} loading={advance.isPending} onPress={() => setConfirmGo({ label: "Everyone to the Round Table", run: () => advance.mutate() })} />
+              <Button testID="advance-murder-button" label={allDone ? "Everyone to the Round Table" : "Awaiting treachery…"} icon="flame" disabled={!allDone} loading={advance.isPending} onPress={() => setConfirmGo({ label: "Everyone to the Round Table", run: () => advance.mutate() })} />
             ) : phase === "gather" ? (
               <>
                 <Button testID="advance-gather-button" label={allDone ? "Reveal the murder" : "Everyone must check in first…"} icon="mail-open" disabled={!allDone} loading={advance.isPending && allDone} onPress={() => setConfirmGo({ label: "Reveal the murder", run: () => advance.mutate() })} />
                 {!allDone ? (
-                  <Text style={styles.waitNote} testID="gather-wait-note">Everyone still in must check in before the murder is revealed — otherwise the Traitors could be given away.</Text>
+                  <Text style={styles.waitNote} testID="gather-wait-note">Everyone must check in first.</Text>
                 ) : null}
               </>
             ) : phase === "banished" ? (
@@ -479,14 +459,6 @@ function Dashboard({ game, refreshing, onRefresh }: { game: ActiveGame; refreshi
         loading={endGame.isPending}
         error={endGame.error?.message}
         onCancel={() => { setConfirmEnd(false); setEndPin(""); endGame.reset(); }}
-      />
-      <ConfirmSheet
-        visible={confirmLeave}
-        title="Leave on this phone?"
-        message="The game carries on for everyone else. You can come back any time — just tap “Join the game” on the start screen."
-        confirmLabel="Leave this game"
-        onConfirm={() => { setConfirmLeave(false); setCode(null); }}
-        onCancel={() => setConfirmLeave(false)}
       />
     </View>
   );
@@ -567,16 +539,16 @@ function PlayerRow({
 function MurderMethods({ game }: { game: ActiveGame }) {
   const styles = useStyles();
   // Methods are only sent by the server once the game has ended.
-  const murders = game.history.filter((h) => h.murder?.success && h.murder?.action);
+  const murders = game.history.flatMap((h) => (h.murder?.success && h.murder.action ? [{ h, murder: h.murder }] : []));
   if (!murders.length) return null;
   return (
     <View style={styles.methodsCard} testID="murder-methods">
       <Text style={styles.methodsTitle}>How the murders were done</Text>
-      {murders.map((h) => (
+      {murders.map(({ h, murder }) => (
         <View key={h.day} style={styles.methodRow}>
           <Text style={styles.methodDay}>{roundLabel(h)}</Text>
           <Text style={styles.methodText}>
-            <Text style={{ fontWeight: "700" }}>{h.murder.victim_name}</Text> — {h.murder.action}
+            <Text style={{ fontWeight: "700" }}>{murder.victim_name}</Text> — {personalise(murder.action, murder.victim_name)}
           </Text>
         </View>
       ))}
@@ -648,7 +620,7 @@ function InviteSheet({ visible, onClose }: { visible: boolean; onClose: () => vo
             <QrCode value={inviteLink()} size={224} />
           </View>
         ) : null}
-        <Body style={{ textAlign: "center" }}>Point a phone camera at the QR code to open the app, then tap “Join the game”. No codes needed.</Body>
+        <Body style={{ textAlign: "center" }}>Point a phone camera at the QR code to open the app — it goes straight into this game. No codes needed.</Body>
         <Button testID="invite-whatsapp-button" label="Share on WhatsApp" icon="logo-whatsapp" onPress={() => shareToWhatsApp()} />
         <Button testID="invite-share-button" label="Share another way" variant="secondary" icon="share-social-outline" onPress={() => shareInvite()} />
         <Button testID="invite-close-button" label="Done" variant="ghost" onPress={onClose} />
@@ -659,17 +631,21 @@ function InviteSheet({ visible, onClose }: { visible: boolean; onClose: () => vo
 
 /**
  * The game's host nominates a ClaudAI host by giving the game its ClaudAI passphrase: first the
- * host's own PIN, then the new passphrase, typed twice. Only possible while the game has none.
- * The passphrase can never be recovered — there is no master key.
+ * host's own PIN, then the phone goes to the ClaudAI host, who chooses the passphrase (typed
+ * twice) without the host seeing it. Only possible while the game has none. The passphrase can
+ * never be recovered — there is no master key.
  */
 function NominateSheet({ hostId, hostName, onClose }: { hostId: string; hostName: string; onClose: () => void }) {
   const styles = useStyles();
+  const { colors } = useTheme();
   const insets = useSafeAreaInsets();
   const qc = useQueryClient();
   const [hostPin, setHostPin] = useState("");
   const [pass, setPass] = useState("");
   const [pass2, setPass2] = useState("");
-  const [step, setStep] = useState<"host" | "claudai">("host");
+  // host PIN → hand the phone over → the ClaudAI host's passphrase. The host's PIN is always
+  // followed by the hand-over, so the host never lands on the passphrase fields.
+  const [step, setStep] = useState<"host" | "handoff" | "claudai">("host");
   const ok = !passphraseProblem(pass) && pass === pass2;
   const save = useMutation({
     mutationFn: () => api.nominateClaudai(hostId, hostPin, pass),
@@ -678,14 +654,29 @@ function NominateSheet({ hostId, hostName, onClose }: { hostId: string; hostName
       onClose();
     },
     onError: (e) => {
+      if (!(e instanceof ApiError)) return;
+      // Someone got there first: nothing to do here — close and show the game as it is now.
+      if (e.status === 400 && /already has a ClaudAI host/i.test(e.message)) {
+        void qc.invalidateQueries({ queryKey: ["game"] });
+        onClose();
+        return;
+      }
       // Wrong host PIN (or too many tries): back to the host's PIN, keeping the passphrase.
-      // Anything else (e.g. the passphrase isn't strong enough) is fixed on this step.
-      if (e instanceof ApiError && [401, 403, 404, 429].includes(e.status)) {
+      // Anything else (e.g. the passphrase isn't strong enough) stays on this step to be fixed.
+      if ([401, 404, 429].includes(e.status)) {
         setHostPin("");
         setStep("host");
       }
     },
   });
+  const body =
+    step === "host"
+      ? pass
+        ? `Hand the phone back to ${hostName} to enter the host PIN again — the passphrase that was typed is kept.`
+        : `ClaudAI sees every role and move. Only ${hostName} (the host) can set it up — enter ${hostName}'s PIN.`
+      : step === "handoff"
+        ? "Hand the phone to your ClaudAI host — they choose the passphrase, unseen."
+        : "Choose the ClaudAI passphrase — only you should know it. Type it twice: it can never be recovered or reset, so write it down somewhere safe.";
   return (
     <Modal visible transparent animationType="fade" onRequestClose={onClose}>
       <KeyboardAvoidingView behavior="padding" style={{ flex: 1 }}>
@@ -697,11 +688,7 @@ function NominateSheet({ hostId, hostName, onClose }: { hostId: string; hostName
           testID="nominate-sheet"
         >
           <Title style={{ fontSize: 28, lineHeight: 34 }}>Nominate a ClaudAI host</Title>
-          <Body>
-            {step === "host"
-              ? `ClaudAI sees every role and move. Only ${hostName} (the host) can set it up — enter ${hostName}'s PIN.`
-              : "Now choose the ClaudAI passphrase and give it only to the ClaudAI host. Type it twice: it can never be recovered or reset, so write it down somewhere safe."}
-          </Body>
+          <Body testID="nominate-step-text">{body}</Body>
           <ErrorText testID="nominate-error" message={save.error?.message} />
           {step === "host" ? (
             <PinPad
@@ -709,9 +696,15 @@ function NominateSheet({ hostId, hostName, onClose }: { hostId: string; hostName
               onChange={(v) => {
                 save.reset();
                 setHostPin(v);
-                if (v.length === 4) setStep("claudai");
+                if (v.length === 4) setStep("handoff");
               }}
             />
+          ) : step === "handoff" ? (
+            <View style={styles.handoff} testID="nominate-handoff">
+              <Ionicons name="phone-portrait-outline" size={36} color={colors.brand} style={{ alignSelf: "center" }} />
+              <Button testID="nominate-handoff-continue" label="I'm the ClaudAI host — continue" icon="shield-half" onPress={() => setStep("claudai")} />
+              <Button testID="nominate-back-button" label="Re-enter the host PIN" variant="ghost" icon="keypad-outline" onPress={() => { save.reset(); setHostPin(""); setStep("host"); }} />
+            </View>
           ) : (
             <>
               <PassphraseFields
@@ -862,6 +855,7 @@ const useStyles = makeStyles((c) => ({
     borderColor: c.brandSecondary,
   },
   endSheetContent: { padding: spacing.lg, gap: spacing.md },
+  handoff: { gap: spacing.sm, alignItems: "stretch" },
   passInput: {
     height: 56,
     borderRadius: radius.md,
@@ -906,8 +900,7 @@ const useStyles = makeStyles((c) => ({
     borderTopWidth: 1,
     borderColor: c.brandSecondary,
   },
-  welcome: { flex: 1, paddingHorizontal: spacing.lg, justifyContent: "space-between" },
-  heroLogo: { width: "100%", aspectRatio: 592 / 400, maxHeight: 240, alignSelf: "center" },
+  joiningText: { color: c.onSurfaceSecondary, fontSize: 17, fontWeight: "600" },
   header: {
     flexDirection: "row",
     alignItems: "center",
@@ -942,7 +935,6 @@ const useStyles = makeStyles((c) => ({
     borderColor: c.brandTertiary,
   },
   phaseTitle: { fontSize: 36, lineHeight: 40, color: c.brand },
-  liveNote: { color: c.onSurfaceSecondary, fontSize: 15, textAlign: "center", marginTop: -spacing.xs },
   helpLink: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: spacing.sm, minHeight: 44 },
   helpLinkText: { color: c.brand, fontSize: 15, fontWeight: "700" },
   turnRow: { flexDirection: "row", alignItems: "center", gap: spacing.sm },

@@ -17,7 +17,7 @@ const STEPS: { icon: React.ComponentProps<typeof Ionicons>["name"]; title: strin
   {
     icon: "moon",
     title: "2. The Traitors plot",
-    body: "Before every Round Table the Traitors secretly pick a victim and one of five methods on the phone, chatting privately as they decide — or they lie low and spare everyone. Everyone else picks who they suspect on an identical-looking screen, so every turn looks the same. Instead of murdering, the Traitors may recruit a Faithful — only to replace a banished Traitor, or when just one Traitor is left. There are never more than two Traitors.",
+    body: "Before every Round Table the Traitors secretly pick a victim and one of five methods on the phone — or they lie low and spare everyone. Everyone else picks who they suspect on an identical-looking screen, so every turn looks the same. Instead of murdering, the Traitors may recruit a Faithful — only to replace a banished Traitor, or when just one Traitor is left. There are never more than two Traitors. Hold your role card 3 seconds to see your role, and 3 more for the Traitors' menu — secret chat any time.",
   },
   {
     icon: "sunny",
@@ -42,7 +42,7 @@ const STEPS: { icon: React.ComponentProps<typeof Ionicons>["name"]; title: strin
   {
     icon: "phone-portrait-outline",
     title: "Playing on several phones",
-    body: "Open the app on as many phones as you like, for example one per couple. There are no codes: once a game has started, every other phone just opens the app and taps \"Join the game\". Every phone then shows the same game and updates by itself. Anyone can take their turn on any phone: tap your own name and enter your PIN, then hide the screen before handing it back. There is only ever one game at a time, until it's ended. You need an internet connection.",
+    body: "Open the app on as many phones as you like, for example one per couple. There are no codes: once a game has started, every other phone just opens the app and goes straight in. Every phone then shows the same game and updates by itself. Anyone can take their turn on any phone: tap your own name and enter your PIN, then hide the screen before handing it back. There is only ever one game at a time, until it's ended. You need an internet connection.",
   },
   {
     icon: "shield-half-outline",
@@ -52,7 +52,7 @@ const STEPS: { icon: React.ComponentProps<typeof Ionicons>["name"]; title: strin
   {
     icon: "book-outline",
     title: "After the game",
-    body: "Everyone can open \"The whole story\": every role, murder, vote and secret message, round by round. Finished games stay in \"Previous games\" on the start screen.",
+    body: "Everyone can open \"The whole story\": every role, murder, vote and secret message, round by round. Finished games stay in \"Previous games\".",
   },
   {
     icon: "eye-off",

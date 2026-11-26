@@ -2,7 +2,7 @@
 import pytest
 from test_traitors_game import API, S, G, setup_game, setup_game_traitors, pin_of, private, del_game
 
-CUSTOM = ["TEST_Act Alpha", "TEST_Act Beta", "TEST_Act Gamma"]
+CUSTOM = ["TEST_Act Alpha", "TEST_Act Beta", "TEST_Act Gamma", "TEST_Act Delta", "TEST_Act Epsilon"]
 
 
 @pytest.fixture(scope="module", autouse=True)
@@ -23,19 +23,22 @@ class TestActions:
         assert "Offer them some sun cream" in d["actions"]
 
     def test_put_trims_and_dedupes(self):
-        r = S.put(f"{G()}/actions", json={"actions": ["  TEST_Act Alpha ", "test_act alpha", "TEST_Act Beta", "", "   ", "TEST_Act Gamma", "TEST_ACT BETA"]})
+        r = S.put(f"{G()}/actions", json={"actions": ["  TEST_Act Alpha ", "test_act alpha", "TEST_Act Beta", "", "   ", "TEST_Act Gamma",
+                                                     "TEST_ACT BETA", "TEST_Act Delta", " TEST_Act Epsilon", "test_act DELTA"]})
         assert r.status_code == 200, r.text
         d = r.json()
         assert d["actions"] == CUSTOM and d["is_default"] is False
         g = S.get(f"{G()}/actions").json()
         assert g["actions"] == CUSTOM and g["is_default"] is False
 
-    def test_put_min_three(self):
-        r = S.put(f"{G()}/actions", json={"actions": ["A one", "a ONE", "B two", "  "]})
-        assert r.status_code == 400
-        assert "at least 3" in r.json()["detail"]
-        # unchanged
-        assert S.get(f"{G()}/actions").json()["actions"] == CUSTOM
+    def test_put_min_five(self):
+        # the Traitors are always offered five different methods, so a list needs at least five
+        for short in (["A one", "a ONE", "B two", "  "], ["A one", "B two", "C three", "D four", "d FOUR", "   "]):
+            r = S.put(f"{G()}/actions", json={"actions": short})
+            assert r.status_code == 400
+            assert r.json()["detail"] == "Keep at least 5 secret actions"
+            # unchanged
+            assert S.get(f"{G()}/actions").json()["actions"] == CUSTOM
 
     def test_put_too_long_dropped(self):
         r = S.put(f"{G()}/actions", json={"actions": CUSTOM + ["x" * 121]})
@@ -53,11 +56,11 @@ class TestActions:
             S.post(f"{G()}/turn", json={"player_id": p["id"], "pin": pin_of(p["name"])})
         assert S.post(f"{G()}/advance").json()["phase"] == "day"
         assert S.post(f"{G()}/advance").json()["phase"] == "night"
-        # the traitor is offered a choice of three custom actions and confirms one
+        # the traitor is offered a choice of the five custom actions and confirms one
         r = S.post(f"{G()}/turn", json={"player_id": tr["id"], "pin": pin_of(tr["name"]), "target_id": fa[0]["id"]})
         assert r.status_code == 200 and r.json()["target"]["id"] == fa[0]["id"]
         choices = r.json()["action_choices"]
-        assert len(choices) == 3 and all(c in CUSTOM for c in choices)
+        assert len(choices) == 5 and sorted(choices) == sorted(CUSTOM)
         assert S.post(f"{G()}/turn", json={"player_id": tr["id"], "pin": pin_of(tr["name"]), "action": choices[0]}).status_code == 200
         for p in ps:
             if p["id"] != tr["id"]:

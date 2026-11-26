@@ -26,11 +26,10 @@ const SECTIONS: Section[] = [
   {
     id: "welcome",
     icon: "home-outline",
-    title: "Start screen",
+    title: "Opening the app",
     tips: [
-      ["Join the game", "a game is already under way — tap it to join. No codes needed: there's only ever one game, until it's ended."],
-      ["Begin a new game", "shown when no game is in progress. You set it up for the group."],
-      ["How to play", "the rules, in a minute."],
+      ["Straight in", "the app opens the game in progress. No codes: there's only ever one game, until it's ended."],
+      ["No game running?", "it opens New game setup, with links to How to play and Previous games."],
       ["Previous games", "the whole story of every finished game, for everyone."],
     ],
   },
@@ -52,8 +51,8 @@ const SECTIONS: Section[] = [
     icon: "enter-outline",
     title: "Join a game",
     tips: [
-      ["No codes", "open the app and tap Join the game on the start screen."],
-      ["Scanned a QR or tapped a link?", "It opens the app — then tap Join the game."],
+      ["No codes", "just open the app — it goes straight into the game."],
+      ["Scanned a QR or tapped a link?", "Same: it opens straight into the game."],
     ],
   },
   {
@@ -95,8 +94,8 @@ const SECTIONS: Section[] = [
       ["Wrong PIN?", "The dots clear. Just try again."],
       ["Follow the screen.", "Sometimes there is a choice to make, sometimes only a button to pass the phone on."],
       ["Everyone takes a turn", "and every turn looks the same from across the room. Don't skip yours."],
-      ["Your role", "press and hold the card to see it; let go and it hides again."],
-      ["Traitors' chat", "on everyone's plot screen while the plan is decided. Only the Traitors can read or send; it closes once the plan is sealed."],
+      ["Your role", "hold the card — it shows after 3 seconds; let go and it hides again."],
+      ["Traitors' menu", "keep holding 3 more seconds. Everyone can open it; only the Traitors can use it — fellow Traitors, the plan and the secret chat (with who's seen each message)."],
       ["Always finish", "with the button at the bottom so the screen is hidden before the phone leaves your hand."],
       ["✕ (top right)", "closes the screen without doing anything."],
     ],
@@ -119,7 +118,6 @@ const SECTIONS: Section[] = [
       ["Day history", "what has been announced so far, Round Table by Round Table. Nothing secret is in there."],
       ["Secret actions", "locked. It asks who you are and only opens for the right people."],
       ["Invite players", "a QR code and a link for other phones."],
-      ["Leave game on this phone", "the game carries on for everyone else. Come back with Join the game."],
       ["ClaudAI (host)", "for the ClaudAI host only: opens with this game's ClaudAI passphrase. It shows everything, so never open it where players can see."],
       ["Nominate a ClaudAI host", "only if the game has none yet. Needs the host's PIN, then sets the ClaudAI passphrase (typed twice, can't be recovered)."],
       ["End this game for everyone", "needs the host's PIN and cannot be undone."],
@@ -133,7 +131,7 @@ const SECTIONS: Section[] = [
       ["All roles", "are now shown next to the names on the main screen."],
       ["The whole story", "every role, murder, vote and secret message, round by round — for everyone."],
       ["Share the finale", "makes a picture of the result to send to the family."],
-      ["Start a new game", "clears this one from every phone. Its whole story stays in Previous games on the start screen."],
+      ["Start a new game", "clears this one from every phone. Its whole story stays in Previous games."],
     ],
   },
   {
@@ -147,7 +145,7 @@ const SECTIONS: Section[] = [
       ["Could not reach the castle?", "Check your internet, then Try again. The game is safe."],
       ["Game ended on another phone?", "It was ended for everyone. Start a new one or join another."],
       ["Opened the wrong name?", "Tap ✕. Nothing happens without that player's PIN."],
-      ["Phone ran out of battery?", "Use any other phone: open the app, tap Join the game and carry on."],
+      ["Phone ran out of battery?", "Use any other phone: open the app and carry on."],
     ],
   },
 ];
