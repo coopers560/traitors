@@ -674,7 +674,7 @@ class TestModeratorNow:
         assert len(now["waiting_on"]) == 6 and not now["ready"]
         finish_setup(ps)
         now = self._mod()["now"]
-        assert now["waiting_on"] == [] and "Night falls" in now["next"]
+        assert now["waiting_on"] == [] and "Start the plot" in now["next"]
         S.post(f"{G()}/advance")
         first = ps[0]
         S.post(f"{G()}/turn", json={"player_id": first["id"], "pin": pin_of(first["name"])})
