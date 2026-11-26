@@ -69,6 +69,9 @@ export type GameState =
       turns_done: number;
       history: DayResult[];
       revote?: Revote | null;
+      /** Murders can't come in quick succession: the next night can't start before this (ISO time). */
+      next_plot_at?: string | null;
+      murder_gap_hours?: number;
     };
 
 export type PrivateView = {

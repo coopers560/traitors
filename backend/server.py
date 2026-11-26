@@ -135,6 +135,9 @@ class Game(BaseModel):
     recruit_id: Optional[str] = None  # a Faithful the Traitors recruit tonight (instead of murdering)
     # Recruits the Traitors have earned: +1 each time a Traitor is banished, -1 when they use it.
     recruit_credits: int = 0
+    # When the last murder was revealed (ISO time), so murders can't come in quick succession.
+    last_murder_at: Optional[str] = None
+    murder_gap_hours: float = 3.0
     # Optional per-game ClaudAI login: a 4-digit PIN (hashed) that opens this game's god-view.
     moderator_pin_hash: Optional[str] = None
     # The Traitors' secret group chat. Only Traitors still in the game can read or post; never
@@ -194,6 +197,8 @@ class CreateGameIn(BaseModel):
     players: List[PlayerIn]
     # One group plays one game at a time: when set, refuse while another game is in progress.
     single: bool = False
+    # Minimum hours between murders (default 3). Tests set 0.
+    murder_gap_hours: Optional[float] = None
     # Optional ClaudAI PIN for this game (a host who sees everything).
     moderator_pin: Optional[str] = None
 
@@ -301,12 +306,40 @@ def public_state(g: Game) -> dict:
             for p in g.players
         ],
         "revote": _revote_info(g),
+        # Murders can't come in quick succession: the next night can't start before this time.
+        "next_plot_at": (None if in_endgame(g) else (lambda t: t.isoformat() if t else None)(next_plot_at(g))),
+        "murder_gap_hours": g.murder_gap_hours,
         "turns_needed": len(g.players) if g.phase == "setup" else len(g.alive()),
         "turns_done": len(g.turns_done),
         # never reveal which secret action was used (strip from older records too);
         # a day's murder is None until the night step has resolved it
         "history": [_public_history(h, ended) for h in g.history],
     }
+
+
+def _last_murder_time(g: Game) -> Optional[datetime]:
+    """When the last murder was revealed. Games from before this was recorded fall back to the
+    event log's last 'Murder revealed' entry."""
+    t = g.last_murder_at
+    if not t:
+        for e in reversed(g.event_log):
+            if e.get("kind") == "reveal" and str(e.get("text", "")).startswith("Murder revealed"):
+                t = e.get("t")
+                break
+    try:
+        return datetime.fromisoformat(t) if t else None
+    except ValueError:
+        return None
+
+
+def next_plot_at(g: Game) -> Optional[datetime]:
+    """The earliest the Traitors may plot again (the next night), or None if they may now.
+    Murders must be at least murder_gap_hours apart."""
+    last = _last_murder_time(g)
+    if not last or g.murder_gap_hours <= 0:
+        return None
+    nxt = last + timedelta(hours=g.murder_gap_hours)
+    return nxt if nxt > datetime.now(timezone.utc) else None
 
 
 def _revote_info(g: Game) -> Optional[dict]:
@@ -473,7 +506,10 @@ def _now(g: Game) -> dict:
         nxt = tap("Begin Day 1") if ready else "Pass the phone round until everyone has seen their role"
     elif g.phase == "day":
         doing, what, waiting = f"Day {g.day} — enjoy the holiday", "", []
-        nxt = tap("Gather for the final vote") if in_endgame(g) else tap("Night falls — the Traitors move")
+        wait = None if in_endgame(g) else next_plot_at(g)
+        nxt = (tap("Gather for the final vote") if in_endgame(g)
+               else f"Wait — murders must be {g.murder_gap_hours:g} hours apart (the dashboard shows when)" if wait
+               else tap("Night falls — the Traitors move"))
     elif g.phase == "night":
         doing, what = "Night — everyone takes a turn while the Traitors secretly plot", "to take their night turn"
         nxt = tap("Everyone to the Round Table") if ready else "Everyone still listed takes their night turn"
@@ -996,6 +1032,8 @@ async def create_game(data: CreateGameIn):
     ]
     g = Game(code=await new_code(), players=players)
     g.host_id = players[0].id  # the first player entered is the host/creator
+    if data.murder_gap_hours is not None:
+        g.murder_gap_hours = max(0.0, min(24.0, data.murder_gap_hours))
     if data.moderator_pin:
         g.moderator_pin_hash = hash_pin(data.moderator_pin)
     traitors = ", ".join(pl.name for pl in players if pl.role == "traitor")
@@ -1202,6 +1240,12 @@ async def advance(code: str, expected: Optional[str] = None, expected_day: Optio
             g.turns_done, g.votes, g.end_votes = [], {}, []
             log(g, "stage", "Endgame: straight to the final vote — banish one more, or end the game")
         else:
+            wait = next_plot_at(g)
+            if wait:
+                raise HTTPException(
+                    400,
+                    f"Too soon after the last murder — the Traitors can strike again {g.murder_gap_hours:g} hours after it.",
+                )
             g.phase = "night"
             g.turns_done, g.target_id, g.action, g.murder_confirmed, g.action_choices, g.recruit_id = [], None, None, False, [], None
             g.murder_done = False
@@ -1241,6 +1285,8 @@ async def advance(code: str, expected: Optional[str] = None, expected_day: Optio
             murder = {"success": False}
         elif g.murder_confirmed and g.murder_done:
             murder = resolve_murder(g)
+            if murder.get("success"):
+                g.last_murder_at = datetime.now(timezone.utc).isoformat()
         else:
             murder = {"success": False}
         g.winner = winner_by_roles(g)  # the murder alone can win it for the Traitors
