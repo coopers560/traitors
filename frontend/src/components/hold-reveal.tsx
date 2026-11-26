@@ -93,9 +93,11 @@ export function HoldToReveal({
   }, [held, timed]);
 
   const revealed = held && elapsed >= revealAfterMs;
-  // The second being counted: 1 from the first touch, 4 once a 3-second reveal has shown, …
-  const count = Math.floor(elapsed / 1000) + 1;
-  const holdSecs = Math.round(revealAfterMs / 1000);
+  // Before the reveal the cover counts up to the reveal time: 1… then 1.5… for a 1.5-second
+  // reveal (whole seconds, capped at the reveal time). After it, the long hold counts afresh: 1… 2… 3…
+  const count = Number(Math.min(Math.floor(elapsed / 1000) + 1, revealAfterMs / 1000).toFixed(1));
+  const longCount = Math.max(1, Math.floor((elapsed - revealAfterMs) / 1000) + 1);
+  const holdSecs = Number((revealAfterMs / 1000).toFixed(1)); // 1.5 stays 1.5
   const longSpan = longHold ? Math.max(1, longHold.afterMs - revealAfterMs) : 1;
   const longProgress = longHold ? Math.min(1, Math.max(0, (elapsed - revealAfterMs) / longSpan)) : 0;
 
@@ -127,7 +129,7 @@ export function HoldToReveal({
               <View style={{ flexGrow: 1, justifyContent: "center" }}>{children}</View>
               <View style={styles.longHint} testID={`${testID}-long-hint`}>
                 <Text style={styles.longCount} selectable={false} testID={`${testID}-long-count`}>
-                  {count}…
+                  {longCount}…
                 </Text>
                 <View style={{ flex: 1, gap: 6 }}>
                   <Text style={styles.longText} selectable={false}>{longHold.hint}</Text>

@@ -31,8 +31,8 @@ function exitWithLabel(history: DayResult[], playerId: string): { how: "murdered
 
 // The hold on the role card: the role shows after 3 seconds, the Traitors' menu opens after 6.
 // Exactly the same for every player, whatever their role — the hint is shown to everyone.
-const REVEAL_MS = 3000;
-const MENU_MS = 6000;
+const REVEAL_MS = 1500; // the role shows after 1.5 seconds of holding
+const MENU_MS = 4500; // …and 3 seconds more opens the Traitors' menu
 const MENU_HINT = "Keep holding 3 more seconds for the Traitors' menu";
 /** Extra cover height for the hint, so the card doesn't grow when the role shows. */
 const HINT_SPACE = 76;
