@@ -84,7 +84,7 @@ class TestCodes:
         assert r.status_code == 404 and r.json()["detail"] == "No game found with that code"
         r = S.post(f"{API}/games/ZZZZ9/turn", json={"player_id": "x", "pin": "0001"})
         assert r.status_code == 404
-        r = S.put(f"{API}/games/ZZZZ9/actions", json={"actions": ["a", "b", "c"]})
+        r = S.put(f"{API}/games/ZZZZ9/actions", json={"actions": ["a", "b", "c", "d", "e"]})
         assert r.status_code == 404
 
     def test_legacy_routes_gone(self):
@@ -111,7 +111,7 @@ class TestIsolation:
 
     def test_actions_per_game_and_used_in_murder(self):
         a, b = create_traitors(6, 2), create_traitors(6, 2)
-        custom = ["TEST_Iso One", "TEST_Iso Two", "TEST_Iso Three"]
+        custom = ["TEST_Iso One", "TEST_Iso Two", "TEST_Iso Three", "TEST_Iso Four", "TEST_Iso Five"]
         r = S.put(f"{G(a['code'])}/actions", json={"actions": custom})
         assert r.status_code == 200 and r.json()["actions"] == custom and r.json()["is_default"] is False
         assert S.get(f"{G(b['code'])}/actions").json()["is_default"] is True

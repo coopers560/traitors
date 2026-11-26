@@ -7,7 +7,7 @@ import { KeyboardAvoidingView, KeyboardAwareScrollView } from "react-native-keyb
 import Animated, { FadeIn, FadeInDown } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-import { api, DayResult, exitOf, GameState, PrivateView, PublicPlayer, roundLabel } from "@/src/api";
+import { api, ApiError, DayResult, exitOf, GameState, personalise, PrivateView, PublicPlayer, roundLabel } from "@/src/api";
 import { HelpButton } from "@/src/components/help-button";
 import { HoldToReveal } from "@/src/components/hold-reveal";
 import { PinPad } from "@/src/components/pin-pad";
@@ -29,6 +29,14 @@ function exitWithLabel(history: DayResult[], playerId: string): { how: "murdered
   return { how: e.how, label: h ? roundLabel(h) : `Day ${e.day}` };
 }
 
+// The hold on the role card: the role shows after 3 seconds, the Traitors' menu opens after 6.
+// Exactly the same for every player, whatever their role — the hint is shown to everyone.
+const REVEAL_MS = 3000;
+const MENU_MS = 6000;
+const MENU_HINT = "Keep holding 3 more seconds for the Traitors' menu";
+/** Extra cover height for the hint, so the card doesn't grow when the role shows. */
+const HINT_SPACE = 76;
+
 export default function PlayerTurn() {
   const styles = useStyles();
   const { colors } = useTheme();
@@ -47,7 +55,9 @@ export default function PlayerTurn() {
   // looking at their phone never stands out.
   const [roleChecked, setRoleChecked] = useState(false);
   const [roleSeen, setRoleSeen] = useState(false);
-  const [chatOpen, setChatOpen] = useState(false);
+  // The Traitors' menu (fellow Traitors, tonight's plan, secret chat), opened by a long hold
+  // on the role card. Everyone can open it and it looks the same for everyone.
+  const [menuOpen, setMenuOpen] = useState(false);
   const autoTried = useRef(false);
 
   const players = game?.exists ? game.players : [];
@@ -95,6 +105,9 @@ export default function PlayerTurn() {
   // must not reveal who is a Traitor. The role is shown only in text, up close.
   const bg = IMAGES.candle;
 
+  // No secret chat during setup (the server allows none yet), so no menu then — for anyone.
+  const openMenu = view && view.phase !== "setup" ? () => setMenuOpen(true) : undefined;
+
   return (
     <View style={styles.root} testID="player-screen">
       <Backdrop image={bg} strong={!!view} />
@@ -119,70 +132,66 @@ export default function PlayerTurn() {
         </View>
       ) : sealed ? (
         <Sealed onDone={leave} />
-      ) : chatOpen ? (
-        <SecretChat view={view} pin={pin} onClose={() => setChatOpen(false)} />
-      ) : mode === "turn" && view.phase === "roundtable" && view.alive && !roleChecked ? (
-        <RoleCheck view={view} onDone={() => setRoleChecked(true)} />
       ) : (
-        <KeyboardAwareScrollView bottomOffset={24} keyboardShouldPersistTaps="handled" contentContainerStyle={[styles.scroll, { paddingBottom: insets.bottom + spacing.lg }]}>
-          <RoleCard view={view} exit={exitWithLabel(history, view.player_id)} onReveal={() => setRoleSeen(true)}>
-            {mode === "turn" && view.phase === "setup" ? (
-              view.role === "traitor" ? (
-                <Body testID="setup-traitor-note">
-                  Remember your fellow Traitors. Before every Round Table you&apos;ll choose a victim (or lie low), carry out the murder in plain sight, then confirm it when everyone checks in.
-                </Body>
-              ) : (
-                <FaithfulBrief view={view} />
-              )
-            ) : isPeek ? (
-              view.role === "traitor" ? <TraitorBrief view={view} round={round} /> : <FaithfulBrief view={view} />
-            ) : null}
-          </RoleCard>
-          {boundHere ? (
-            <Pressable testID="forget-me-button" onPress={() => clearMe()} style={styles.rememberOn}>
-              <Ionicons name="checkmark-circle" size={18} color={colors.brand} />
-              <Text style={styles.rememberOnText}>This is your phone — no PIN needed. Tap to forget.</Text>
-            </Pressable>
-          ) : (
-            <Pressable testID="remember-me-button" onPress={() => setMe(id, pin)} style={styles.remember}>
-              <Ionicons name="phone-portrait-outline" size={20} color={colors.brand} />
-              <View style={{ flex: 1 }}>
-                <Text style={styles.rememberText}>Remember me on this phone</Text>
-                <Text style={styles.rememberSub}>Skip the PIN on your turn next time. Only on your own phone.</Text>
-              </View>
-            </Pressable>
-          )}
-          {view.phase !== "setup" ? (
-            <Pressable testID="secret-chat-button" onPress={() => setChatOpen(true)} style={styles.remember}>
-              <Ionicons name="chatbubbles-outline" size={20} color={colors.brand} />
-              <View style={{ flex: 1 }}>
-                <Text style={styles.rememberText}>Secret chat</Text>
-                <Text style={styles.rememberSub}>The Traitors&apos; private group chat.</Text>
-              </View>
-              <Ionicons name="chevron-forward" size={18} color={colors.muted} />
-            </Pressable>
-          ) : null}
-          {mode === "turn" && view.phase === "setup" ? (
-            <SetupTurn view={view} pin={pin} seen={roleSeen} onSealed={() => setSealed(true)} />
-          ) : mode === "turn" && view.phase === "gather" && view.alive ? (
-            <GatherTurn view={view} pin={pin} onSealed={() => setSealed(true)} />
-          ) : mode === "turn" && view.phase === "roundtable" && view.alive ? (
-            <RoundTableTurn view={view} pin={pin} players={players} history={history} onSealed={() => setSealed(true)} />
-          ) : mode === "turn" && view.phase === "night" && view.alive ? (
-            <NightTurn view={view} pin={pin} players={players} round={round} onSealed={() => setSealed(true)} />
-          ) : (
-            <Button testID="player-hide-button" label="Hide & pass the phone back" icon="eye-off" onPress={leave} />
-          )}
-        </KeyboardAwareScrollView>
+        <>
+          {menuOpen ? <TraitorsMenu view={view} pin={pin} round={round} onClose={() => setMenuOpen(false)} /> : null}
+          {/* Only hidden while the menu is open, so a turn half-taken is still there afterwards. */}
+          <View style={{ flex: 1, display: menuOpen ? "none" : "flex" }}>
+            {mode === "turn" && view.phase === "roundtable" && view.alive && !roleChecked ? (
+              <RoleCheck view={view} onDone={() => setRoleChecked(true)} onLongHold={openMenu} />
+            ) : (
+              <KeyboardAwareScrollView bottomOffset={24} keyboardShouldPersistTaps="handled" contentContainerStyle={[styles.scroll, { paddingBottom: insets.bottom + spacing.lg }]}>
+                <RoleCard view={view} exit={exitWithLabel(history, view.player_id)} onReveal={() => setRoleSeen(true)} onLongHold={openMenu}>
+                  {mode === "turn" && view.phase === "setup" ? (
+                    view.role === "traitor" ? (
+                      <Body testID="setup-traitor-note">
+                        Remember your fellow Traitors. Before every Round Table you&apos;ll choose a victim (or lie low), carry out the murder in plain sight, then confirm it when everyone checks in.
+                      </Body>
+                    ) : (
+                      <FaithfulBrief view={view} />
+                    )
+                  ) : isPeek ? (
+                    view.role === "traitor" ? <TraitorBrief view={view} round={round} /> : <FaithfulBrief view={view} />
+                  ) : null}
+                </RoleCard>
+                {boundHere ? (
+                  <Pressable testID="forget-me-button" onPress={() => clearMe()} style={styles.rememberOn}>
+                    <Ionicons name="checkmark-circle" size={18} color={colors.brand} />
+                    <Text style={styles.rememberOnText}>This is your phone — no PIN needed. Tap to forget.</Text>
+                  </Pressable>
+                ) : (
+                  <Pressable testID="remember-me-button" onPress={() => setMe(id, pin)} style={styles.remember}>
+                    <Ionicons name="phone-portrait-outline" size={20} color={colors.brand} />
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.rememberText}>Remember me on this phone</Text>
+                      <Text style={styles.rememberSub}>Skip the PIN on your turn next time. Only on your own phone.</Text>
+                    </View>
+                  </Pressable>
+                )}
+                {mode === "turn" && view.phase === "setup" ? (
+                  <SetupTurn view={view} pin={pin} seen={roleSeen} onSealed={() => setSealed(true)} />
+                ) : mode === "turn" && view.phase === "gather" && view.alive ? (
+                  <GatherTurn view={view} pin={pin} onSealed={() => setSealed(true)} />
+                ) : mode === "turn" && view.phase === "roundtable" && view.alive ? (
+                  <RoundTableTurn view={view} pin={pin} players={players} history={history} onSealed={() => setSealed(true)} />
+                ) : mode === "turn" && view.phase === "night" && view.alive ? (
+                  <NightTurn view={view} pin={pin} players={players} round={round} onSealed={() => setSealed(true)} />
+                ) : (
+                  <Button testID="player-hide-button" label="Hide & pass the phone back" icon="eye-off" onPress={leave} />
+                )}
+              </KeyboardAwareScrollView>
+            )}
+          </View>
+        </>
       )}
     </View>
   );
 }
 
-function RoleCheck({ view, onDone }: { view: PrivateView; onDone: () => void }) {
+function RoleCheck({ view, onDone, onLongHold }: { view: PrivateView; onDone: () => void; onLongHold?: () => void }) {
   const styles = useStyles();
   const insets = useSafeAreaInsets();
-  const [shown, setShown] = useState(false); // held at least once
+  const [shown, setShown] = useState(false); // the role has been shown at least once
   const traitor = view.role === "traitor";
   const fellows = view.fellow_traitors ?? [];
   return (
@@ -195,7 +204,14 @@ function RoleCheck({ view, onDone }: { view: PrivateView; onDone: () => void }) 
           nobody can see your screen.
         </Body>
       </Animated.View>
-      <HoldToReveal testID="role-check-reveal" label="Press and hold to see who you are" minHeight={190} onReveal={() => setShown(true)}>
+      <HoldToReveal
+        testID="role-check-reveal"
+        label="Press and hold to see who you are"
+        minHeight={200 + (onLongHold ? HINT_SPACE : 0)}
+        revealAfterMs={REVEAL_MS}
+        longHold={onLongHold ? { afterMs: MENU_MS, hint: MENU_HINT, onLongHold } : undefined}
+        onReveal={() => setShown(true)}
+      >
         <View style={styles.roleCard} testID="role-check-card">
           {view.recruited_now ? (
             <>
@@ -231,11 +247,15 @@ function RoleCard({
   view,
   exit,
   onReveal,
+  onLongHold,
   children,
 }: {
   view: PrivateView;
   exit: { how: "murdered" | "banished"; label: string } | null;
+  /** The role has been shown (after the 3-second hold). */
   onReveal?: () => void;
+  /** Held on for 6 seconds: open the Traitors' menu. */
+  onLongHold?: () => void;
   children?: React.ReactNode;
 }) {
   const styles = useStyles();
@@ -246,7 +266,14 @@ function RoleCard({
   return (
     <Animated.View entering={FadeIn.duration(800)} style={styles.roleCard} testID="role-card">
       <Eyebrow>{view.name}, you are</Eyebrow>
-      <HoldToReveal testID="role-hold" label="Press and hold to see your role" minHeight={children ? 220 : 150} onReveal={onReveal}>
+      <HoldToReveal
+        testID="role-hold"
+        label="Press and hold to see your role"
+        minHeight={(children ? 220 : 150) + (onLongHold ? HINT_SPACE : 0)}
+        revealAfterMs={REVEAL_MS}
+        longHold={onLongHold ? { afterMs: MENU_MS, hint: MENU_HINT, onLongHold } : undefined}
+        onReveal={onReveal}
+      >
         <View style={{ gap: spacing.sm }}>
           <Text testID="role-title" style={styles.roleTitle}>
             {traitor ? "A Traitor" : "Faithful"}
@@ -290,7 +317,7 @@ function TraitorBrief({ view, round }: { view: PrivateView; round: string }) {
       <Eyebrow>Today&apos;s murder · {round}</Eyebrow>
       <Text style={styles.briefTarget} testID="traitor-target-name">{view.target.name}</Text>
       <Text style={styles.briefLabel}>Your secret action — do it in plain sight:</Text>
-      <Text style={styles.briefAction} testID="traitor-action">{view.action}</Text>
+      <Text style={styles.briefAction} testID="traitor-action">{personalise(view.action, view.target.name)}</Text>
       <Body style={{ fontSize: 15 }}>Any Traitor may do it. Be natural — don&apos;t get caught!</Body>
     </View>
   );
@@ -349,11 +376,14 @@ function ActionChoices({
   selected,
   onSelect,
   label = "Choose your secret action",
+  display = (a) => a,
 }: {
   options: string[];
   selected: string | null;
   onSelect: (a: string) => void;
   label?: string;
+  /** How to show an option (e.g. a method with the victim's name in it); `onSelect` still gets the original. */
+  display?: (a: string) => string;
 }) {
   const styles = useStyles();
   const { colors } = useTheme();
@@ -364,7 +394,7 @@ function ActionChoices({
         const on = selected === a;
         return (
           <Pressable key={a} testID={`action-choice-${a}`} onPress={() => onSelect(a)} style={[styles.pick, { minHeight: 64 }, on && styles.pickOn]}>
-            <Text style={[styles.pickText, { flex: 1 }, on && { color: colors.onBrandPrimary }]}>{a}</Text>
+            <Text style={[styles.pickText, { flex: 1 }, on && { color: colors.onBrandPrimary }]}>{display(a)}</Text>
             <Ionicons name={on ? "radio-button-on" : "radio-button-off"} size={24} color={on ? colors.onBrandPrimary : colors.borderStrong} />
           </Pressable>
         );
@@ -471,7 +501,7 @@ function NightTurn({
     return (
       <>
         <Body>Victim: {victimName}. Choose how you&apos;ll do it — pick one of these five secret actions to perform in plain sight:</Body>
-        <ActionChoices options={choices} selected={chosen} onSelect={setChosen} />
+        <ActionChoices options={choices} selected={chosen} onSelect={setChosen} display={(a) => personalise(a, victimName)} />
         <ErrorText testID="turn-error" message={confirm.error?.message || pass.error?.message} />
         <Button testID="night-confirm-button" label="Seal the murder" icon="lock-closed" disabled={!chosen} loading={confirm.isPending} onPress={() => chosen && confirm.mutate(chosen)} />
         <Button testID="night-skip-button" label="Lie low — no murder this time" variant="secondary" icon="play-skip-forward-outline" loading={pass.isPending} onPress={() => pass.mutate(false)} />
@@ -501,11 +531,11 @@ function NightTurn({
               : "You may recruit because a Traitor has been banished — one recruit replaces each banished Traitor."}{" "}
             There can never be more than two Traitors.
           </Body>
+          <Button testID="night-skip-button" label="Lie low — nothing this time" variant="secondary" icon="play-skip-forward-outline" loading={pass.isPending} onPress={() => pass.mutate(reopening)} />
           <VictimPicker label={`New Traitor · ${round}`} prefix="night-recruit" players={candidates} selected={recruitTarget} onSelect={setRecruitTarget} />
           <ErrorText testID="turn-error" message={recruit.error?.message || pass.error?.message} />
           <Button testID="night-recruit-button" label="Seal the recruitment" icon="lock-closed" disabled={!recruitTarget} loading={recruit.isPending} onPress={() => recruitTarget && recruit.mutate(recruitTarget)} />
           <Button testID="night-no-recruit-button" label="Don't recruit — murder instead" variant="secondary" icon="skull-outline" onPress={() => { setMode("murder"); setRecruitTarget(null); }} />
-          <Button testID="night-skip-button" label="Lie low — nothing this time" variant="secondary" icon="play-skip-forward-outline" loading={pass.isPending} onPress={() => pass.mutate(reopening)} />
         </>
       ) : (
         <>
@@ -519,9 +549,7 @@ function NightTurn({
               from five secret actions. Or lie low and spare everyone.
             </Body>
           )}
-          <VictimPicker label={`The victim · ${round}`} prefix="night-victim" players={candidates} selected={target} onSelect={setTarget} />
-          <ErrorText testID="turn-error" message={pickVictim.error?.message || pass.error?.message} />
-          <Button testID="night-pick-button" label="Choose the method" icon="arrow-forward" disabled={!target} loading={pickVictim.isPending} onPress={() => target && pickVictim.mutate(target)} />
+          {/* Right under the intro, above the names — in the same place as the Faithful's Skip. */}
           <Button
             testID="night-skip-button"
             label={reopening ? "Lie low — call the murder off" : "Lie low — no murder this time"}
@@ -530,6 +558,9 @@ function NightTurn({
             loading={pass.isPending}
             onPress={() => pass.mutate(reopening)}
           />
+          <VictimPicker label={`The victim · ${round}`} prefix="night-victim" players={candidates} selected={target} onSelect={setTarget} />
+          <ErrorText testID="turn-error" message={pickVictim.error?.message || pass.error?.message} />
+          <Button testID="night-pick-button" label="Choose the method" icon="arrow-forward" disabled={!target} loading={pickVictim.isPending} onPress={() => target && pickVictim.mutate(target)} />
         </>
       )}
     </>
@@ -595,76 +626,147 @@ function FaithfulNight({
         The Traitors are plotting in secret. Choose who you suspect most — then how sure you are, from five
         options. It&apos;s only for you: nothing here is shared or saved.
       </Body>
+      {/* Right under the intro, above the names — in the same place as a Traitor's Lie low. */}
+      <Button testID="night-skip-button" label="Skip — pass the phone on" variant="secondary" icon="play-skip-forward-outline" loading={skip.isPending} onPress={() => skip.mutate()} />
       <VictimPicker label={`Your suspect · ${round}`} prefix="night-suspect" players={players} selected={suspect} onSelect={setSuspect} excludeId={view.player_id} />
       <ErrorText testID="turn-error" message={error} />
       <Button testID="night-pick-button" label="Choose how sure" icon="arrow-forward" disabled={!suspect} onPress={() => setStep(2)} />
-      <Button testID="night-skip-button" label="Skip — pass the phone on" variant="secondary" icon="play-skip-forward-outline" loading={skip.isPending} onPress={() => skip.mutate()} />
     </>
   );
 }
 
 /**
- * The Traitors' secret group chat. Everyone has the same button and sees the same screen;
- * only a Traitor still in the game gets messages back, and only they can send.
+ * The Traitors' menu, opened by holding the role card for six seconds. Anyone can open it and it
+ * looks the same for everyone: the same title, the same frames, the same message box. Only a
+ * Traitor still in the game sees what is in it — fellow Traitors, tonight's plan and the secret
+ * chat. Anyone else's frames just say so, and their messages go nowhere, with no error shown.
  */
-function SecretChat({ view, pin, onClose }: { view: PrivateView; pin: string; onClose: () => void }) {
+function TraitorsMenu({ view: initial, pin, round, onClose }: { view: PrivateView; pin: string; round: string; onClose: () => void }) {
   const styles = useStyles();
   const { colors } = useTheme();
   const insets = useSafeAreaInsets();
   const qc = useQueryClient();
   const scroll = useRef<ComponentRef<typeof ScrollView>>(null);
   const [text, setText] = useState("");
-  const { data } = useQuery({
-    queryKey: ["chat", view.player_id],
-    queryFn: () => api.readChat(view.player_id, pin),
+  const id = initial.player_id;
+  // Kept fresh while open, so a plan a fellow Traitor has just changed shows up. Every player's
+  // menu asks the server in exactly the same way. Nothing is kept once the menu closes (gcTime 0),
+  // so a shared phone never holds on to one player's secrets for the next.
+  const { data: fresh } = useQuery({
+    queryKey: ["menu-view", id],
+    queryFn: () => api.privateView(id, pin),
     refetchInterval: 3000,
+    gcTime: 0,
+  });
+  const view = fresh ?? initial;
+  const traitor = view.role === "traitor" && view.alive;
+  const { data: chat } = useQuery({
+    queryKey: ["chat", id],
+    queryFn: () => api.readChat(id, pin),
+    refetchInterval: 3000,
+    gcTime: 0,
   });
   const send = useMutation({
-    mutationFn: () => api.sendChat(view.player_id, pin, text.trim()),
+    mutationFn: (message: string) => api.sendChat(id, pin, message),
     onSuccess: (d) => {
-      qc.setQueryData(["chat", view.player_id], d);
-      setText("");
+      if (d.allowed) qc.setQueryData(["chat", id], d);
+    },
+    // Never an error on screen: a message that isn't allowed must look just like one that is
+    // sent. Only a message that never reached the server (no signal) is put back to try again.
+    onError: (e, message) => {
+      if (e instanceof ApiError && e.status < 500) return;
+      setText((t) => t || message);
     },
   });
-  const messages = data?.messages ?? [];
+  const submit = () => {
+    const message = text.trim();
+    if (!message || send.isPending) return;
+    setText(""); // the box clears straight away for everyone, whatever the server makes of it
+    send.mutate(message);
+  };
+
+  const messages = traitor ? chat?.messages ?? [] : [];
+  const fellows = view.fellow_traitors ?? [];
+  const plotting = view.phase === "night" || view.phase === "gather";
+  const plan =
+    !traitor || !plotting
+      ? null
+      : view.recruit
+        ? { who: view.recruit.name, what: "Recruit them to join the Traitors — no murder this time." }
+        : view.target
+          ? {
+              who: view.target.name,
+              what: view.action && view.murder_confirmed ? personalise(view.action, view.target.name) : "The method isn't chosen yet.",
+            }
+          : null;
+  const hidden = "Only the Traitors can see this.";
   const time = (t: string) => new Date(t).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false });
+  const seenBy = (names: string[]) => names.map((n) => (n === view.name ? "you" : n)).join(", ");
+
   return (
-    <KeyboardAvoidingView behavior="padding" style={{ flex: 1 }} testID="secret-chat">
+    <KeyboardAvoidingView behavior="padding" style={{ flex: 1 }} testID="traitors-menu">
       <View style={styles.chatHead}>
         <Pressable testID="chat-close-button" onPress={onClose} style={styles.iconBtn} hitSlop={8} accessibilityLabel="Back">
           <Ionicons name="chevron-back" size={24} color={colors.onSurface} />
         </Pressable>
         <View style={{ flex: 1 }}>
-          <Text style={styles.chatTitle}>Secret chat</Text>
-          <Text style={styles.chatSub}>Only the Traitors can see or send messages here.</Text>
+          <Text style={styles.chatTitle}>The Traitors&apos; menu</Text>
+          <Text style={styles.chatSub}>Only the Traitors can use this menu.</Text>
         </View>
       </View>
       <ScrollView
         ref={scroll}
         style={{ flex: 1 }}
-        contentContainerStyle={styles.chatList}
+        contentContainerStyle={styles.menuList}
         onContentSizeChange={() => scroll.current?.scrollToEnd({ animated: false })}
         keyboardShouldPersistTaps="handled"
       >
-        {messages.length === 0 ? (
-          <View style={styles.chatEmpty} testID="chat-empty">
-            <Ionicons name="chatbubbles-outline" size={34} color={colors.muted} />
-            <Text style={styles.chatEmptyText}>No messages.</Text>
-          </View>
-        ) : (
-          messages.map((m) => {
-            const mine = m.from_id === view.player_id;
-            return (
-              <View key={m.id} style={[styles.bubble, mine ? styles.bubbleMine : styles.bubbleTheirs]} testID="chat-message">
-                {!mine ? <Text style={styles.bubbleName}>{m.from_name}</Text> : null}
-                <Text style={styles.bubbleText}>{m.text}</Text>
-                <Text style={styles.bubbleTime}>{time(m.t)}</Text>
-              </View>
-            );
-          })
-        )}
+        <View style={[styles.menuCard, styles.menuFellows]} testID="menu-fellows">
+          <Eyebrow>Fellow Traitors</Eyebrow>
+          <Text style={styles.menuText} testID="menu-fellows-text">
+            {!traitor ? hidden : fellows.length ? fellows.join(", ") : "You are the only Traitor."}
+          </Text>
+        </View>
+        <View style={[styles.menuCard, styles.menuPlan]} testID="menu-plan">
+          <Eyebrow>Tonight&apos;s plan · {round}</Eyebrow>
+          {plan ? (
+            <>
+              <Text style={styles.menuWho} testID="menu-plan-victim">{plan.who}</Text>
+              <Text style={styles.menuText} testID="menu-plan-action">{plan.what}</Text>
+            </>
+          ) : (
+            <Text style={styles.menuText}>{traitor ? "No murder is planned right now." : hidden}</Text>
+          )}
+        </View>
+        <View style={styles.menuChat} testID="secret-chat">
+          <Eyebrow>Secret chat</Eyebrow>
+          {messages.length === 0 ? (
+            <View style={styles.chatEmpty} testID="chat-empty">
+              <Ionicons name="chatbubbles-outline" size={34} color={colors.muted} />
+              <Text style={styles.chatEmptyText}>No messages.</Text>
+            </View>
+          ) : (
+            messages.map((m) => {
+              const mine = m.from_id === view.player_id;
+              const seen = (m.seen_by ?? []).filter(Boolean);
+              return (
+                <View key={m.id} style={[styles.msg, { alignSelf: mine ? "flex-end" : "flex-start" }]}>
+                  <View style={[styles.bubble, mine ? styles.bubbleMine : styles.bubbleTheirs]} testID="chat-message">
+                    {!mine ? <Text style={styles.bubbleName}>{m.from_name}</Text> : null}
+                    <Text style={styles.bubbleText}>{m.text}</Text>
+                    <Text style={styles.bubbleTime}>{time(m.t)}</Text>
+                  </View>
+                  {seen.length ? (
+                    <Text style={[styles.bubbleSeen, { alignSelf: mine ? "flex-end" : "flex-start" }]} testID="chat-seen-by">
+                      Seen by {seenBy(seen)}
+                    </Text>
+                  ) : null}
+                </View>
+              );
+            })
+          )}
+        </View>
       </ScrollView>
-      <ErrorText testID="chat-error" message={send.error?.message} />
       <View style={[styles.chatBar, { paddingBottom: insets.bottom + spacing.sm }]}>
         <TextInput
           testID="chat-input"
@@ -678,7 +780,7 @@ function SecretChat({ view, pin, onClose }: { view: PrivateView; pin: string; on
         />
         <Pressable
           testID="chat-send-button"
-          onPress={() => text.trim() && send.mutate()}
+          onPress={submit}
           disabled={!text.trim() || send.isPending}
           style={[styles.chatSend, (!text.trim() || send.isPending) && { opacity: 0.45 }]}
           accessibilityLabel="Send"
@@ -697,7 +799,7 @@ function SetupTurn({ view, pin, seen, onSealed }: { view: PrivateView; pin: stri
   });
   return (
     <>
-      {!seen ? <Body testID="setup-hold-note">Press and hold the card above to see your role, then confirm.</Body> : null}
+      {!seen ? <Body testID="setup-hold-note">Press and hold the card above for 3 seconds to see your role, then confirm.</Body> : null}
       <ErrorText testID="turn-error" message={submit.error?.message} />
       <Button testID="setup-turn-confirm-button" label="I understand — hide it" icon="eye-off" disabled={!seen} loading={submit.isPending} onPress={() => submit.mutate()} />
     </>
@@ -788,7 +890,7 @@ function GatherTurn({ view, pin, onSealed }: { view: PrivateView; pin: string; o
         <Text style={styles.carriedVictim} testID={needsAnswer ? "carried-victim" : undefined}>
           {needsAnswer ? view.target?.name : "Today"}
         </Text>
-        <Text style={styles.carriedAction} testID={note?.id}>{needsAnswer ? view.action : note?.text}</Text>
+        <Text style={styles.carriedAction} testID={note?.id}>{needsAnswer ? personalise(view.action, view.target?.name) : note?.text}</Text>
         <Text style={styles.carriedQ}>
           {needsAnswer ? "Was it carried out — in plain sight, without being caught?" : "Did you spot anything suspicious today?"}
         </Text>
@@ -877,16 +979,25 @@ const useStyles = makeStyles((c) => ({
   chatHead: { flexDirection: "row", alignItems: "center", gap: spacing.md, paddingHorizontal: spacing.lg, paddingBottom: spacing.sm },
   chatTitle: { fontFamily: fonts.display, fontSize: 28, lineHeight: 32, color: c.onSurface },
   chatSub: { color: c.muted, fontSize: 14, lineHeight: 19 },
-  chatList: { padding: spacing.lg, gap: spacing.sm, flexGrow: 1, justifyContent: "flex-end" },
-  chatEmpty: { flex: 1, alignItems: "center", justifyContent: "center", gap: spacing.sm, paddingVertical: spacing.xl },
+  menuList: { padding: spacing.lg, paddingTop: spacing.sm, gap: spacing.md, flexGrow: 1 },
+  // Fixed minimum sizes: the frames look the same whatever is (or isn't) in them.
+  menuCard: { gap: spacing.xs, padding: spacing.md, borderRadius: radius.lg, borderWidth: 1, borderColor: c.brandSecondary, backgroundColor: c.surfaceSecondary },
+  menuFellows: { minHeight: 84 },
+  menuPlan: { minHeight: 136 },
+  menuText: { color: c.onSurface, fontSize: 17, lineHeight: 24 },
+  menuWho: { color: c.onSurface, fontSize: 17, lineHeight: 24, fontWeight: "700" },
+  menuChat: { gap: spacing.sm, flexGrow: 1 },
+  chatEmpty: { alignItems: "center", justifyContent: "center", gap: spacing.sm, paddingVertical: spacing.xl },
   chatEmptyText: { color: c.muted, fontSize: 16 },
   chatBar: { flexDirection: "row", alignItems: "flex-end", gap: spacing.sm, paddingHorizontal: spacing.md, paddingTop: spacing.sm, borderTopWidth: 1, borderTopColor: c.divider },
-  bubble: { maxWidth: "82%", borderRadius: radius.lg, paddingHorizontal: spacing.md, paddingVertical: spacing.sm, gap: 2 },
-  bubbleMine: { alignSelf: "flex-end", backgroundColor: c.brandTertiary, borderBottomRightRadius: 4 },
-  bubbleTheirs: { alignSelf: "flex-start", backgroundColor: c.surfaceSecondary, borderWidth: 1, borderColor: c.border, borderBottomLeftRadius: 4 },
+  msg: { maxWidth: "82%", gap: 2 },
+  bubble: { borderRadius: radius.lg, paddingHorizontal: spacing.md, paddingVertical: spacing.sm, gap: 2 },
+  bubbleMine: { backgroundColor: c.brandTertiary, borderBottomRightRadius: 4 },
+  bubbleTheirs: { backgroundColor: c.surfaceSecondary, borderWidth: 1, borderColor: c.border, borderBottomLeftRadius: 4 },
   bubbleName: { color: c.brand, fontSize: 13, fontWeight: "700" },
   bubbleText: { color: c.onSurface, fontSize: 17, lineHeight: 23 },
   bubbleTime: { color: c.muted, fontSize: 11, alignSelf: "flex-end" },
+  bubbleSeen: { color: c.muted, fontSize: 11, paddingHorizontal: spacing.xs },
   chatInput: {
     flex: 1,
     minHeight: 48,

@@ -104,7 +104,7 @@ def do_gather(roles, murder_done=None):
 
 def do_night(roles, murder_target=None):
     """Every alive player takes the night turn. The first alive Traitor murders
-    `murder_target` via the two-step flow (pick victim -> choose 1 of 3 actions);
+    `murder_target` via the two-step flow (pick victim -> choose 1 of 5 actions);
     everyone else just passes. With no target, all lie low."""
     g = S.get(f"{G()}").json()
     committed = False
@@ -827,8 +827,10 @@ class TestTraitorChat:
         fa = next(p for p in ps if roles[p["id"]] == "faithful")
         send = lambda p, text: S.post(f"{G()}/chat/send", json={"player_id": p["id"], "pin": pin_of(p["name"]), "text": text})
         read = lambda p: S.post(f"{G()}/chat", json={"player_id": p["id"], "pin": pin_of(p["name"])})
-        # not during setup; after that, any time — day or night (scheming never stops)
-        assert send(t1, "too early").status_code == 403
+        # not during setup (refused the same way for every role); after that, any time — day or
+        # night (scheming never stops)
+        early = [send(t1, "too early"), send(fa, "too early")]
+        assert [r.status_code for r in early] == [403, 403] and early[0].json() == early[1].json()
         finish_setup(ps)
         assert send(t1, "daytime").status_code == 200
         assert S.post(f"{G()}/advance").json()["phase"] == "night"
@@ -837,15 +839,71 @@ class TestTraitorChat:
         msgs = read(t2).json()
         assert msgs["allowed"] is True and [m["text"] for m in msgs["messages"]] == ["daytime", "Who first?", "Not me"]
         assert msgs["messages"][0]["from_name"] == t1["name"]
-        # a Faithful sees nothing and cannot post; a wrong PIN is refused
+        # a Faithful sees nothing, and pressing send looks the same as for a Traitor (200) but the
+        # message goes nowhere; a wrong PIN is refused
         assert read(fa).json() == {"allowed": False, "messages": []}
-        assert send(fa, "hello?").status_code == 403
+        r = send(fa, "hello?")
+        assert r.status_code == 200 and r.json() == {"allowed": False, "messages": []}
+        assert "hello?" not in [m["text"] for m in read(t1).json()["messages"]]
         assert S.post(f"{G()}/chat", json={"player_id": t1["id"], "pin": "9999"}).status_code == 401
-        assert send(t1, "").status_code == 400 and send(t1, "x" * 501).status_code == 400
+        assert S.post(f"{G()}/chat/send", json={"player_id": fa["id"], "pin": "9999", "text": "hi"}).status_code == 401
+        # an empty or over-long message gets the same refusal whoever sends it
+        for p in (t1, fa):
+            assert send(p, "").status_code == 400 and send(p, "x" * 501).status_code == 400
+        assert send(t1, "").json() == send(fa, "").json()
+        assert send(t1, "x" * 501).json() == send(fa, "x" * 501).json()
         # never in the public state; the moderator sees it
         assert "traitor_chat" not in S.get(G()).json()
         mod = S.post(f"{G()}/moderator", json=MOD).json()
         assert len(mod["traitor_chat"]) == 3
+        assert all("seen_by" in m for m in mod["traitor_chat"])
+
+    def test_seen_by_other_traitors(self):
+        g, roles = setup_game_traitors(8, 2)
+        ps = g["players"]
+        t1, t2 = [p for p in ps if roles[p["id"]] == "traitor"]
+        fa = next(p for p in ps if roles[p["id"]] == "faithful")
+        send = lambda p, text: S.post(f"{G()}/chat/send", json={"player_id": p["id"], "pin": pin_of(p["name"]), "text": text})
+        read = lambda p: S.post(f"{G()}/chat", json={"player_id": p["id"], "pin": pin_of(p["name"])}).json()
+        seen = lambda res: {m["text"]: m["seen_by"] for m in res["messages"]}
+        finish_setup(ps)
+        r = send(t1, "first").json()
+        assert seen(r) == {"first": []} and r["messages"][0]["label"] == "Day 1"
+        assert seen(read(t1)) == {"first": []}  # the sender never counts as having seen their own message
+        assert seen(read(t2)) == {"first": [t2["name"]]}  # t2 has now opened the chat
+        assert seen(read(t1)) == {"first": [t2["name"]]}
+        # sending counts as reading: t2's reply means t2 has seen everything before it
+        assert seen(send(t2, "second").json()) == {"first": [t2["name"]], "second": []}
+        assert seen(read(t1)) == {"first": [t2["name"]], "second": [t1["name"]]}
+        # a Faithful asking reveals nothing and never counts as a reader
+        assert read(fa) == {"allowed": False, "messages": []}
+        send(fa, "sneaky")
+        assert seen(read(t1)) == {"first": [t2["name"]], "second": [t1["name"]]}
+        # never in the public state or a Faithful's private view
+        assert "chat_read" not in S.get(G()).json() and "seen_by" not in str(S.get(G()).json())
+        assert "chat_read" not in private(fa["id"], pin_of(fa["name"])).json()
+        mod = S.post(f"{G()}/moderator", json=MOD).json()
+        assert {m["text"]: m["seen_by"] for m in mod["traitor_chat"]} == {"first": [t2["name"]], "second": [t1["name"]]}
+
+    def test_reads_and_sends_at_once_lose_nothing(self):
+        import concurrent.futures
+        g, roles = setup_game_traitors(8, 2)
+        ps = g["players"]
+        t1, t2 = [p for p in ps if roles[p["id"]] == "traitor"]
+        finish_setup(ps)
+        body = lambda p: {"player_id": p["id"], "pin": pin_of(p["name"])}
+        jobs = []
+        with concurrent.futures.ThreadPoolExecutor(max_workers=12) as ex:
+            for i in range(15):
+                jobs.append(ex.submit(requests.post, f"{G()}/chat/send", json={**body(t1), "text": f"m{i}"}))
+                jobs.append(ex.submit(requests.post, f"{G()}/chat", json=body(t2)))
+                jobs.append(ex.submit(requests.post, f"{G()}/chat", json=body(t1)))
+        assert all(j.result().status_code == 200 for j in jobs)
+        msgs = S.post(f"{G()}/chat", json=body(t1)).json()["messages"]
+        assert sorted(m["text"] for m in msgs) == sorted(f"m{i}" for i in range(15))
+        # t2 reads once more: every message is now seen by t2
+        msgs = S.post(f"{G()}/chat", json=body(t2)).json()["messages"]
+        assert len(msgs) == 15 and all(m["seen_by"] == [t2["name"]] for m in msgs)
 
 
 class TestClaudAIPassphrase:

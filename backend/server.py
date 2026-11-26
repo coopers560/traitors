@@ -6,6 +6,7 @@ import os
 import asyncio
 import functools
 import logging
+import math
 import random
 import re
 import hashlib
@@ -43,6 +44,8 @@ HIDE_ROLE_AT = 6  # once this many (or fewer) remain, a banished player's role s
 ENDGAME_AT = 4  # at this many (or fewer) remain, each round is a "banish again or end the game" vote
 CODE_CHARS = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"  # no 0/O, 1/I/L mix-ups
 CODE_LEN = 5
+MAX_MURDER_GAP_HOURS = 24.0  # ClaudAI may set the minimum time between murders from 0 to this
+ACTION_CHOICES = 5  # secret murder methods a Traitor chooses from each night (always this many, all different)
 
 # ClaudAI (the moderator god-view) has no master key: each game nominates its own host,
 # who opens that game's ClaudAI with that game's ClaudAI passphrase. The passphrase is only
@@ -205,6 +208,9 @@ class Game(BaseModel):
     # The Traitors' secret group chat. Only Traitors still in the game can read or post; never
     # sent in the public state. The moderator sees it.
     traitor_chat: List[dict] = []
+    # When each Traitor last read the chat (player id -> ISO time), for "Seen by" under each
+    # message. Never sent in the public state. Games stored before this load with none.
+    chat_read: Dict[str, str] = {}
     next_target_id: Optional[str] = None
     next_action: Optional[str] = None
     used_actions: List[str] = []
@@ -249,13 +255,31 @@ class Game(BaseModel):
         self.used_actions.append(a)
         return a
 
-    def pick_actions(self, actions: List[str], n: int = 5) -> List[str]:
-        """Offer n fresh action options (not yet used) for the Traitor to choose from."""
-        pool = [a for a in actions if a not in self.used_actions]
-        if len(pool) < n:
-            pool = list(actions)
-        random.shuffle(pool)
-        return pool[:n]
+    def pick_actions(self, actions: List[str], n: int = ACTION_CHOICES) -> List[str]:
+        """Offer n DIFFERENT action options for the Traitor to choose from: fresh ones (not used
+        yet this game) first, then used ones. A list too short to offer n (custom lists of 3 or 4
+        saved before the minimum was raised) is topped up from the default ACTIONS."""
+        used = {a.strip().lower() for a in self.used_actions if isinstance(a, str)}
+        picked: List[str] = []
+        seen = set()
+
+        def take(pool: List[str]) -> None:
+            pool = list(pool)
+            random.shuffle(pool)
+            for a in pool:
+                key = a.strip().lower()
+                if len(picked) < n and key and key not in seen:
+                    seen.add(key)
+                    picked.append(a)
+
+        own = [a for a in actions if isinstance(a, str)]
+        take([a for a in own if a.strip().lower() not in used])  # fresh
+        take([a for a in own if a.strip().lower() in used])  # then ones already used
+        own_keys = {a.strip().lower() for a in own}
+        extra = [a for a in ACTIONS if a.strip().lower() not in own_keys]
+        take([a for a in extra if a.strip().lower() not in used])  # top up from the defaults
+        take([a for a in extra if a.strip().lower() in used])
+        return picked
 
 
 class PlayerIn(BaseModel):
@@ -301,8 +325,9 @@ class ModeratorPinIn(ModeratorIn):
 
 
 class ScheduleIn(ModeratorIn):
-    tables_per_day: int
+    tables_per_day: Optional[int] = None  # 1 or 2; leave out to keep the schedule as it is
     session: Optional[str] = None  # which Round Table the CURRENT round is, when switching to 2
+    murder_gap_hours: Optional[float] = None  # minimum hours between murders (0-24); leave out to keep it
 
 
 class TurnIn(AuthIn):
@@ -427,7 +452,7 @@ def public_state(g: Game) -> dict:
         "revote": _revote_info(g),
         "claudai": bool(g.moderator_pin_hash),  # whether this game has a ClaudAI host (never the secret)
         # Murders can't come in quick succession: the next night can't start before this time.
-        "next_plot_at": (None if in_endgame(g) else (lambda t: t.isoformat() if t else None)(next_plot_at(g))),
+        "next_plot_at": next_plot_iso(g),
         "murder_gap_hours": g.murder_gap_hours,
         "turns_needed": len(g.players) if g.phase == "setup" else len(g.alive()),
         "turns_done": len(g.turns_done),
@@ -460,6 +485,15 @@ def next_plot_at(g: Game) -> Optional[datetime]:
         return None
     nxt = last + timedelta(hours=g.murder_gap_hours)
     return nxt if nxt > datetime.now(timezone.utc) else None
+
+
+def next_plot_iso(g: Game) -> Optional[str]:
+    """next_plot_at as an ISO time for the apps (None when the Traitors may plot now, and always
+    None in the endgame, which has no murders)."""
+    if in_endgame(g):
+        return None
+    t = next_plot_at(g)
+    return t.isoformat() if t else None
 
 
 def _revote_info(g: Game) -> Optional[dict]:
@@ -515,6 +549,12 @@ def _fingerprint(code: str, secret: str) -> str:
     return hashlib.sha256(f"{code}:{secret}".encode()).hexdigest()
 
 
+def host_fail_key(code: str) -> str:
+    """PIN_FAILS key for wrong host PINs when nominating a ClaudAI host (kept apart from the
+    game's wrong ClaudAI passphrases, which are keyed on the bare code)."""
+    return f"host:{code}"
+
+
 def clear_pin_fails(code: str) -> None:
     """Forget wrong guesses for a game (after its ClaudAI secret is set or changed)."""
     PIN_FAILS.pop(code, None)
@@ -561,6 +601,11 @@ STAGE_LABEL = {
 }
 
 
+# The "plan" event's text starts with PLAN_PREFIX, then "recruit X", "murder X with “…”" or
+# "no murder — the Traitors lay low". Games logged before this used "Tonight's plan: " instead
+# (wrong for a plot at an Evening Round Table); the published story strips either prefix.
+PLAN_PREFIX = "The plan: "
+
 # Generous enough for a full 12-day game at two Round Tables a day (the whole story is
 # published at the end).
 EVENT_LOG_CAP = 4000
@@ -583,7 +628,7 @@ def log(g: Game, kind: str, text: str, neutral: Optional[str] = "same") -> None:
 
 
 def _plan_text(g: Game) -> str:
-    """Tonight's plan so far, for flagging when a Traitor overrides it ('' if none yet)."""
+    """The plan so far, for flagging when a Traitor overrides it ('' if none yet)."""
     if g.recruit_id:
         return f"recruit {name_of(g, g.recruit_id)}"
     if g.murder_confirmed and g.target_id:
@@ -742,6 +787,9 @@ def moderator_state(g: Game) -> dict:
         "cal_day": g.cal_day,
         "session": g.session,
         "tables_per_day": g.tables_per_day,
+        # Minimum hours between murders, and when the Traitors may next plot (None if they may now).
+        "murder_gap_hours": g.murder_gap_hours,
+        "next_plot_at": next_plot_iso(g),
         "total_days": TOTAL_DAYS,
         "phase": g.phase,
         "stage": _stage(g),
@@ -783,7 +831,7 @@ def moderator_state(g: Game) -> dict:
         "round_table": round_table,
         "vote_log": g.vote_log,  # moderator-only: who voted for whom, each past Round Table
         "event_log": g.event_log,  # moderator-only: every action, in order
-        "traitor_chat": g.traitor_chat,  # moderator-only: the Traitors' secret chat
+        "traitor_chat": chat_messages(g),  # moderator-only: the Traitors' secret chat (with "Seen by")
         "has_moderator_pin": bool(g.moderator_pin_hash),
         "history": g.history,  # the full record, murder methods included
     }
@@ -813,7 +861,6 @@ def in_endgame(g: Game) -> bool:
 
 
 RECRUIT_MIN_PLAYERS = 6
-ACTION_CHOICES = 5  # secret murder methods a Traitor chooses from each night
 
 
 def recruit_reason(g: Game) -> Optional[str]:
@@ -928,8 +975,9 @@ async def save_actions(code: str, data: ActionsIn):
         if a and a.lower() not in seen and len(a) <= 120:
             cleaned.append(a)
             seen.add(a.lower())
-    if len(cleaned) < 3:
-        raise HTTPException(400, "Keep at least 3 actions so the Traitors have choices")
+    if len(cleaned) < ACTION_CHOICES:
+        # the Traitors are always offered ACTION_CHOICES different methods to choose from
+        raise HTTPException(400, f"Keep at least {ACTION_CHOICES} secret actions")
     g.actions = cleaned
     log(g, "actions", f"Secret actions list edited ({len(cleaned)} actions)")
     await save(g)
@@ -983,9 +1031,20 @@ async def nominate_claudai(code: str, data: NominateIn):
     """The game's host nominates a ClaudAI host by giving the game its ClaudAI passphrase — for
     a game set up without one. Once set, only the ClaudAI passphrase itself can change it."""
     g = await require_game(code)
-    p = auth(g, data)
+    # Wrong PINs here are throttled like wrong ClaudAI passphrases (8 in 10 minutes, then wait),
+    # so nobody can work through the host's 4-digit PIN to take over ClaudAI.
+    key = host_fail_key(g.code)
+    if _pin_locked(key):
+        raise HTTPException(429, "Too many wrong PINs — wait a few minutes and try again")
+    try:
+        p = auth(g, data)
+    except HTTPException as e:
+        if e.status_code == 401:
+            PIN_FAILS.setdefault(key, []).append(datetime.now(timezone.utc).timestamp())
+        raise
     if p.id != g.host_id:
         raise HTTPException(403, "Only the game's host can nominate a ClaudAI host")
+    PIN_FAILS.pop(key, None)  # the host's own PIN: forget earlier misses
     if g.moderator_pin_hash:
         raise HTTPException(400, "This game already has a ClaudAI host — change the passphrase from ClaudAI")
     new = data.new_secret()
@@ -994,6 +1053,7 @@ async def nominate_claudai(code: str, data: NominateIn):
     g.moderator_pin_hash = await asyncio.to_thread(hash_passphrase, new)
     clear_pin_fails(g.code)  # earlier wrong guesses were against a different (or no) secret
     log(g, "stage", f"{p.name} (host) nominated a ClaudAI host")
+    log(g, "stage", "A ClaudAI host was added", "A ClaudAI host was added")
     await save(g)
     return public_state(g)
 
@@ -1023,18 +1083,28 @@ async def moderator_schedule(code: str, data: ScheduleIn):
     await check_game_moderator(g, data)
     if g.phase == "ended":
         raise HTTPException(400, "The game is over")
-    if data.tables_per_day not in (1, 2):
+    gap = data.murder_gap_hours
+    # Everything is checked before anything changes.
+    if data.tables_per_day is None and gap is None:
         raise HTTPException(400, "Choose one or two Round Tables a day")
-    if data.tables_per_day == 2:
-        if data.session not in SESSIONS:
-            raise HTTPException(400, "Say whether this round is the lunch or the evening Round Table")
-        session = data.session
-    else:
-        session = ""
-    before = round_label(g)
-    g.tables_per_day, g.session = data.tables_per_day, session
-    plan = "two Round Tables a day (lunch and 8pm)" if g.tables_per_day == 2 else "one Round Table a day"
-    log(g, "schedule", f"ClaudAI switched the game to {plan} — {before} is now {round_label(g)}")
+    if gap is not None and not (math.isfinite(gap) and 0 <= gap <= MAX_MURDER_GAP_HOURS):
+        raise HTTPException(400, f"Choose between 0 and {MAX_MURDER_GAP_HOURS:g} hours between murders")
+    if data.tables_per_day is not None:
+        if data.tables_per_day not in (1, 2):
+            raise HTTPException(400, "Choose one or two Round Tables a day")
+        if data.tables_per_day == 2:
+            if data.session not in SESSIONS:
+                raise HTTPException(400, "Say whether this round is the lunch or the evening Round Table")
+            session = data.session
+        else:
+            session = ""
+        before = round_label(g)
+        g.tables_per_day, g.session = data.tables_per_day, session
+        plan = "two Round Tables a day (lunch and 8pm)" if g.tables_per_day == 2 else "one Round Table a day"
+        log(g, "schedule", f"ClaudAI switched the game to {plan} — {before} is now {round_label(g)}")
+    if gap is not None:
+        old, g.murder_gap_hours = g.murder_gap_hours, float(gap)
+        log(g, "schedule", f"ClaudAI changed the time between murders from {old:g} to {g.murder_gap_hours:g} hours")
     await save(g)
     return moderator_state(g)
 
@@ -1112,32 +1182,70 @@ def chat_allowed(g: Game, p: Player) -> bool:
     return p.role == "traitor" and p.lives > 0 and g.phase != "setup"
 
 
+def _parse_time(t) -> Optional[datetime]:
+    """A stored ISO time, or None if missing or unreadable (older records)."""
+    try:
+        dt = datetime.fromisoformat(t) if isinstance(t, str) and t else None
+    except ValueError:
+        return None
+    if dt and dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt
+
+
+def chat_messages(g: Game) -> List[dict]:
+    """The Traitors' chat, each message with "seen_by": the names of the OTHER Traitors (never
+    the sender; in the game or not) whose last read of the chat came at or after it was sent."""
+    reads = []
+    for pl in g.players:  # in player order, so the names come out in a steady order
+        rt = _parse_time(g.chat_read.get(pl.id)) if pl.role == "traitor" else None
+        if rt:
+            reads.append((pl.id, pl.name, rt))
+    out = []
+    for msg in g.traitor_chat:
+        mt = _parse_time(msg.get("t"))
+        seen = [name for pid, name, rt in reads if pid != msg.get("from_id") and mt is not None and rt >= mt]
+        out.append({**msg, "seen_by": seen})
+    return out
+
+
 @api_router.post("/games/{code}/chat")
+@locked
 async def read_chat(code: str, data: AuthIn):
     """The Traitors' secret chat. Anyone may ask (so asking gives nothing away); only a
-    Traitor still in the game gets the messages."""
+    Traitor still in the game gets the messages — and reading marks them as seen by them."""
     g = await require_game(code)
     p = auth(g, data)
     if not chat_allowed(g, p):
         return {"allowed": False, "messages": []}
-    return {"allowed": True, "messages": g.traitor_chat}
+    now = datetime.now(timezone.utc).isoformat()
+    g.chat_read[p.id] = now
+    # Only this reader's read time is written (a targeted $set, under the game's lock), so
+    # it can never overwrite messages or anything else saved meanwhile.
+    await db.games.update_one({"code": g.code}, {"$set": {f"chat_read.{p.id}": now}})
+    return {"allowed": True, "messages": chat_messages(g)}
 
 
 @api_router.post("/games/{code}/chat/send")
 @locked
 async def send_chat(code: str, data: ChatIn):
+    """Post to the Traitors' chat. Every role gets the same visible result for the same input
+    (a Faithful's message simply goes nowhere), so pressing send never gives a role away."""
     g = await require_game(code)
     p = auth(g, data)
-    if not chat_allowed(g, p):
-        raise HTTPException(403, "Only the Traitors can send messages here")
+    if g.phase == "setup":
+        raise HTTPException(403, "The chat opens once the game begins")
     text = (data.text or "").strip()
     if not text:
         raise HTTPException(400, "Write a message first")
     if len(text) > CHAT_MAX_LEN:
         raise HTTPException(400, f"Keep it under {CHAT_MAX_LEN} characters")
+    if not chat_allowed(g, p):
+        return {"allowed": False, "messages": []}
+    now = datetime.now(timezone.utc).isoformat()
     g.traitor_chat.append({
         "id": uuid.uuid4().hex[:10],
-        "t": datetime.now(timezone.utc).isoformat(),
+        "t": now,
         "day": g.day,
         "label": round_label(g),
         "from_id": p.id,
@@ -1146,8 +1254,9 @@ async def send_chat(code: str, data: ChatIn):
     })
     if len(g.traitor_chat) > CHAT_CAP:
         del g.traitor_chat[:-CHAT_CAP]
+    g.chat_read[p.id] = now  # sending counts as having read everything up to now
     await save(g)
-    return {"allowed": True, "messages": g.traitor_chat}
+    return {"allowed": True, "messages": chat_messages(g)}
 
 
 @api_router.get("/games/{code}")
@@ -1313,7 +1422,7 @@ async def create_game(data: CreateGameIn):
     if secret:
         g.moderator_pin_hash = await asyncio.to_thread(hash_passphrase, secret)
     if data.murder_gap_hours is not None:
-        g.murder_gap_hours = max(0.0, min(24.0, data.murder_gap_hours))
+        g.murder_gap_hours = max(0.0, min(MAX_MURDER_GAP_HOURS, data.murder_gap_hours))
     traitors = ", ".join(pl.name for pl in players if pl.role == "traitor")
     tables = "two Round Tables a day (lunch and 8pm)" if g.tables_per_day == 2 else "one Round Table a day"
     log(g, "setup", f"Game created: {len(players)} players, host {players[0].name}, {tables}. Traitors: {traitors}",
@@ -1495,7 +1604,7 @@ async def take_turn(code: str, data: TurnIn):
                 what = "lay low — no murder planned"
             log(g, "lielow", f"{p.name} (Traitor) {what}" + ("" if first_turn else " (again)"), f"{p.name} took their night turn" if first_turn else None)
         elif p.lives > 0 and first_turn:
-            log(g, "pass", f"{p.name} passed the phone on (nothing to do tonight)", f"{p.name} took their night turn")
+            log(g, "pass", f"{p.name} passed the phone on (nothing to do)", f"{p.name} took their night turn")
     else:
         raise HTTPException(400, "It is not time to take a turn")
 
@@ -1536,7 +1645,7 @@ async def advance(code: str, expected: Optional[str] = None, expected_day: Optio
             g.phase = "night"
             g.turns_done, g.target_id, g.action, g.murder_confirmed, g.action_choices, g.recruit_id = [], None, None, False, [], None
             g.murder_done = False
-            log(g, "stage", "Night fell — the Traitors plot")
+            log(g, "stage", f"The Traitors plot ({round_label(g)})")
     elif g.phase == "night":
         # The Traitors have planned their victim and action. The murder itself is carried
         # out in plain sight during the day; the group then gathers to check in.
@@ -1544,11 +1653,11 @@ async def advance(code: str, expected: Optional[str] = None, expected_day: Optio
         if not alive_ids.issubset(set(g.turns_done)):
             raise HTTPException(400, "Everyone must take their turn before the Round Table")
         if g.recruit_id:
-            plan = f"Tonight's plan: recruit {name_of(g, g.recruit_id)}"
+            plan = f"{PLAN_PREFIX}recruit {name_of(g, g.recruit_id)}"
         elif g.murder_confirmed:
-            plan = f"Tonight's plan: murder {name_of(g, g.target_id)} with “{g.action}”"
+            plan = f"{PLAN_PREFIX}murder {name_of(g, g.target_id)} with “{g.action}”"
         else:
-            plan = "Tonight's plan: no murder — the Traitors lay low"
+            plan = f"{PLAN_PREFIX}no murder — the Traitors lay low"
         log(g, "plan", plan, None)
         g.phase = "gather"
         g.turns_done = []

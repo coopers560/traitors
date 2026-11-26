@@ -72,85 +72,56 @@ export default function Home() {
       </View>
     );
   }
-  if (!data.exists) return <Welcome gone={!!data.gone} />;
+  if (!data.exists) return <NoGame gone={!!data.gone} />;
   return <Dashboard game={data} refreshing={pulling} onRefresh={onRefresh} />;
 }
 
-function Welcome({ gone }: { gone: boolean }) {
+/**
+ * This phone has no game: go straight in. One group, one game — join the game in progress if
+ * there is one, otherwise straight into New game setup (shown right here, so there is nothing
+ * to go back to). If a game is started on another phone while this one is on setup, it joins.
+ */
+function NoGame({ gone }: { gone: boolean }) {
   const styles = useStyles();
   const { colors } = useTheme();
-  const router = useRouter();
-  const insets = useSafeAreaInsets();
-  const { code, gone: goneFlag, setCode } = useGameCode();
-  // The game this phone was in has been ended on another phone: forget its code
+  const { code, setCode } = useGameCode();
+  // The game this phone was in has been ended on another phone: forget its code (setup then
+  // says so, from the game-code context's `gone` flag).
+  const forgetting = gone && !!code;
   useEffect(() => {
-    if (gone && code) setCode(null, { gone: true });
-  }, [gone, code, setCode]);
-  const showGone = gone || goneFlag;
-  // One group, one game: find the game in progress so this phone can join it without a code.
-  const { data: current } = useQuery({ queryKey: ["current"], queryFn: api.currentGame, refetchInterval: 10000 });
-  const live = current?.code ? (current as { code: string; phase?: string; day?: number; players?: number }) : null;
-  // The live game's round label ("Day 3 · Lunch") — `day` alone is the round number.
-  const { data: liveGame } = useQuery({
-    queryKey: ["current-label", live?.code],
-    queryFn: () => api.findGame(live?.code ?? ""),
-    enabled: !!live?.code && live.phase !== "setup",
-    refetchInterval: 30000,
+    if (forgetting) void setCode(null, { gone: true });
+  }, [forgetting, setCode]);
+  const { data: current, error, refetch, isFetching, isFetchedAfterMount } = useQuery({
+    queryKey: ["current-boot"],
+    queryFn: api.currentGame,
+    enabled: !forgetting,
+    refetchInterval: 10000,
+    staleTime: 0,
+    gcTime: 0,
   });
-  const liveLabel = liveGame?.exists ? liveGame.label : undefined;
-  return (
-    <View style={styles.root} testID="welcome-screen">
-      <Backdrop image={IMAGES.castle} />
-      <View style={[styles.welcome, { paddingTop: insets.top + spacing.xl, paddingBottom: insets.bottom + spacing.lg }]}>
-        <Animated.View entering={FadeInDown.duration(700)} style={{ gap: spacing.sm }}>
-          <Image
-            testID="welcome-logo"
-            source={require("../assets/images/logo-transparent.png")}
-            style={styles.heroLogo}
-            contentFit="contain"
-            accessibilityLabel="The Traitors"
-          />
-          <Eyebrow style={{ textAlign: "center" }}>Holiday edition · Egypt</Eyebrow>
-          <Body>
-            Twelve days. Hidden among the family are Traitors who murder in plain sight. Find them
-            before it&apos;s too late.
-          </Body>
-        </Animated.View>
-        <Animated.View entering={FadeInDown.duration(400)} style={{ gap: spacing.md }}>
-          {showGone ? <ErrorText testID="welcome-game-gone" message="Your game was ended on another phone." /> : null}
-          {live ? (
-            <>
-              <Button testID="welcome-join-button" label="Join the game" icon="enter-outline" onPress={() => setCode(live.code)} />
-              <Text style={styles.liveNote} testID="welcome-live-note">
-                {live.phase === "setup" ? "A new game is being set up" : liveLabel ? `${liveLabel} is under way` : "A game is under way"} · {live.players} players
-              </Text>
-            </>
-          ) : (
-            <Button testID="welcome-new-game-button" label="Begin a new game" icon="flame" onPress={() => router.push("/setup")} />
-          )}
-          <Button
-            testID="welcome-how-to-play-button"
-            label="How to play"
-            variant="ghost"
-            icon="book-outline"
-            onPress={() => router.push("/how-to-play")}
-          />
-          <Button
-            testID="welcome-help-button"
-            label="Help · what do I tap?"
-            variant="ghost"
-            icon="help-circle-outline"
-            onPress={() => router.push({ pathname: "/help", params: { from: "welcome" } })}
-          />
-          {/* A compact link so the start screen still fits small phones */}
-          <Pressable testID="welcome-previous-games-button" accessibilityRole="button" onPress={() => router.push(PREVIOUS_GAMES)} style={styles.helpLink} hitSlop={6}>
-            <Ionicons name="library-outline" size={20} color={colors.brand} />
-            <Text style={styles.helpLinkText}>Previous games · the whole story of each</Text>
-          </Pressable>
-        </Animated.View>
+  // Only ever act on an answer fetched now, never on a cached one from before.
+  const live = isFetchedAfterMount && current?.code ? current.code : null;
+  useEffect(() => {
+    if (live) void setCode(live);
+  }, [live, setCode]);
+
+  if (!forgetting && isFetchedAfterMount && error && !current) {
+    return (
+      <View style={[styles.center, { padding: spacing.lg, gap: spacing.md }]} testID="home-current-error-screen">
+        <ErrorText testID="home-current-error" message="Could not reach the castle to find your game. Check your connection." />
+        <Button testID="home-current-retry" label="Try again" loading={isFetching} onPress={() => refetch()} />
       </View>
-    </View>
-  );
+    );
+  }
+  if (forgetting || !isFetchedAfterMount || live) {
+    return (
+      <View style={[styles.center, { gap: spacing.md }]} testID={live ? "home-joining" : "home-finding"}>
+        <ActivityIndicator color={colors.brand} size="large" />
+        <Text style={styles.joiningText}>{live ? "Joining the game…" : "Finding your game…"}</Text>
+      </View>
+    );
+  }
+  return <Setup />;
 }
 
 const PHASE_COPY: Record<string, { eyebrow: string; title: string; body: string }> = {
@@ -205,7 +176,6 @@ function Dashboard({ game, refreshing, onRefresh }: { game: ActiveGame; refreshi
   const [confirmGo, setConfirmGo] = useState<{ label: string; run: () => void } | null>(null);
   const [endPin, setEndPin] = useState("");
   const [peekMode, setPeekMode] = useState(false);
-  const [confirmLeave, setConfirmLeave] = useState(false);
   const { setCode } = useGameCode();
   const { me: boundMe, clearMe } = useMe();
   const boundPlayer = boundMe ? game.players.find((p) => p.id === boundMe.playerId) : null;
@@ -325,7 +295,6 @@ function Dashboard({ game, refreshing, onRefresh }: { game: ActiveGame; refreshi
           {boundPlayer ? (
             <Button testID="menu-forget-me-button" label={`Forget me on this phone (${boundPlayer.name})`} variant="secondary" icon="phone-portrait-outline" onPress={() => { setMenu(false); clearMe(); }} />
           ) : null}
-          <Button testID="menu-leave-game-button" label="Leave game on this phone" variant="secondary" icon="exit-outline" onPress={() => { setMenu(false); setConfirmLeave(true); }} />
           <Button testID="menu-claudai-button" label="ClaudAI (host)" variant="secondary" icon="shield-half" onPress={() => { setMenu(false); router.push("/moderator"); }} />
           {!game.claudai && phase !== "ended" ? (
             <Button testID="menu-nominate-claudai-button" label="Nominate a ClaudAI host" variant="secondary" icon="shield-half-outline" onPress={() => { setMenu(false); setNominate(true); }} />
@@ -479,14 +448,6 @@ function Dashboard({ game, refreshing, onRefresh }: { game: ActiveGame; refreshi
         loading={endGame.isPending}
         error={endGame.error?.message}
         onCancel={() => { setConfirmEnd(false); setEndPin(""); endGame.reset(); }}
-      />
-      <ConfirmSheet
-        visible={confirmLeave}
-        title="Leave on this phone?"
-        message="The game carries on for everyone else. You can come back any time — just tap “Join the game” on the start screen."
-        confirmLabel="Leave this game"
-        onConfirm={() => { setConfirmLeave(false); setCode(null); }}
-        onCancel={() => setConfirmLeave(false)}
       />
     </View>
   );
