@@ -188,6 +188,7 @@ export type ModeratorView = {
   } | null;
   vote_log: VoteLogEntry[];
   event_log: ModeratorEvent[];
+  traitor_chat?: ChatMessage[];
   history: DayResult[];
 };
 
@@ -232,7 +233,13 @@ export const api = {
   },
   /** Look up a game by code without switching to it (used by the Join screen). */
   findGame: (code: string) => request<GameState>(`/games/${encodeURIComponent(code.trim().toUpperCase())}`),
-  createGame: (players: { name: string; pin: string }[]) => request<GameState>("/games", "POST", { players }),
+  /** One group, one game: create only if no game is in progress (409 otherwise). */
+  createGame: (players: { name: string; pin: string }[]) => request<GameState>("/games", "POST", { players, single: true }),
+  /** The group's game in progress, if any — phones join it without a code. */
+  currentGame: () => request<CurrentGame>("/current"),
+  readChat: (player_id: string, pin: string) => request<ChatState>(`/games/${currentCode}/chat`, "POST", { player_id, pin }),
+  sendChat: (player_id: string, pin: string, text: string) =>
+    request<ChatState>(`/games/${currentCode}/chat/send`, "POST", { player_id, pin, text }),
   deleteGame: (auth?: { player_id: string; pin: string }) =>
     request<GameState>(`/games/${currentCode}`, "DELETE", auth),
   privateView: (player_id: string, pin: string) =>
@@ -261,6 +268,11 @@ export const api = {
 };
 
 export type ActionList = { actions: string[]; is_default: boolean };
+
+export type CurrentGame = { code: string | null; phase?: Phase; day?: number; players?: number };
+
+export type ChatMessage = { id: string; t: string; day: number; from_id: string; from_name: string; text: string };
+export type ChatState = { allowed: boolean; messages: ChatMessage[] };
 
 /** How and when a player left the game, from the public history. */
 export function exitOf(history: DayResult[], playerId: string): { how: "murdered" | "banished"; day: number } | null {

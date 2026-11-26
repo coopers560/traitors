@@ -773,3 +773,40 @@ class TestRecruitedNow:
         assert private(tr["id"], pin_of(tr["name"])).json()["recruited_now"] is False
         assert S.post(f"{G()}/advance").json()["phase"] == "roundtable"
         assert private(fa[0]["id"], pin_of(fa[0]["name"])).json()["recruited_now"] is True
+
+
+class TestSingleCohort:
+    def test_current_game_and_no_second_live_game(self):
+        g, roles = setup_game(6)
+        cur = S.get(f"{API}/current").json()
+        assert cur["code"] == g["code"] and cur["phase"] == "setup" and cur["players"] == 6
+        # the app asks for a single game: refused while one is in progress
+        r = S.post(f"{API}/games", json={"players": mk_players(5), "single": True})
+        assert r.status_code == 409 and "in progress" in r.json()["detail"]
+
+
+class TestTraitorChat:
+    def test_only_traitors_still_in_can_read_and_send(self):
+        g, roles = setup_game_traitors(8, 2)
+        ps = g["players"]
+        t1, t2 = [p for p in ps if roles[p["id"]] == "traitor"]
+        fa = next(p for p in ps if roles[p["id"]] == "faithful")
+        send = lambda p, text: S.post(f"{G()}/chat/send", json={"player_id": p["id"], "pin": pin_of(p["name"]), "text": text})
+        read = lambda p: S.post(f"{G()}/chat", json={"player_id": p["id"], "pin": pin_of(p["name"])})
+        # not during setup
+        assert send(t1, "too early").status_code == 403
+        finish_setup(ps)
+        assert send(t1, "  Who first?  ").status_code == 200
+        assert send(t2, "Not me").status_code == 200
+        msgs = read(t2).json()
+        assert msgs["allowed"] is True and [m["text"] for m in msgs["messages"]] == ["Who first?", "Not me"]
+        assert msgs["messages"][0]["from_name"] == t1["name"]
+        # a Faithful sees nothing and cannot post; a wrong PIN is refused
+        assert read(fa).json() == {"allowed": False, "messages": []}
+        assert send(fa, "hello?").status_code == 403
+        assert S.post(f"{G()}/chat", json={"player_id": t1["id"], "pin": "9999"}).status_code == 401
+        assert send(t1, "").status_code == 400 and send(t1, "x" * 501).status_code == 400
+        # never in the public state; the moderator sees it
+        assert "traitor_chat" not in S.get(G()).json()
+        mod = S.post(f"{G()}/moderator", json={"passphrase": "!Uganda02!"}).json()
+        assert len(mod["traitor_chat"]) == 2

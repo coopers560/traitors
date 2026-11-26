@@ -13,7 +13,7 @@ from collections import Counter
 from pathlib import Path
 from pydantic import BaseModel, Field
 from typing import List, Optional, Dict
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 
 ROOT_DIR = Path(__file__).parent
@@ -135,6 +135,9 @@ class Game(BaseModel):
     recruit_id: Optional[str] = None  # a Faithful the Traitors recruit tonight (instead of murdering)
     # Recruits the Traitors have earned: +1 each time a Traitor is banished, -1 when they use it.
     recruit_credits: int = 0
+    # The Traitors' secret group chat. Only Traitors still in the game can read or post; never
+    # sent in the public state. The moderator sees it.
+    traitor_chat: List[dict] = []
     next_target_id: Optional[str] = None
     next_action: Optional[str] = None
     used_actions: List[str] = []
@@ -187,11 +190,18 @@ class PlayerIn(BaseModel):
 
 class CreateGameIn(BaseModel):
     players: List[PlayerIn]
+    # One group plays one game at a time: when set, refuse while another game is in progress.
+    single: bool = False
+
 
 
 class AuthIn(BaseModel):
     player_id: str
     pin: str
+
+
+class ChatIn(AuthIn):
+    text: Optional[str] = None
 
 
 class ModeratorIn(BaseModel):
@@ -545,7 +555,8 @@ def moderator_state(g: Game) -> dict:
         "tonight": tonight,
         "round_table": round_table,
         "vote_log": g.vote_log,  # moderator-only: who voted for whom, each past Round Table
-        "event_log": g.event_log,  # moderator-only: every action, in order
+        "event_log": g.event_log,
+        "traitor_chat": g.traitor_chat,  # moderator-only: the Traitors' secret chat  # moderator-only: every action, in order
         "history": g.history,  # the full record, murder methods included
     }
 
@@ -809,14 +820,85 @@ async def moderator_revote(code: str, data: ModeratorIn):
     return moderator_state(g)
 
 
+CHAT_CAP = 500
+CHAT_MAX_LEN = 500
+
+
+def chat_allowed(g: Game, p: Player) -> bool:
+    return p.role == "traitor" and p.lives > 0 and g.phase != "setup"
+
+
+@api_router.post("/games/{code}/chat")
+async def read_chat(code: str, data: AuthIn):
+    """The Traitors' secret chat. Anyone may ask (so asking gives nothing away); only a
+    Traitor still in the game gets the messages."""
+    g = await require_game(code)
+    p = auth(g, data)
+    if not chat_allowed(g, p):
+        return {"allowed": False, "messages": []}
+    return {"allowed": True, "messages": g.traitor_chat}
+
+
+@api_router.post("/games/{code}/chat/send")
+@locked
+async def send_chat(code: str, data: ChatIn):
+    g = await require_game(code)
+    p = auth(g, data)
+    if not chat_allowed(g, p):
+        raise HTTPException(403, "Only the Traitors can send messages here")
+    text = (data.text or "").strip()
+    if not text:
+        raise HTTPException(400, "Write a message first")
+    if len(text) > CHAT_MAX_LEN:
+        raise HTTPException(400, f"Keep it under {CHAT_MAX_LEN} characters")
+    g.traitor_chat.append({
+        "id": uuid.uuid4().hex[:10],
+        "t": datetime.now(timezone.utc).isoformat(),
+        "day": g.day,
+        "from_id": p.id,
+        "from_name": p.name,
+        "text": text,
+    })
+    if len(g.traitor_chat) > CHAT_CAP:
+        del g.traitor_chat[:-CHAT_CAP]
+    await save(g)
+    return {"allowed": True, "messages": g.traitor_chat}
+
+
 @api_router.get("/games/{code}")
 async def get_game(code: str):
     return public_state(await require_game(code))
 
 
+# A game counts as "in progress" until it ends — unless nobody has touched it for this long
+# (an abandoned game must never block the group from starting a new one).
+LIVE_FOR = timedelta(days=4)
+
+
+async def current_game_doc() -> Optional[dict]:
+    """The group's game in progress: the most recently active game that hasn't ended."""
+    since = (datetime.now(timezone.utc) - LIVE_FOR).isoformat()
+    docs = await db.games.find(
+        {"phase": {"$ne": "ended"}, "updated_at": {"$gte": since}},
+        {"_id": 0, "code": 1, "phase": 1, "day": 1, "players": 1, "updated_at": 1},
+    ).sort("updated_at", -1).to_list(1)
+    return docs[0] if docs else None
+
+
+@api_router.get("/current")
+async def current_game():
+    """No join codes: every phone simply joins the group's game in progress."""
+    d = await current_game_doc()
+    if not d:
+        return {"code": None}
+    return {"code": d["code"], "phase": d["phase"], "day": d.get("day", 1), "players": len(d.get("players", []))}
+
+
 @api_router.post("/games")
 @locked
 async def create_game(data: CreateGameIn):
+    if data.single and await current_game_doc():
+        raise HTTPException(409, "A game is already in progress. Join it — or the host can end it from the ⋯ menu first.")
     names = [p.name.strip() for p in data.players]
     if len(names) < 4 or len(names) > 15:
         raise HTTPException(400, "You need between 4 and 15 players")

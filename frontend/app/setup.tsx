@@ -6,7 +6,7 @@ import { Pressable, Text, TextInput, View } from "react-native";
 import { KeyboardAwareScrollView } from "react-native-keyboard-controller";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-import { api } from "@/src/api";
+import { api, ApiError } from "@/src/api";
 import { HelpButton } from "@/src/components/help-button";
 import { useGameCode } from "@/src/game-code";
 import { Body, Button, ErrorText, Eyebrow, Title } from "@/src/components/ui";
@@ -34,6 +34,13 @@ export default function Setup() {
       router.dismissTo("/");
     },
   });
+
+  // A game is already in progress (one group, one game): go and join it instead.
+  const joinCurrent = async () => {
+    const cur = await api.currentGame();
+    if (cur.code) await setCode(cur.code);
+    router.dismissTo("/");
+  };
 
   const update = (key: number, patch: Partial<Row>) => setRows((r) => r.map((x) => (x.key === key ? { ...x, ...patch } : x)));
   const filled = rows.filter((r) => r.name.trim() || r.pin);
@@ -114,6 +121,9 @@ export default function Setup() {
         ) : null}
 
         <ErrorText testID="setup-error" message={localError || create.error?.message} />
+        {create.error instanceof ApiError && create.error.status === 409 ? (
+          <Button testID="setup-join-current-button" label="Join the game in progress" icon="enter-outline" onPress={joinCurrent} />
+        ) : null}
         <Button testID="setup-start-button" label="Choose the Traitors" icon="flame" loading={create.isPending} onPress={submit} />
         <Text style={styles.note}>The app secretly picks the Traitors. Nobody — not even the organiser — will know who they are.</Text>
       </KeyboardAwareScrollView>

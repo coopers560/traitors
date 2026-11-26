@@ -65,6 +65,9 @@ function Welcome({ gone }: { gone: boolean }) {
     if (gone && code) setCode(null, { gone: true });
   }, [gone, code, setCode]);
   const showGone = gone || goneFlag;
+  // One group, one game: find the game in progress so this phone can join it without a code.
+  const { data: current } = useQuery({ queryKey: ["current"], queryFn: api.currentGame, refetchInterval: 10000 });
+  const live = current?.code ? (current as { code: string; phase?: string; day?: number; players?: number }) : null;
   return (
     <View style={styles.root} testID="welcome-screen">
       <Backdrop image={IMAGES.castle} />
@@ -85,8 +88,16 @@ function Welcome({ gone }: { gone: boolean }) {
         </Animated.View>
         <Animated.View entering={FadeInDown.duration(400)} style={{ gap: spacing.md }}>
           {showGone ? <ErrorText testID="welcome-game-gone" message="Your game was ended on another phone." /> : null}
-          <Button testID="welcome-new-game-button" label="Begin a new game" icon="flame" onPress={() => router.push("/setup")} />
-          <Button testID="welcome-join-button" label="Join with a code" variant="secondary" icon="enter-outline" onPress={() => router.push("/join")} />
+          {live ? (
+            <>
+              <Button testID="welcome-join-button" label="Join the game" icon="enter-outline" onPress={() => setCode(live.code)} />
+              <Text style={styles.liveNote} testID="welcome-live-note">
+                {live.phase === "setup" ? "A new game is being set up" : `Day ${live.day} is under way`} · {live.players} players
+              </Text>
+            </>
+          ) : (
+            <Button testID="welcome-new-game-button" label="Begin a new game" icon="flame" onPress={() => router.push("/setup")} />
+          )}
           <Button
             testID="welcome-how-to-play-button"
             label="How to play"
@@ -241,9 +252,8 @@ function Dashboard({ game, refreshing, onRefresh }: { game: ActiveGame; refreshi
             {phase === "ended" ? "The Final Verdict" : copy.eyebrow}
           </Text>
         </View>
-        <Pressable testID="dashboard-share-code-button" onPress={openInvite} style={styles.codeChip} hitSlop={6} accessibilityLabel={`Game code ${game.code}, tap to invite players`}>
-          <Text style={styles.codeLabel}>Code</Text>
-          <Text style={styles.codeText} testID="dashboard-game-code">{game.code}</Text>
+        <Pressable testID="dashboard-invite-button" onPress={openInvite} style={styles.iconBtn} hitSlop={8} accessibilityLabel="Invite players">
+          <Ionicons name="qr-code-outline" size={22} color={colors.brand} />
         </Pressable>
         <Pressable testID="dashboard-menu-button" onPress={() => setMenu((m) => !m)} style={styles.iconBtn} hitSlop={8}>
           <Ionicons name={menu ? "close" : "ellipsis-horizontal"} size={26} color={colors.onSurface} />
@@ -301,7 +311,10 @@ function Dashboard({ game, refreshing, onRefresh }: { game: ActiveGame; refreshi
         ) : null}
 
         {phase === "ended" ? (
-          <EndedCard game={game} />
+          <>
+            <NextGameBanner endedCode={game.code} />
+            <EndedCard game={game} />
+          </>
         ) : (
           <Animated.View entering={FadeInDown.duration(500)} style={styles.phaseCard} testID="phase-card">
             <Title style={styles.phaseTitle}>{copy.title}</Title>
@@ -385,7 +398,7 @@ function Dashboard({ game, refreshing, onRefresh }: { game: ActiveGame; refreshi
         ) : null}
       </ScrollView>
 
-      <InviteSheet visible={invite} code={game.code} onClose={() => setInvite(false)} />
+      <InviteSheet visible={invite} onClose={() => setInvite(false)} />
 
       <ConfirmSheet
         visible={!!confirmGo}
@@ -409,7 +422,7 @@ function Dashboard({ game, refreshing, onRefresh }: { game: ActiveGame; refreshi
       <ConfirmSheet
         visible={confirmLeave}
         title="Leave on this phone?"
-        message={`The game carries on for everyone else. You can come back any time with the code ${game.code}.`}
+        message="The game carries on for everyone else. You can come back any time — just tap “Join the game” on the start screen."
         confirmLabel="Leave this game"
         onConfirm={() => { setConfirmLeave(false); setCode(null); }}
         onCancel={() => setConfirmLeave(false)}
@@ -543,7 +556,16 @@ function EndedCard({ game }: { game: ActiveGame }) {
   );
 }
 
-function InviteSheet({ visible, code, onClose }: { visible: boolean; code: string; onClose: () => void }) {
+/** After a game ends, the next game in progress (if one has started) is one tap away. */
+function NextGameBanner({ endedCode }: { endedCode: string }) {
+  const { setCode } = useGameCode();
+  const { data } = useQuery({ queryKey: ["current"], queryFn: api.currentGame, refetchInterval: 10000 });
+  if (!data?.code || data.code === endedCode) return null;
+  const next = data.code;
+  return <Button testID="join-next-game-button" label="A new game has started — join it" icon="enter-outline" onPress={() => setCode(next)} />;
+}
+
+function InviteSheet({ visible, onClose }: { visible: boolean; onClose: () => void }) {
   const styles = useStyles();
   const insets = useSafeAreaInsets();
   return (
@@ -554,13 +576,12 @@ function InviteSheet({ visible, code, onClose }: { visible: boolean; code: strin
         <Title style={{ fontSize: 28, lineHeight: 34, textAlign: "center" }}>Scan to join</Title>
         {visible ? (
           <View style={styles.qrWrap}>
-            <QrCode value={inviteLink(code)} size={224} />
+            <QrCode value={inviteLink()} size={224} />
           </View>
         ) : null}
-        <Text style={styles.inviteCode} testID="invite-code">{code}</Text>
-        <Body style={{ textAlign: "center" }}>Point a phone camera at the code, or open the app and enter the code above.</Body>
-        <Button testID="invite-whatsapp-button" label="Share on WhatsApp" icon="logo-whatsapp" onPress={() => shareToWhatsApp(code)} />
-        <Button testID="invite-share-button" label="Share another way" variant="secondary" icon="share-social-outline" onPress={() => shareInvite(code)} />
+        <Body style={{ textAlign: "center" }}>Point a phone camera at the QR code to open the app, then tap “Join the game”. No codes needed.</Body>
+        <Button testID="invite-whatsapp-button" label="Share on WhatsApp" icon="logo-whatsapp" onPress={() => shareToWhatsApp()} />
+        <Button testID="invite-share-button" label="Share another way" variant="secondary" icon="share-social-outline" onPress={() => shareInvite()} />
         <Button testID="invite-close-button" label="Done" variant="ghost" onPress={onClose} />
       </View>
     </Modal>
@@ -636,13 +657,6 @@ const useStyles = makeStyles((c) => ({
     borderRadius: radius.md,
     marginVertical: spacing.xs,
   },
-  inviteCode: {
-    textAlign: "center",
-    color: c.brand,
-    fontSize: 34,
-    fontWeight: "800",
-    letterSpacing: 6,
-  },
   endSheet: {
     backgroundColor: c.surfaceSecondary,
     borderTopLeftRadius: radius.lg * 1.5,
@@ -664,19 +678,6 @@ const useStyles = makeStyles((c) => ({
     borderBottomColor: c.divider,
   },
   headerTitle: { fontFamily: fonts.display, fontSize: 32, lineHeight: 38, color: c.onSurface },
-  codeChip: {
-    alignItems: "center",
-    justifyContent: "center",
-    minHeight: 48,
-    paddingHorizontal: spacing.sm,
-    marginRight: spacing.sm,
-    borderRadius: radius.md,
-    borderWidth: 1,
-    borderColor: c.brandSecondary,
-    backgroundColor: c.brandTertiary,
-  },
-  codeLabel: { color: c.onSurfaceTertiary, fontSize: 10, letterSpacing: 1.5, textTransform: "uppercase", fontWeight: "600" },
-  codeText: { color: c.brand, fontSize: 17, fontWeight: "800", letterSpacing: 2 },
   iconBtn: {
     width: 48,
     height: 48,
@@ -701,6 +702,7 @@ const useStyles = makeStyles((c) => ({
     borderColor: c.brandTertiary,
   },
   phaseTitle: { fontSize: 36, lineHeight: 40, color: c.brand },
+  liveNote: { color: c.onSurfaceSecondary, fontSize: 15, textAlign: "center", marginTop: -spacing.xs },
   helpLink: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: spacing.sm, minHeight: 44 },
   helpLinkText: { color: c.brand, fontSize: 15, fontWeight: "700" },
   turnRow: { flexDirection: "row", alignItems: "center", gap: spacing.sm },

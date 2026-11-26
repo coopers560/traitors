@@ -28,7 +28,12 @@ export default function Moderator() {
 
   const unlock = useMutation({
     mutationFn: () => api.moderatorUnlock(pass),
-    onSuccess: () => setUnlockedPass(pass),
+    onSuccess: async () => {
+      // One group, one game: go straight to the game in progress ("Watch another game" still lists them all).
+      const cur = await api.currentGame().catch(() => null);
+      if (cur?.code) setCode(cur.code);
+      setUnlockedPass(pass);
+    },
   });
 
   if (!unlockedPass) {
@@ -432,6 +437,26 @@ function Breakdown({ code, passphrase, onChangeGame, onLock }: { code: string; p
           </View>
         ) : null}
 
+        {/* The Traitors' secret chat — only with roles revealed (it names the Traitors) */}
+        {rolesShown ? (
+          <View style={styles.card} testID="moderator-chat">
+            <Text style={[styles.cardLabel, { color: colors.traitor }]}>Traitors&apos; secret chat</Text>
+            {m.traitor_chat?.length ? (
+              m.traitor_chat.slice(-40).map((c) => (
+                <View key={c.id} style={styles.chatRow}>
+                  <Text style={styles.chatMeta}>
+                    {new Date(c.t).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false })} · Day {c.day} ·{" "}
+                    <Text style={{ color: colors.traitor, fontWeight: "700" }}>{c.from_name}</Text>
+                  </Text>
+                  <Text style={styles.chatText}>{c.text}</Text>
+                </View>
+              ))
+            ) : (
+              <Text style={styles.planText}>No messages yet.</Text>
+            )}
+          </View>
+        ) : null}
+
         {/* Claudia's log: every action, newest first */}
         <EventLog events={m.event_log} currentDay={m.day} rolesShown={rolesShown} />
 
@@ -698,6 +723,9 @@ function DayCard({ h, votes, rolesShown }: { h: ModeratorView["history"][number]
 const useStyles = makeStyles((c) => ({
   root: { flex: 1, backgroundColor: c.surface },
   center: { alignItems: "center", justifyContent: "center" },
+  chatRow: { gap: 2, paddingVertical: 4, borderTopWidth: 1, borderTopColor: c.divider },
+  chatMeta: { color: c.muted, fontSize: 13 },
+  chatText: { color: c.onSurface, fontSize: 16, lineHeight: 22 },
   revoteCard: { backgroundColor: c.surfaceSecondary, borderRadius: radius.lg, padding: spacing.lg, gap: spacing.sm, borderWidth: 2, borderColor: c.brand },
   scroll: { padding: spacing.lg, gap: spacing.md },
   lockIcon: { alignSelf: "center", width: 80, height: 80, borderRadius: 40, alignItems: "center", justifyContent: "center", backgroundColor: c.surfaceSecondary, borderWidth: 1, borderColor: c.brandSecondary, marginBottom: spacing.sm },
