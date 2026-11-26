@@ -173,7 +173,7 @@ function Dashboard({ game, refreshing, onRefresh }: { game: ActiveGame; refreshi
   const [confirmEnd, setConfirmEnd] = useState(false);
   const [nominate, setNominate] = useState(false);
   // Reconfirm the big "move the whole game on" taps so no one skips a stage by accident.
-  const [confirmGo, setConfirmGo] = useState<{ label: string; run: () => void; message?: string } | null>(null);
+  const [confirmGo, setConfirmGo] = useState<{ label: string; run: () => void } | null>(null);
   const [endPin, setEndPin] = useState("");
   const [peekMode, setPeekMode] = useState(false);
   const { setCode } = useGameCode();
@@ -298,23 +298,6 @@ function Dashboard({ game, refreshing, onRefresh }: { game: ActiveGame; refreshi
           <Button testID="menu-how-to-play-button" label="How to play" variant="secondary" icon="book-outline" onPress={() => { setMenu(false); router.push("/how-to-play"); }} />
           <Button testID="menu-history-button" label="Day history" variant="secondary" icon="time-outline" onPress={() => { setMenu(false); router.push("/history"); }} />
           <Button testID="menu-votes-button" label="Votes so far" variant="secondary" icon="podium-outline" onPress={() => { setMenu(false); router.push("/votes"); }} />
-          {phase === "night" && !game.plot_ready ? (
-            // If the Traitors never seal a plan, the game isn't stuck: move on without a murder.
-            <Button
-              testID="menu-force-round-table-button"
-              label="Go to the Round Table now"
-              variant="secondary"
-              icon="play-skip-forward-outline"
-              onPress={() => {
-                setMenu(false);
-                setConfirmGo({
-                  label: "Go to the Round Table now",
-                  message: "Only if the Traitors are taking too long. If they haven't sealed a plan yet, there's no murder this time. If they have, they still get their full time to strike.",
-                  run: () => advance.mutate(true),
-                });
-              }}
-            />
-          ) : null}
           <Button testID="menu-actions-button" label="Secret actions" variant="secondary" icon="list-outline" onPress={() => { setMenu(false); router.push("/actions"); }} />
           <Button testID="menu-share-code-button" label="Invite players (QR & link)" variant="secondary" icon="qr-code-outline" onPress={openInvite} />
           {boundPlayer ? (
@@ -459,7 +442,7 @@ function Dashboard({ game, refreshing, onRefresh }: { game: ActiveGame; refreshi
       <ConfirmSheet
         visible={!!confirmGo}
         title="Move the game on?"
-        message={confirmGo?.message ?? `This advances the game on every phone: "${confirmGo?.label}". Make sure everyone is together and ready — you can't go back a stage.`}
+        message={`This advances the game on every phone: "${confirmGo?.label}". Make sure everyone is together and ready — you can't go back a stage.`}
         confirmLabel={confirmGo?.label ?? "Continue"}
         loading={advance.isPending}
         onConfirm={() => confirmGo?.run()}

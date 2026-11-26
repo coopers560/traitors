@@ -839,8 +839,7 @@ def _now(g: Game) -> dict:
         doing, what, waiting = "The Traitors are plotting in secret — nobody else takes a turn", "", []
         ready = plot_ready(g)
         nxt = (tap("Everyone to the Round Table") if ready
-               else f"Wait — the button lights up {g.murder_window_minutes:g} minutes after the Traitors seal their plan "
-                    "(if they're taking too long: ⋯ → Go to the Round Table now)")
+               else f"Wait — the button lights up {g.murder_window_minutes:g} minutes after the Traitors seal their plan")
     elif g.phase == "night":
         doing, what = "Night — everyone takes a turn while the Traitors secretly plot", "to take their night turn"
         nxt = ("Wait — the Round Table opens a while after the plot (the dashboard shows when)" if ready and round_table_at(g)
@@ -1897,16 +1896,9 @@ async def advance(code: str, expected: Optional[str] = None, expected_day: Optio
             if settle_plot(g):
                 await save(g)  # its 30 minutes start now, even if the Round Table has to wait
             if not g.plot_done_at:
-                if not force:
-                    raise HTTPException(400, "The Traitors haven't sealed their plan yet")
-                # The host moved on without them (⋯ → Go to the Round Table now): no murder this time.
-                picked = name_of(g, g.target_id)
-                g.target_id = g.action = g.recruit_id = None
-                g.action_choices = []
-                g.murder_confirmed = False
-                log(g, "lielow", "The host went to the Round Table before the Traitors sealed a plan — no murder this time"
-                    + (f" ({picked} had been picked)" if picked else ""), None)
-            elif round_table_at(g):
+                # No skipping the treachery: the Round Table always waits for the Traitors' plan.
+                raise HTTPException(400, "Waiting for the Traitors to seal their plan")
+            if round_table_at(g):
                 # Vague on purpose: the exact minutes would tell everyone when the plan was sealed.
                 raise HTTPException(400, "The Traitors are still at work — try again a little later.")
         elif not alive_ids.issubset(set(g.turns_done)):

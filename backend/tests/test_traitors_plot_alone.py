@@ -114,15 +114,13 @@ def test_lying_low_seals_the_plot_with_no_murder():
         assert st["phase"] == "reveal" and not (st["history"][-1].get("murder") or {}).get("success")
 
 
-def test_the_host_can_move_on_if_the_traitors_never_seal():
+def test_no_skipping_the_traitors():
     with TestClient(server.app) as c:
         g = _game(c)
-        g["turn"](g["T"][0], target_id=g["ids"][g["F"][0]])  # picked, never sealed
+        g["turn"](g["T"][0], target_id=g["ids"][g["F"][0]])  # picked, not sealed yet
         assert g["adv"]().status_code == 400
-        st = g["adv"](force=True).json()
-        assert st["phase"] == "gather"
-        doc = _doc(g["code"])
-        assert doc["target_id"] is None and not doc["murder_confirmed"]
+        assert g["adv"](force=True).status_code == 400  # the Round Table always waits for the Traitors
+        assert g["state"]()["phase"] == "night"
 
 
 def test_recruit_seals_the_plot():

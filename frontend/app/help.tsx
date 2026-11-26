@@ -79,7 +79,6 @@ const SECTIONS: Section[] = [
       ["Two Round Tables a day", "at lunch and at about 8pm (or one each evening). Each one goes like this:"],
       ["The plot", "nobody taps anything — the Traitors secretly pick their victim and method in the Traitors' menu."],
       ["The murder", "once they seal it, the Traitors get 30 minutes to carry it out in plain sight — the Round Table opens after that. Watch closely."],
-      ["Traitors taking too long?", "⋯ → Go to the Round Table now. If they haven't sealed a plan, there's no murder this time."],
       ["Check in", "everyone taps their name to check in; the Traitors confirm the kill in secret. Then Reveal the murder — before anyone votes."],
       ["The vote", "now everyone votes in private to banish someone — first tapping to check who they are now. Then Reveal the banishment. On a tie, everyone votes again — only the top-voted players can be chosen."],
       ["Everyone must take part", "each reveal stays locked until every player still in has checked in or voted — a missing turn could give the Traitors away."],
