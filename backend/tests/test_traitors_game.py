@@ -56,7 +56,7 @@ def del_game(code=None):
 def setup_game(n=10):
     if CUR["code"]:
         del_game()  # clean up previous test game
-    r = S.post(f"{API}/games", json={"players": mk_players(n)})
+    r = S.post(f"{API}/games", json={"players": mk_players(n), "murder_gap_hours": 0})
     assert r.status_code == 200, r.text
     g = r.json()
     CUR["code"] = g["code"]
