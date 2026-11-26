@@ -98,7 +98,7 @@ export default function PlayerTurn() {
     !!view &&
     !(
       mode === "turn" &&
-      (view.phase === "setup" || (view.alive && (view.phase === "gather" || view.phase === "roundtable" || view.phase === "night")))
+      (view.phase === "setup" || (view.alive && (view.phase === "gather" || view.phase === "roundtable")))
     );
 
   // Always the same backdrop, whatever the role: a glance from across the room
@@ -149,7 +149,7 @@ export default function PlayerTurn() {
                   {mode === "turn" && view.phase === "setup" ? (
                     view.role === "traitor" ? (
                       <Body testID="setup-traitor-note">
-                        Remember your fellow Traitors. Before every Round Table you&apos;ll choose a victim (or lie low), carry out the murder in plain sight, then confirm it when everyone checks in.
+                        Remember your fellow Traitors. Before every Round Table, keep holding this card for the Traitors&apos; menu and choose a victim there (or lie low). Carry out the murder in plain sight, then confirm it when everyone checks in.
                       </Body>
                     ) : (
                       <FaithfulBrief view={view} />
@@ -178,8 +178,6 @@ export default function PlayerTurn() {
                   <GatherTurn view={view} pin={pin} onSealed={() => setSealed(true)} />
                 ) : mode === "turn" && view.phase === "roundtable" && view.alive ? (
                   <RoundTableTurn view={view} pin={pin} players={players} history={history} onSealed={() => setSealed(true)} />
-                ) : mode === "turn" && view.phase === "night" && view.alive ? (
-                  <NightTurn view={view} pin={pin} players={players} round={round} onSealed={() => setSealed(true)} />
                 ) : (
                   <Button testID="player-hide-button" label="Hide & pass the phone back" icon="eye-off" onPress={leave} />
                 )}
@@ -350,7 +348,13 @@ function RoleCard({
 
 function TraitorBrief({ view, round }: { view: PrivateView; round: string }) {
   const styles = useStyles();
-  if (!view.target) return <Body>No murder is planned right now.</Body>;
+  if (view.phase === "night" && !view.plan_sealed) {
+    return <Body testID="traitor-brief-unsealed">Tonight&apos;s plan isn&apos;t sealed yet — make it in the Traitors&apos; menu.</Body>;
+  }
+  if (view.recruit) return <Body testID="traitor-brief-recruit">Recruiting {view.recruit.name} — no murder this time.</Body>;
+  if (!view.target || !view.murder_confirmed) {
+    return <Body>{view.phase === "night" || view.phase === "gather" ? "Lying low — no murder this time." : "No murder is planned right now."}</Body>;
+  }
   return (
     <View style={styles.brief} testID="traitor-brief">
       <Eyebrow>Today&apos;s murder · {round}</Eyebrow>
@@ -442,235 +446,126 @@ function ActionChoices({
   );
 }
 
-function NightTurn({
+/**
+ * Tonight's plan, in the Traitors' menu: name the victim, then seal one of five secret methods —
+ * or recruit (only when allowed), or lie low. Whoever seals first decides for all the Traitors, and
+ * the Round Table then opens 30 minutes later. Nobody else takes a turn during the plot.
+ */
+function PlotActions({
   view,
   pin,
   players,
   round,
-  onSealed,
+  onChanged,
 }: {
   view: PrivateView;
   pin: string;
   players: PublicPlayer[];
   round: string;
-  onSealed: () => void;
+  onChanged: (v: PrivateView) => void;
 }) {
   const styles = useStyles();
   const { colors } = useTheme();
-  const traitor = view.role === "traitor";
   const [target, setTarget] = useState<string | null>(view.target?.id ?? null);
-  const [choices, setChoices] = useState<string[]>(view.action_choices ?? []);
   const [chosen, setChosen] = useState<string | null>(null);
-  const [override, setOverride] = useState(false);
-  const [result, setResult] = useState<PrivateView | null>(null);
+  const [repick, setRepick] = useState(false);
   const [mode, setMode] = useState<"murder" | "recruit">("murder");
   const [recruitTarget, setRecruitTarget] = useState<string | null>(null);
-  const [recruitedName, setRecruitedName] = useState<string | null>(null);
+  const [lowAsk, setLowAsk] = useState(false);
+  // Kept fresh by the menu's refresh, so a victim a fellow Traitor has just picked shows up here.
+  const choices = repick ? [] : view.action_choices ?? [];
+  const hasFellows = (view.fellow_traitors ?? []).length > 0;
 
   const traitorIds = new Set<string>();
   // Traitors cannot murder/recruit each other; we only know fellow names, so filter by name.
   players.forEach((p) => (view.fellow_traitors?.includes(p.name) || p.id === view.player_id) && traitorIds.add(p.id));
+  const candidates = players.filter((p) => !traitorIds.has(p.id));
 
   const pickVictim = useMutation({
     mutationFn: (tid: string) => api.takeTurn({ player_id: view.player_id, pin, target_id: tid }),
-    onSuccess: (v) => { setChoices(v.action_choices ?? []); setChosen(null); setOverride(false); },
+    onSuccess: (v) => { setChosen(null); setRepick(false); onChanged(v); },
   });
-  const confirm = useMutation({
+  const seal = useMutation({
     mutationFn: (action: string) => api.takeTurn({ player_id: view.player_id, pin, action }),
-    onSuccess: (v) => setResult(v),
+    onSuccess: onChanged,
   });
   const recruit = useMutation({
     mutationFn: (rid: string) => api.takeTurn({ player_id: view.player_id, pin, recruit_id: rid }),
-    onSuccess: () => setRecruitedName(players.find((p) => p.id === recruitTarget)?.name ?? "a new Traitor"),
+    onSuccess: onChanged,
   });
-  // Passing: agreeing with a fellow Traitor's sealed plan, or lying low. `unseal` is for lying low
-  // after "Change the plan" on a fellow's sealed murder: naming the same victim again unseals it,
-  // so the pass then leaves nothing sealed — lying low really does mean no murder.
-  const pass = useMutation({
-    mutationFn: async (unseal: boolean) => {
-      if (unseal && view.target) await api.takeTurn({ player_id: view.player_id, pin, target_id: view.target.id });
-      return api.takeTurn({ player_id: view.player_id, pin });
-    },
-    onSuccess: () => onSealed(),
+  const lieLow = useMutation({
+    mutationFn: () => api.takeTurn({ player_id: view.player_id, pin }),
+    onSuccess: onChanged,
   });
-  // Changing a fellow Traitor's sealed murder, not yet re-planned.
-  const reopening = override && !!view.murder_confirmed && choices.length === 0;
+  const error = pickVictim.error?.message || seal.error?.message || recruit.error?.message || lieLow.error?.message;
 
-  // Faithful (and eliminated players) have nothing to do; everyone still takes a
-  // night turn so watching who taps never reveals the Traitors.
-  if (!traitor) {
-    return <FaithfulNight view={view} pin={pin} players={players} round={round} onSealed={onSealed} />;
-  }
-  // This phone just sealed the murder.
-  if (result) {
-    return (
-      <>
-        <TraitorBrief view={result} round={round} />
-        <Button testID="night-done-button" label="Hide & pass the phone" icon="eye-off" onPress={onSealed} />
-      </>
-    );
-  }
-  // This phone just recruited a new Traitor.
-  if (recruitedName) {
-    return (
-      <>
-        <View style={styles.brief} testID="recruit-done">
-          <Eyebrow>A new Traitor joins you</Eyebrow>
-          <Text style={styles.briefTarget}>{recruitedName}</Text>
-          <Body style={{ fontSize: 15 }}>They will find out they have turned the next time they check their secret. No murder this time.</Body>
-        </View>
-        <Button testID="night-done-button" label="Hide & pass the phone" icon="eye-off" onPress={onSealed} />
-      </>
-    );
-  }
-  // A fellow Traitor already planned tonight's murder.
-  if (view.murder_confirmed && !override && choices.length === 0) {
-    return (
-      <>
-        <TraitorBrief view={view} round={round} />
-        <ErrorText testID="turn-error" message={pass.error?.message} />
-        <Button testID="night-agree-button" label="Agreed — pass the phone" icon="eye-off" loading={pass.isPending} onPress={() => pass.mutate(false)} />
-        <Button testID="night-change-button" label="Change the plan — or lie low" variant="secondary" icon="create-outline" onPress={() => { setOverride(true); setChoices([]); }} />
-      </>
-    );
-  }
-  // Step 2: choose one of the three secret actions.
+  // Lying low seals the plan too, so it takes a second tap.
+  const lowButton = (
+    <Button
+      testID="plot-lie-low-button"
+      label={lowAsk ? "Tap again to seal: no murder this time" : "Lie low — no murder this time"}
+      variant="secondary"
+      icon="moon-outline"
+      loading={lieLow.isPending}
+      onPress={() => (lowAsk ? lieLow.mutate() : setLowAsk(true))}
+    />
+  );
+  const sealNote = (
+    <Text style={styles.menuNote} testID="plot-seal-note">
+      {hasFellows ? "Whoever seals first decides — for all the Traitors. " : ""}Once sealed, you get 30 minutes to strike before the Round Table opens.
+    </Text>
+  );
+
+  // Step 2: a victim is picked — choose one of the five secret methods and seal it.
   if (choices.length > 0) {
-    const victimName = players.find((p) => p.id === (target ?? view.target?.id))?.name ?? view.target?.name;
+    const victimName = view.target?.name ?? players.find((p) => p.id === target)?.name;
     return (
-      <>
-        <Body>Victim: {victimName}. Choose how you&apos;ll do it — pick one of these five secret actions to perform in plain sight:</Body>
-        <ActionChoices options={choices} selected={chosen} onSelect={setChosen} display={(a) => personalise(a, victimName)} />
-        <ErrorText testID="turn-error" message={confirm.error?.message || pass.error?.message} />
-        <Button testID="night-confirm-button" label="Seal the murder" icon="lock-closed" disabled={!chosen} loading={confirm.isPending} onPress={() => chosen && confirm.mutate(chosen)} />
-        <Button testID="night-skip-button" label="Lie low — no murder this time" variant="secondary" icon="play-skip-forward-outline" loading={pass.isPending} onPress={() => pass.mutate(false)} />
-      </>
+      <View style={{ gap: spacing.sm }} testID="plot-method">
+        <Text style={styles.menuWho}>{victimName}</Text>
+        <ActionChoices options={choices} selected={chosen} onSelect={setChosen} label="Choose how — do it in plain sight" display={(a) => personalise(a, victimName)} />
+        {sealNote}
+        <ErrorText testID="plot-error" message={error} />
+        <Button testID="plot-seal-button" label="Seal the murder" icon="lock-closed" disabled={!chosen} loading={seal.isPending} onPress={() => chosen && seal.mutate(chosen)} />
+        <Button testID="plot-repick-button" label="Pick someone else" variant="secondary" icon="arrow-back" onPress={() => { setRepick(true); setChosen(null); }} />
+        {lowButton}
+      </View>
     );
   }
   // Step 1: choose the victim — or, if the Traitors are short, recruit instead.
-  const candidates = players.filter((p) => !traitorIds.has(p.id));
   return (
-    <>
+    <View style={{ gap: spacing.sm }} testID="plot-pick">
       {view.can_recruit ? (
-        <View style={{ flexDirection: "row", gap: spacing.sm }} testID="night-mode">
-          <Pressable testID="night-mode-murder" onPress={() => setMode("murder")} style={[styles.pick, { flex: 1, justifyContent: "center" }, mode === "murder" && styles.pickOn]}>
+        <View style={{ flexDirection: "row", gap: spacing.sm }} testID="plot-mode">
+          <Pressable testID="plot-mode-murder" onPress={() => setMode("murder")} style={[styles.pick, { flex: 1, justifyContent: "center" }, mode === "murder" && styles.pickOn]}>
             <Text style={[styles.pickText, mode === "murder" && { color: colors.onBrandPrimary }]}>Murder</Text>
           </Pressable>
-          <Pressable testID="night-mode-recruit" onPress={() => setMode("recruit")} style={[styles.pick, { flex: 1, justifyContent: "center" }, mode === "recruit" && styles.pickOn]}>
+          <Pressable testID="plot-mode-recruit" onPress={() => setMode("recruit")} style={[styles.pick, { flex: 1, justifyContent: "center" }, mode === "recruit" && styles.pickOn]}>
             <Text style={[styles.pickText, mode === "recruit" && { color: colors.onBrandPrimary }]}>Recruit</Text>
           </Pressable>
         </View>
       ) : null}
       {view.can_recruit && mode === "recruit" ? (
         <>
-          <Body>Recruit one of the Faithful to join the Traitors — instead of a murder this time.</Body>
-          <Body testID="recruit-reason" style={{ fontSize: 15 }}>
+          <Text style={styles.menuText} testID="recruit-reason">
             {view.recruit_reason === "alone"
-              ? "You may recruit because you are the only Traitor left."
-              : "You may recruit because a Traitor has been banished — one recruit replaces each banished Traitor."}{" "}
-            There can never be more than two Traitors.
-          </Body>
-          <Button testID="night-skip-button" label="Lie low — nothing this time" variant="secondary" icon="play-skip-forward-outline" loading={pass.isPending} onPress={() => pass.mutate(reopening)} />
-          <VictimPicker label={`New Traitor · ${round}`} prefix="night-recruit" players={candidates} selected={recruitTarget} onSelect={setRecruitTarget} />
-          <ErrorText testID="turn-error" message={recruit.error?.message || pass.error?.message} />
-          <Button testID="night-recruit-button" label="Seal the recruitment" icon="lock-closed" disabled={!recruitTarget} loading={recruit.isPending} onPress={() => recruitTarget && recruit.mutate(recruitTarget)} />
-          <Button testID="night-no-recruit-button" label="Don't recruit — murder instead" variant="secondary" icon="skull-outline" onPress={() => { setMode("murder"); setRecruitTarget(null); }} />
+              ? "You may recruit because you are the only Traitor left"
+              : "You may recruit because a Traitor has been banished"}{" "}
+            — instead of a murder this time. They turn within 10 minutes. Never more than two Traitors.
+          </Text>
+          <VictimPicker label={`New Traitor · ${round}`} prefix="plot-recruit" players={candidates} selected={recruitTarget} onSelect={setRecruitTarget} />
+          {sealNote}
+          <ErrorText testID="plot-error" message={error} />
+          <Button testID="plot-recruit-button" label="Seal the recruitment" icon="lock-closed" disabled={!recruitTarget} loading={recruit.isPending} onPress={() => recruitTarget && recruit.mutate(recruitTarget)} />
         </>
       ) : (
         <>
-          {reopening ? (
-            <Body testID="night-reopen-note">
-              A fellow Traitor sealed this plan. Choose a new victim — or lie low to call the murder off.
-            </Body>
-          ) : (
-            <Body>
-              Choose who the Traitors will murder in plain sight before the next Round Table — you&apos;ll then pick
-              from five secret actions. Or lie low and spare everyone.
-            </Body>
-          )}
-          {/* Right under the intro, above the names — in the same place as the Faithful's Skip. */}
-          <Button
-            testID="night-skip-button"
-            label={reopening ? "Lie low — call the murder off" : "Lie low — no murder this time"}
-            variant="secondary"
-            icon="play-skip-forward-outline"
-            loading={pass.isPending}
-            onPress={() => pass.mutate(reopening)}
-          />
-          <VictimPicker label={`The victim · ${round}`} prefix="night-victim" players={candidates} selected={target} onSelect={setTarget} />
-          <ErrorText testID="turn-error" message={pickVictim.error?.message || pass.error?.message} />
-          <Button testID="night-pick-button" label="Choose the method" icon="arrow-forward" disabled={!target} loading={pickVictim.isPending} onPress={() => target && pickVictim.mutate(target)} />
+          <VictimPicker label={`The victim · ${round}`} prefix="plot-victim" players={candidates} selected={target} onSelect={setTarget} />
+          <ErrorText testID="plot-error" message={error} />
+          <Button testID="plot-pick-button" label="Choose the method" icon="arrow-forward" disabled={!target} loading={pickVictim.isPending} onPress={() => target && pickVictim.mutate(target)} />
         </>
       )}
-    </>
-  );
-}
-
-const SURE = ["Just a feeling", "A hunch", "Fairly sure", "Very sure", "Certain — it's them"];
-
-/**
- * The Faithful's night turn. It has exactly the shape of a Traitor's — pick a name, then one
- * of three options, then seal — so nobody watching can tell the two apart. Nothing chosen
- * here is sent or saved; sealing simply takes the night turn.
- */
-function FaithfulNight({
-  view,
-  pin,
-  players,
-  round,
-  onSealed,
-}: {
-  view: PrivateView;
-  pin: string;
-  players: PublicPlayer[];
-  round: string;
-  onSealed: () => void;
-}) {
-  const styles = useStyles();
-  const [suspect, setSuspect] = useState<string | null>(null);
-  const [step, setStep] = useState<1 | 2 | 3>(1);
-  const [sure, setSure] = useState<string | null>(null);
-  const seal = useMutation({ mutationFn: () => api.takeTurn({ player_id: view.player_id, pin }), onSuccess: () => setStep(3) });
-  const skip = useMutation({ mutationFn: () => api.takeTurn({ player_id: view.player_id, pin }), onSuccess: onSealed });
-  const name = players.find((p) => p.id === suspect)?.name;
-  const error = seal.error?.message || skip.error?.message;
-  if (step === 3) {
-    return (
-      <>
-        <View style={styles.brief} testID="suspect-brief">
-          <Eyebrow>Your suspicion · {round}</Eyebrow>
-          <Text style={styles.briefTarget}>{name}</Text>
-          <Text style={styles.briefLabel}>How sure you are:</Text>
-          <Text style={styles.briefAction}>{sure}</Text>
-          <Body style={{ fontSize: 15 }}>Only you know this — it isn&apos;t shared or saved. Watch them closely before the Round Table.</Body>
-        </View>
-        <Button testID="night-done-button" label="Hide & pass the phone" icon="eye-off" onPress={onSealed} />
-      </>
-    );
-  }
-  if (step === 2) {
-    return (
-      <>
-        <Body>Suspect: {name}. How sure are you? Pick one of these five — it&apos;s only for you:</Body>
-        <ActionChoices options={SURE} selected={sure} onSelect={setSure} label="How sure are you?" />
-        <ErrorText testID="turn-error" message={error} />
-        <Button testID="night-confirm-button" label="Seal my suspicion" icon="lock-closed" disabled={!sure} loading={seal.isPending} onPress={() => seal.mutate()} />
-        <Button testID="night-skip-button" label="Skip — pass the phone on" variant="secondary" icon="play-skip-forward-outline" loading={skip.isPending} onPress={() => skip.mutate()} />
-      </>
-    );
-  }
-  return (
-    <>
-      <Body testID="night-faithful-note">
-        The Traitors are plotting in secret. Choose who you suspect most — then how sure you are, from five
-        options. It&apos;s only for you: nothing here is shared or saved.
-      </Body>
-      {/* Right under the intro, above the names — in the same place as a Traitor's Lie low. */}
-      <Button testID="night-skip-button" label="Skip — pass the phone on" variant="secondary" icon="play-skip-forward-outline" loading={skip.isPending} onPress={() => skip.mutate()} />
-      <VictimPicker label={`Your suspect · ${round}`} prefix="night-suspect" players={players} selected={suspect} onSelect={setSuspect} excludeId={view.player_id} />
-      <ErrorText testID="turn-error" message={error} />
-      <Button testID="night-pick-button" label="Choose how sure" icon="arrow-forward" disabled={!suspect} onPress={() => setStep(2)} />
-    </>
+      {lowButton}
+    </View>
   );
 }
 
@@ -699,6 +594,9 @@ function TraitorsMenu({ view: initial, pin, round, onClose }: { view: PrivateVie
   });
   const view = fresh ?? initial;
   const traitor = view.role === "traitor" && view.alive;
+  const { data: game } = useQuery({ queryKey: ["game"], queryFn: api.getGame });
+  const players = game?.exists ? game.players : [];
+  const windowMins = (game?.exists ? game.murder_window_minutes : undefined) ?? 30;
   const { data: chat } = useQuery({
     queryKey: ["chat", id],
     queryFn: () => api.readChat(id, pin),
@@ -726,22 +624,36 @@ function TraitorsMenu({ view: initial, pin, round, onClose }: { view: PrivateVie
 
   const messages = traitor ? chat?.messages ?? [] : [];
   const plotting = view.phase === "night" || view.phase === "gather";
+  // During the plot, until a Traitor seals it, the plan card holds the choices.
+  const choosing = traitor && view.phase === "night" && !view.plan_sealed;
   const plan =
-    !traitor || !plotting
+    !traitor || !plotting || choosing
       ? null
       : view.recruit
         ? { who: view.recruit.name, what: "Recruit them to join the Traitors — no murder this time." }
-        : view.target
-          ? {
-              who: view.target.name,
-              what: view.action && view.murder_confirmed ? personalise(view.action, view.target.name) : "The method isn't chosen yet.",
-            }
-          : null;
+        : view.target && view.murder_confirmed && view.action
+          ? { who: view.target.name, what: personalise(view.action, view.target.name) }
+          : { who: "Lying low", what: "No murder this time." };
+  // When the Round Table can open: the sealed time plus the time to strike (only the Traitors see this).
+  const opensAt =
+    view.phase === "night" && view.plan_sealed_at
+      ? new Date(new Date(view.plan_sealed_at).getTime() + windowMins * 60000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false })
+      : null;
+  // Scroll to the newest message when one arrives — but not on opening while there's a plan to make.
+  const lastCount = useRef<number | null>(null);
+  const onContentSize = () => {
+    if (!chat) return;
+    const first = lastCount.current === null;
+    if (!first && lastCount.current === messages.length) return;
+    lastCount.current = messages.length;
+    if (first && choosing) return;
+    scroll.current?.scrollToEnd({ animated: !first });
+  };
   const hidden = "Only the Traitors can see this.";
   // No plan to show: say where the game is instead of a misleading "no murder planned".
   const planStageText = (v: PrivateView): string => {
     const next = v.can_recruit ? " You can recruit a Faithful at the next plot." : "";
-    if (plotting) return "No victim chosen yet — or you're lying low." + next;
+    if (plotting) return "Lying low — no murder this time." + next;
     if (v.phase === "reveal") return "The murder has been revealed. The next plot starts after the Round Table." + next;
     if (v.phase === "roundtable" || v.phase === "banished") return "The next plot starts after the Round Table." + next;
     if (v.phase === "day") return "The next plot starts soon." + next;
@@ -765,7 +677,7 @@ function TraitorsMenu({ view: initial, pin, round, onClose }: { view: PrivateVie
         ref={scroll}
         style={{ flex: 1 }}
         contentContainerStyle={styles.menuList}
-        onContentSizeChange={() => scroll.current?.scrollToEnd({ animated: false })}
+        onContentSizeChange={onContentSize}
         keyboardShouldPersistTaps="handled"
       >
         <View style={[styles.menuCard, styles.menuFellows]} testID="menu-fellows">
@@ -776,10 +688,17 @@ function TraitorsMenu({ view: initial, pin, round, onClose }: { view: PrivateVie
         </View>
         <View style={[styles.menuCard, styles.menuPlan]} testID="menu-plan">
           <Eyebrow>The plan · {round}</Eyebrow>
-          {plan ? (
+          {choosing ? (
+            <PlotActions view={view} pin={pin} players={players} round={round} onChanged={(v) => qc.setQueryData(["menu-view", id], v)} />
+          ) : plan ? (
             <>
               <Text style={styles.menuWho} testID="menu-plan-victim">{plan.who}</Text>
               <Text style={styles.menuText} testID="menu-plan-action">{plan.what}</Text>
+              {opensAt ? (
+                <Text style={styles.menuNote} testID="menu-plan-sealed">
+                  Sealed. The Round Table can open from {opensAt}.
+                </Text>
+              ) : null}
             </>
           ) : (
             <Text style={styles.menuText} testID="menu-plan-stage">{traitor ? planStageText(view) : hidden}</Text>
@@ -846,7 +765,7 @@ function SetupTurn({ view, pin, seen, onSealed }: { view: PrivateView; pin: stri
   });
   return (
     <>
-      {!seen ? <Body testID="setup-hold-note">Press and hold the card above for 3 seconds to see your role, then confirm.</Body> : null}
+      {!seen ? <Body testID="setup-hold-note">Press and hold the card above for 1.5 seconds to see your role, then confirm.</Body> : null}
       <ErrorText testID="turn-error" message={submit.error?.message} />
       <Button testID="setup-turn-confirm-button" label="I understand — hide it" icon="eye-off" disabled={!seen} loading={submit.isPending} onPress={() => submit.mutate()} />
     </>
@@ -1033,6 +952,7 @@ const useStyles = makeStyles((c) => ({
   menuCard: { gap: spacing.xs, padding: spacing.md, borderRadius: radius.lg, borderWidth: 1, borderColor: c.brandSecondary, backgroundColor: c.surfaceSecondary },
   menuFellows: { minHeight: 84 },
   menuPlan: { minHeight: 136 },
+  menuNote: { color: c.muted, fontSize: 14, lineHeight: 20 },
   menuText: { color: c.onSurface, fontSize: 17, lineHeight: 24 },
   menuWho: { color: c.onSurface, fontSize: 17, lineHeight: 24, fontWeight: "700" },
   menuChat: { gap: spacing.sm, flexGrow: 1 },

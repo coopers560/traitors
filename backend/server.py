@@ -217,6 +217,11 @@ class Game(BaseModel):
     recruit_applied_at: Optional[str] = None
     # Go straight from the start / the banishment into the next plot (no "the Traitors move" tap).
     skip_day: bool = True
+    # Only the Traitors take part in the plot, from the Traitors' menu: nobody else takes a turn,
+    # and nothing on anyone else's screen changes when they act. The first Traitor to seal the plan
+    # (a murder, a recruit or lying low) closes the plot for both. Off for games made through the
+    # API without it (they keep "everyone takes a plot turn").
+    traitors_plot_alone: bool = True
     murder_window_minutes: float = DEFAULT_MURDER_WINDOW_MIN
     # Optional per-game ClaudAI login: the hashed ClaudAI passphrase that opens this game's
     # god-view (games from before passphrases may hold the plain hash of a 4-digit PIN).
@@ -317,6 +322,8 @@ class CreateGameIn(BaseModel):
     murder_window_minutes: Optional[float] = None
     # Skip the empty "day" step between rounds. Left out = off (API/tests); the app sends true.
     skip_day: Optional[bool] = None
+    # Left out = off (everyone takes a plot turn) for API calls and tests; the app sends true.
+    traitors_plot_alone: Optional[bool] = None
 
 
 class AuthIn(BaseModel):
@@ -466,7 +473,7 @@ def public_state(g: Game) -> dict:
                 "alive": p.lives > 0,
                 # roles stay secret once few remain (role_revealed); all revealed when the game ends
                 "role": p.role if ((p.lives == 0 and p.role_revealed) or ended) else None,
-                "turn_done": p.id in g.turns_done,
+                "turn_done": turn_shown(g, p),
             }
             for p in g.players
         ],
@@ -475,11 +482,15 @@ def public_state(g: Game) -> dict:
         # Murders can't come in quick succession: the next night can't start before this time.
         "next_plot_at": next_plot_iso(g),
         "murder_gap_hours": g.murder_gap_hours,
-        # The Traitors get time to carry out the murder: the Round Table opens at this time.
-        "round_table_at": (lambda t: t.isoformat() if t else None)(round_table_at(g)),
+        # The Traitors get time to carry out the murder: the Round Table opens at this time. Never
+        # during a Traitors-only plot — it would appear the moment a Traitor sealed the plan.
+        "round_table_at": None if plot_alone_now(g) else (lambda t: t.isoformat() if t else None)(round_table_at(g)),
         "murder_window_minutes": g.murder_window_minutes,
+        "traitors_plot_alone": g.traitors_plot_alone,
+        # A Traitors-only plot is sealed and its time to strike has passed.
+        "plot_ready": plot_ready(g),
         "turns_needed": len(g.players) if g.phase == "setup" else len(g.alive()),
-        "turns_done": len(g.turns_done),
+        "turns_done": 0 if plot_alone_now(g) else len(g.turns_done),
         # never reveal which secret action was used (strip from older records too);
         # a day's murder is None until the night step has resolved it
         "history": [_public_history(h, ended) for h in g.history],
@@ -554,6 +565,47 @@ def apply_due_recruit(g: Game) -> bool:
     except ValueError:
         return False
     return due <= datetime.now(timezone.utc) and apply_recruit(g)
+
+
+def plot_alone_now(g: Game) -> bool:
+    """The plot is under way and only the Traitors take part in it."""
+    return g.phase == "night" and g.traitors_plot_alone
+
+
+def turn_shown(g: Game, p: Player) -> bool:
+    """Whether a player shows as having taken their turn. Never during a Traitors-only plot: a
+    tick there would point straight at a Traitor."""
+    return p.id in g.turns_done and not plot_alone_now(g)
+
+
+def close_plot(g: Game) -> None:
+    """The plan is final: the Traitors now get murder_window_minutes to carry it out, and a planned
+    recruit turns at a random moment within RECRUIT_DELAY_MAX_MIN."""
+    g.plot_done_at = datetime.now(timezone.utc).isoformat()
+    if g.traitors_plot_alone:
+        # Only the Traitors take part, so the moment the plot closes would point at whoever was on
+        # their phone just then: kept out of the role-neutral log.
+        log(g, "stage", f"The Traitors sealed their plan — the Round Table opens in {g.murder_window_minutes:g} minutes", None)
+    else:
+        log(g, "stage", f"Everyone has taken their plot turn — the Round Table opens in {g.murder_window_minutes:g} minutes")
+    if g.recruit_id:
+        delay = random.uniform(0, RECRUIT_DELAY_MAX_MIN)
+        g.recruit_at = (datetime.now(timezone.utc) + timedelta(minutes=delay)).isoformat()
+        log(g, "recruit", f"{name_of(g, g.recruit_id)} will turn in about {delay:.0f} minutes", None)
+
+
+def settle_plot(g: Game) -> bool:
+    """A Traitors-only plot whose plan was sealed under the old rule (which waited for everyone's
+    turn) closes now, so its 30 minutes start. True if anything changed."""
+    if plot_alone_now(g) and not g.plot_done_at and (g.murder_confirmed or g.recruit_id):
+        close_plot(g)
+        return True
+    return False
+
+
+def plot_ready(g: Game) -> bool:
+    """A Traitors-only plot is sealed and its time to strike has passed: the Round Table can open."""
+    return plot_alone_now(g) and bool(g.plot_done_at) and round_table_at(g) is None
 
 
 def round_table_at(g: Game) -> Optional[datetime]:
@@ -754,7 +806,7 @@ def _next_step(g: Game) -> str:
     return {
         "setup": "Everyone sees their role, then start Day 1." if all_seen else "Pass the phone round so each player sees their role.",
         "day": "Gather for the final vote." if in_endgame(g) else "Night falls — the Traitors choose their victim.",
-        "night": "Everyone to the Round Table." if alive_done else "Waiting for the Traitors to plot.",
+        "night": "Everyone to the Round Table." if (plot_ready(g) if g.traitors_plot_alone else alive_done) else "Waiting for the Traitors to plot.",
         "gather": "Reveal the murder." if alive_done else "Waiting for everyone to check in.",
         "reveal": "Show the murder, then the table votes." if not g.winner else "Show the murder — the game is won.",
         "roundtable": "Reveal the banishment." if alive_done else "Waiting for everyone to vote.",
@@ -783,6 +835,12 @@ def _now(g: Game) -> dict:
         nxt = (tap("Gather for the final vote") if in_endgame(g)
                else f"Wait — murders must be {g.murder_gap_hours:g} hours apart (the dashboard shows when)" if wait
                else tap("Start the plot"))
+    elif plot_alone_now(g):
+        doing, what, waiting = "The Traitors are plotting in secret — nobody else takes a turn", "", []
+        ready = plot_ready(g)
+        nxt = (tap("Everyone to the Round Table") if ready
+               else f"Wait — the button lights up {g.murder_window_minutes:g} minutes after the Traitors seal their plan "
+                    "(if they're taking too long: ⋯ → Go to the Round Table now)")
     elif g.phase == "night":
         doing, what = "Night — everyone takes a turn while the Traitors secretly plot", "to take their night turn"
         nxt = ("Wait — the Round Table opens a while after the plot (the dashboard shows when)" if ready and round_table_at(g)
@@ -831,7 +889,7 @@ def moderator_state(g: Game) -> dict:
     traitors_alive = [p for p in alive if p.role == "traitor"]
     faithful_alive = [p for p in alive if p.role == "faithful"]
     turn_pool = g.players if g.phase == "setup" else alive
-    outstanding = [p.name for p in turn_pool if p.id not in g.turns_done]
+    outstanding = [] if plot_alone_now(g) else [p.name for p in turn_pool if p.id not in g.turns_done]
 
     tonight = None
     if g.phase in ("night", "gather"):
@@ -906,13 +964,13 @@ def moderator_state(g: Game) -> dict:
                 "role": p.role,  # the real role — always, for every player
                 "lives": p.lives,
                 "alive": p.lives > 0,
-                "turn_done": p.id in g.turns_done,
+                "turn_done": turn_shown(g, p),
                 "is_host": p.id == g.host_id,
                 "fellow_traitors": [x.name for x in g.players if x.role == "traitor" and x.id != p.id] if p.role == "traitor" else [],
             }
             for p in g.players
         ],
-        "turns_done": len(g.turns_done),
+        "turns_done": 0 if plot_alone_now(g) else len(g.turns_done),
         "turns_needed": len(turn_pool),
         "outstanding": outstanding,
         "tonight": tonight,
@@ -1537,6 +1595,7 @@ async def create_game(data: CreateGameIn):
         g.murder_gap_hours = max(0.0, min(MAX_MURDER_GAP_HOURS, data.murder_gap_hours))
     g.murder_window_minutes = max(0.0, min(MAX_MURDER_WINDOW_MIN, data.murder_window_minutes or 0.0))
     g.skip_day = bool(data.skip_day)
+    g.traitors_plot_alone = bool(data.traitors_plot_alone)
     traitors = ", ".join(pl.name for pl in players if pl.role == "traitor")
     tables = "two Round Tables a day (lunch and 8pm)" if g.tables_per_day == 2 else "one Round Table a day"
     log(g, "setup", f"Game created: {len(players)} players, host {players[0].name}, {tables}. Traitors: {traitors}",
@@ -1583,7 +1642,8 @@ def private_out(g: Game, p: Player) -> dict:
         "alive": p.lives > 0,
         "phase": g.phase,
         "day": g.day,
-        "turn_done": p.id in g.turns_done,
+        "turn_done": turn_shown(g, p),
+        "traitors_plot_alone": g.traitors_plot_alone,
         # Unread messages in the Traitors' chat (always 0 for anyone who can't use it).
         "chat_unread": chat_unread(g, p),
         "my_vote_id": g.votes.get(p.id),
@@ -1610,6 +1670,9 @@ def private_out(g: Game, p: Player) -> dict:
         out["can_recruit"] = recruitment_available(g)
         out["recruit_reason"] = recruit_reason(g)
         out["recruit"] = {"id": g.recruit_id, "name": name_of(g, g.recruit_id)} if g.recruit_id else None
+        # The plan is final (sealed), and when — the Round Table opens murder_window_minutes later.
+        out["plan_sealed"] = bool(g.phase == "night" and g.plot_done_at)
+        out["plan_sealed_at"] = g.plot_done_at if g.phase == "night" else None
     return out
 
 
@@ -1618,7 +1681,7 @@ def private_out(g: Game, p: Player) -> dict:
 async def private_view(code: str, data: AuthIn):
     g = await require_game(code)
     p = auth(g, data)
-    if apply_due_recruit(g):
+    if settle_plot(g) | apply_due_recruit(g):
         await save(g)
     return private_out(g, p)
 
@@ -1630,6 +1693,8 @@ async def take_turn(code: str, data: TurnIn):
     p = auth(g, data)
     is_traitor = p.role == "traitor"
     first_turn = p.id not in g.turns_done
+    if plot_alone_now(g):
+        return await _traitors_plot(g, p, data)
 
     if g.phase == "setup":
         # everyone just sees their role in private; nothing to choose yet
@@ -1741,12 +1806,66 @@ async def take_turn(code: str, data: TurnIn):
         g.turns_done.append(p.id)
     if g.phase == "night" and not g.plot_done_at and {pl.id for pl in g.alive()}.issubset(set(g.turns_done)):
         # Everyone has taken their plot turn: the Traitors now get time to carry out the murder.
-        g.plot_done_at = datetime.now(timezone.utc).isoformat()
-        log(g, "stage", f"Everyone has taken their plot turn — the Round Table opens in {g.murder_window_minutes:g} minutes")
-        if g.recruit_id:
-            delay = random.uniform(0, RECRUIT_DELAY_MAX_MIN)
-            g.recruit_at = (datetime.now(timezone.utc) + timedelta(minutes=delay)).isoformat()
-            log(g, "recruit", f"{name_of(g, g.recruit_id)} will turn in about {delay:.0f} minutes", None)
+        close_plot(g)
+    apply_due_recruit(g)
+    await save(g)
+    return private_out(g, p)
+
+
+async def _traitors_plot(g: Game, p: Player, data: TurnIn) -> dict:
+    """A Traitor plotting from the Traitors' menu. Two steps for a murder (name the victim, then seal
+    one of five methods), or seal a recruit, or lie low (no data). Sealing closes the plot for every
+    Traitor. Nobody else takes a turn, and nothing here is shown to anyone else — no tick, no
+    role-neutral log entry."""
+    if settle_plot(g):
+        await save(g)
+    if p.lives <= 0 or p.role != "traitor":
+        raise HTTPException(400, "Nothing to do during the plot")
+    if g.plot_done_at:
+        raise HTTPException(400, "The plan is sealed")
+    if data.recruit_id:
+        if not recruitment_available(g):
+            raise HTTPException(400, "You can only recruit to replace a banished Traitor, or when you are the only Traitor left "
+                                     f"— never more than {MAX_TRAITORS} Traitors, and only while 6 or more are still in")
+        r = g.player(data.recruit_id)
+        if not r or r.lives <= 0 or r.role != "faithful":
+            raise HTTPException(400, "Choose a Faithful to recruit")
+        g.recruit_id = r.id
+        g.target_id = g.action = None
+        g.action_choices = []
+        g.murder_confirmed = False
+        log(g, "recruit", f"{p.name} (Traitor) sealed the plan: recruit {r.name} instead of murdering", None)
+        close_plot(g)
+    elif data.target_id:
+        valid_victim(g, data.target_id)
+        before = _plan_text(g)
+        g.recruit_id = None
+        g.target_id = data.target_id
+        g.action = None
+        g.murder_confirmed = False
+        g.action_choices = g.pick_actions(g.actions, ACTION_CHOICES)
+        log(g, "victim", f"{p.name} (Traitor) {'changed the pick (was: ' + before + ') — now ' if before else ''}picked {name_of(g, g.target_id)} as the victim — offered: "
+            + " · ".join(f"“{a}”" for a in g.action_choices), None)
+    elif data.action:
+        if not g.target_id:
+            raise HTTPException(400, "Choose a victim first")
+        if data.action not in g.action_choices:
+            raise HTTPException(400, "Choose one of the offered actions")
+        g.action = data.action
+        if data.action not in g.used_actions:
+            g.used_actions.append(data.action)
+        g.action_choices = []
+        g.murder_confirmed = True
+        log(g, "murder", f"{p.name} (Traitor) sealed the murder of {name_of(g, g.target_id)}: “{data.action}”", None)
+        close_plot(g)
+    else:
+        picked = name_of(g, g.target_id)
+        g.target_id = g.action = g.recruit_id = None
+        g.action_choices = []
+        g.murder_confirmed = False
+        log(g, "lielow", f"{p.name} (Traitor) sealed the plan: lie low — no murder this time"
+            + (f" (after picking {picked})" if picked else ""), None)
+        close_plot(g)
     apply_due_recruit(g)
     await save(g)
     return private_out(g, p)
@@ -1774,7 +1893,23 @@ async def advance(code: str, expected: Optional[str] = None, expected_day: Optio
         # The Traitors have planned their victim and action. The murder itself is carried
         # out in plain sight during the day; the group then gathers to check in.
         alive_ids = {p.id for p in g.alive()}
-        if not alive_ids.issubset(set(g.turns_done)):
+        if g.traitors_plot_alone:
+            if settle_plot(g):
+                await save(g)  # its 30 minutes start now, even if the Round Table has to wait
+            if not g.plot_done_at:
+                if not force:
+                    raise HTTPException(400, "The Traitors haven't sealed their plan yet")
+                # The host moved on without them (⋯ → Go to the Round Table now): no murder this time.
+                picked = name_of(g, g.target_id)
+                g.target_id = g.action = g.recruit_id = None
+                g.action_choices = []
+                g.murder_confirmed = False
+                log(g, "lielow", "The host went to the Round Table before the Traitors sealed a plan — no murder this time"
+                    + (f" ({picked} had been picked)" if picked else ""), None)
+            elif round_table_at(g):
+                # Vague on purpose: the exact minutes would tell everyone when the plan was sealed.
+                raise HTTPException(400, "The Traitors are still at work — try again a little later.")
+        elif not alive_ids.issubset(set(g.turns_done)):
             raise HTTPException(400, "Everyone must take their turn before the Round Table")
         wait = round_table_at(g)
         if wait:
