@@ -107,6 +107,10 @@ export default function PlayerTurn() {
 
   // No secret chat during setup (the server allows none yet), so no menu then — for anyone.
   const openMenu = view && view.phase !== "setup" ? () => setMenuOpen(true) : undefined;
+  // When the role is revealed, fetch the private view again so the unread count is up to date.
+  const refreshView = () => {
+    if (view) api.privateView(id, pin).then(setView).catch(() => {});
+  };
 
   return (
     <View style={styles.root} testID="player-screen">
@@ -138,10 +142,10 @@ export default function PlayerTurn() {
           {/* Only hidden while the menu is open, so a turn half-taken is still there afterwards. */}
           <View style={{ flex: 1, display: menuOpen ? "none" : "flex" }}>
             {mode === "turn" && view.phase === "roundtable" && view.alive && !roleChecked ? (
-              <RoleCheck view={view} onDone={() => setRoleChecked(true)} onLongHold={openMenu} />
+              <RoleCheck view={view} onDone={() => setRoleChecked(true)} onLongHold={openMenu} onRevealed={refreshView} />
             ) : (
               <KeyboardAwareScrollView bottomOffset={24} keyboardShouldPersistTaps="handled" contentContainerStyle={[styles.scroll, { paddingBottom: insets.bottom + spacing.lg }]}>
-                <RoleCard view={view} exit={exitWithLabel(history, view.player_id)} onReveal={() => setRoleSeen(true)} onLongHold={openMenu}>
+                <RoleCard view={view} exit={exitWithLabel(history, view.player_id)} onReveal={() => { setRoleSeen(true); refreshView(); }} onLongHold={openMenu}>
                   {mode === "turn" && view.phase === "setup" ? (
                     view.role === "traitor" ? (
                       <Body testID="setup-traitor-note">
@@ -188,7 +192,17 @@ export default function PlayerTurn() {
   );
 }
 
-function RoleCheck({ view, onDone, onLongHold }: { view: PrivateView; onDone: () => void; onLongHold?: () => void }) {
+function RoleCheck({
+  view,
+  onDone,
+  onLongHold,
+  onRevealed,
+}: {
+  view: PrivateView;
+  onDone: () => void;
+  onLongHold?: () => void;
+  onRevealed?: () => void;
+}) {
   const styles = useStyles();
   const insets = useSafeAreaInsets();
   const [shown, setShown] = useState(false); // the role has been shown at least once
@@ -210,7 +224,7 @@ function RoleCheck({ view, onDone, onLongHold }: { view: PrivateView; onDone: ()
         minHeight={200 + (onLongHold ? HINT_SPACE : 0)}
         revealAfterMs={REVEAL_MS}
         longHold={onLongHold ? { afterMs: MENU_MS, hint: MENU_HINT, onLongHold } : undefined}
-        onReveal={() => setShown(true)}
+        onReveal={() => { setShown(true); onRevealed?.(); }}
       >
         <View style={styles.roleCard} testID="role-check-card">
           {view.recruited_now ? (
@@ -236,10 +250,27 @@ function RoleCheck({ view, onDone, onLongHold }: { view: PrivateView; onDone: ()
           ) : (
             <Body>Nothing has changed for you. Find the Traitors.</Body>
           )}
+          {onLongHold ? <UnreadLine view={view} testID="role-check-unread" /> : null}
         </View>
       </HoldToReveal>
       <Button testID="role-check-done" label="Got it — on to my vote" icon="arrow-forward" disabled={!shown} onPress={onDone} />
     </ScrollView>
+  );
+}
+
+/**
+ * Unread messages in the Traitors' menu, shown with the role once it's revealed. Everyone gets the
+ * same line (a Faithful's count is always 0), so it looks the same on every card.
+ */
+function UnreadLine({ view, testID }: { view: PrivateView; testID: string }) {
+  const styles = useStyles();
+  const { colors } = useTheme();
+  const n = view.chat_unread ?? 0;
+  return (
+    <View style={styles.unreadRow} testID={testID}>
+      <Ionicons name={n ? "chatbubbles" : "chatbubbles-outline"} size={18} color={colors.brand} />
+      <Text style={styles.unreadText}>{n ? `${n} unread message${n === 1 ? "" : "s"}` : "No unread messages"}</Text>
+    </View>
   );
 }
 
@@ -288,6 +319,7 @@ function RoleCard({
             <Body>Find the Traitors and banish them at the Round Table.</Body>
           ) : null}
           {children}
+          {onLongHold ? <UnreadLine view={view} testID="role-unread" /> : null}
         </View>
       </HoldToReveal>
       {!view.alive ? (
@@ -936,6 +968,8 @@ const useStyles = makeStyles((c) => ({
   iconBtn: { width: 48, height: 48, borderRadius: radius.pill, alignItems: "center", justifyContent: "center", backgroundColor: c.surfaceSecondary },
   pinWrap: { flex: 1, justifyContent: "space-evenly", alignItems: "center", paddingHorizontal: spacing.lg, gap: spacing.md },
   scroll: { padding: spacing.lg, gap: spacing.lg },
+  unreadRow: { flexDirection: "row", alignItems: "center", gap: spacing.sm, marginTop: spacing.xs },
+  unreadText: { color: c.onSurfaceSecondary, fontSize: 16, fontWeight: "600" },
   roleCard: {
     gap: spacing.sm,
     padding: spacing.lg,

@@ -1006,3 +1006,23 @@ class TestClaudAIPassphrase:
         assert S.post(f"{G()}/claudai", json={**body, "new_pin": "5656"}).status_code == 400  # still must be strong
         assert S.post(f"{G()}/claudai", json={**body, "new_pin": "Shell=Beach9"}).status_code == 200
         assert S.post(f"{G()}/moderator", json={"passphrase": "Shell=Beach9"}).status_code == 200
+
+
+class TestChatUnread:
+    def test_unread_count_for_traitors_only(self):
+        g, roles = setup_game_traitors(8, 2)
+        ps = g["players"]
+        t1, t2 = [p for p in ps if roles[p["id"]] == "traitor"]
+        fa = next(p for p in ps if roles[p["id"]] == "faithful")
+        finish_setup(ps)
+        send = lambda p, text: S.post(f"{G()}/chat/send", json={"player_id": p["id"], "pin": pin_of(p["name"]), "text": text})
+        unread = lambda p: private(p["id"], pin_of(p["name"])).json()["chat_unread"]
+        assert unread(t1) == 0 and unread(t2) == 0 and unread(fa) == 0
+        send(t1, "first"); send(t1, "second")
+        assert unread(t2) == 2  # two from a fellow Traitor
+        assert unread(t1) == 0  # your own messages don't count
+        assert unread(fa) == 0  # a Faithful always sees 0
+        S.post(f"{G()}/chat", json={"player_id": t2["id"], "pin": pin_of(t2["name"])})  # t2 opens the chat
+        assert unread(t2) == 0
+        send(fa, "hello?")  # a Faithful's send is never stored
+        assert unread(t1) == 0 and unread(t2) == 0

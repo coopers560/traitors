@@ -1209,6 +1209,22 @@ def chat_messages(g: Game) -> List[dict]:
     return out
 
 
+def chat_unread(g: Game, p: Player) -> int:
+    """How many of the Traitors' messages this player hasn't read yet (from the others, sent after
+    their last read). Always 0 for anyone who can't use the chat, so the answer gives nothing away."""
+    if not chat_allowed(g, p):
+        return 0
+    last = _parse_time(g.chat_read.get(p.id))
+    n = 0
+    for msg in g.traitor_chat:
+        if msg.get("from_id") == p.id:
+            continue
+        mt = _parse_time(msg.get("t"))
+        if mt is not None and (last is None or mt > last):
+            n += 1
+    return n
+
+
 @api_router.post("/games/{code}/chat")
 @locked
 async def read_chat(code: str, data: AuthIn):
@@ -1473,6 +1489,8 @@ async def private_view(code: str, data: AuthIn):
         "phase": g.phase,
         "day": g.day,
         "turn_done": p.id in g.turns_done,
+        # Unread messages in the Traitors' chat (always 0 for anyone who can't use it).
+        "chat_unread": chat_unread(g, p),
         "my_vote_id": g.votes.get(p.id),
         "my_end_vote": p.id in g.end_votes,
         "revote_ids": list(g.revote_ids) if g.phase == "roundtable" else [],
