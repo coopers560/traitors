@@ -1,7 +1,7 @@
 import Ionicons from "@react-native-vector-icons/ionicons";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Image } from "expo-image";
-import { useRouter } from "expo-router";
+import { type Href, useRouter } from "expo-router";
 import { useEffect, useState } from "react";
 import { ActivityIndicator, Modal, Pressable, RefreshControl, ScrollView, Text, TextInput, View } from "react-native";
 import { KeyboardAvoidingView } from "react-native-keyboard-controller";
@@ -21,6 +21,11 @@ import { inviteLink, shareInvite, shareToWhatsApp } from "@/src/utils/invite";
 import { fonts, makeStyles, radius, spacing, useTheme } from "@/src/theme";
 
 type ActiveGame = Extract<GameState, { exists: true }>;
+
+// The archive screens (app/previous-games.tsx, app/story.tsx). Cast so this file type-checks even
+// before the generated typed-routes list has caught up with those new files.
+const PREVIOUS_GAMES = "/previous-games" as Href;
+const storyHref = (code: string) => `/story?code=${encodeURIComponent(code)}` as Href;
 
 /** "Day 3 of 12 · Lunch": the current round's label with the length of the holiday. */
 function dayOf(g: { day: number; label?: string; cal_day?: number; total_days: number }): string {
@@ -73,6 +78,7 @@ export default function Home() {
 
 function Welcome({ gone }: { gone: boolean }) {
   const styles = useStyles();
+  const { colors } = useTheme();
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const { code, gone: goneFlag, setCode } = useGameCode();
@@ -136,13 +142,11 @@ function Welcome({ gone }: { gone: boolean }) {
             icon="help-circle-outline"
             onPress={() => router.push({ pathname: "/help", params: { from: "welcome" } })}
           />
-          <Button
-            testID="welcome-previous-games-button"
-            label="Previous games"
-            variant="ghost"
-            icon="library-outline"
-            onPress={() => router.push("/previous-games")}
-          />
+          {/* A compact link so the start screen still fits small phones */}
+          <Pressable testID="welcome-previous-games-button" accessibilityRole="button" onPress={() => router.push(PREVIOUS_GAMES)} style={styles.helpLink} hitSlop={6}>
+            <Ionicons name="library-outline" size={20} color={colors.brand} />
+            <Text style={styles.helpLinkText}>Previous games · the whole story of each</Text>
+          </Pressable>
         </Animated.View>
       </View>
     </View>
@@ -260,6 +264,9 @@ function Dashboard({ game, refreshing, onRefresh }: { game: ActiveGame; refreshi
       : PHASE_COPY[phase];
   // Two Round Tables a day: the lunch table's stages happen at lunch, not "this evening".
   if (phase !== "ended" && game.session === "lunch" && copy.eyebrow === "This evening") copy = { ...copy, eyebrow: "At lunch" };
+  if (copy === PHASE_COPY.banished && game.session === "lunch") {
+    copy = { ...copy, body: "Gather everyone together to see who the table has banished. Then the afternoon begins — the next Round Table is at about 8pm." };
+  }
   const plotLabel = game.endgame ? "Gather for the final vote" : game.session === "evening" ? "The Traitors move" : "Night falls — the Traitors move";
   const takingTurns = phase === "setup" || phase === "night" || phase === "gather" || phase === "roundtable";
   const alive = game.players.filter((p) => p.alive);
@@ -586,7 +593,7 @@ function EndedCard({ game }: { game: ActiveGame }) {
         testID="ended-whole-story-button"
         label="The whole story"
         icon="book"
-        onPress={() => router.push({ pathname: "/story", params: { code: game.code } })}
+        onPress={() => router.push(storyHref(game.code))}
         style={{ minHeight: 72 }}
       />
       <Text style={styles.storyNote}>Every role, murder, vote and secret message — kept in Previous games for everyone.</Text>
@@ -596,7 +603,7 @@ function EndedCard({ game }: { game: ActiveGame }) {
       <ConfirmSheet
         visible={confirmNew}
         title="Start a new game?"
-        message="This game's results and history will be cleared. Share the picture first if you want to keep it."
+        message="This clears the finished game from the main screen. Its whole story stays in Previous games for everyone to look back on."
         confirmLabel="Yes, start fresh"
         loading={del.isPending}
         onConfirm={() => del.mutate()}

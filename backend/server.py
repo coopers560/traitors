@@ -1091,9 +1091,14 @@ async def get_game(code: str):
     return public_state(await require_game(code))
 
 
-# A game counts as "in progress" until it ends — unless nobody has touched it for this long
-# (an abandoned game must never block the group from starting a new one).
-LIVE_FOR = timedelta(days=4)
+# A game counts as "in progress" until it ends (or the host stops it) — unless nobody has
+# touched it for this long (an abandoned game must never block the group forever).
+LIVE_FOR = timedelta(days=7)
+
+
+def _doc_label(d: dict) -> str:
+    """The current round label of a stored game document (older documents included)."""
+    return label_for(d.get("tables_per_day") or 1, d.get("cal_day") or d.get("day", 1), d.get("session") or "")
 
 
 async def current_game_doc() -> Optional[dict]:
@@ -1101,7 +1106,8 @@ async def current_game_doc() -> Optional[dict]:
     since = (datetime.now(timezone.utc) - LIVE_FOR).isoformat()
     docs = await db.games.find(
         {"phase": {"$ne": "ended"}, "updated_at": {"$gte": since}},
-        {"_id": 0, "code": 1, "phase": 1, "day": 1, "players": 1, "updated_at": 1},
+        {"_id": 0, "code": 1, "phase": 1, "day": 1, "cal_day": 1, "session": 1, "tables_per_day": 1,
+         "players": 1, "updated_at": 1},
     ).sort("updated_at", -1).to_list(1)
     return docs[0] if docs else None
 
@@ -1112,7 +1118,100 @@ async def current_game():
     d = await current_game_doc()
     if not d:
         return {"code": None}
-    return {"code": d["code"], "phase": d["phase"], "day": d.get("day", 1), "players": len(d.get("players", []))}
+    return {"code": d["code"], "phase": d["phase"], "day": d.get("day", 1), "label": _doc_label(d),
+            "players": len(d.get("players", []))}
+
+
+# ---------------- The archive: every finished game's whole story ----------------
+ARCHIVE_LIMIT = 50
+
+
+def _label_of(x: dict) -> str:
+    """An entry's stored label, or "Day N" for entries made before labels existed."""
+    return x.get("label") or f"Day {x.get('day', 1)}"
+
+
+def _exit_of(g: Game, pid: str) -> Optional[dict]:
+    """How and when a player left the game, from the history."""
+    for h in g.history:
+        m = h.get("murder") or {}
+        if m.get("success") and m.get("eliminated") and m.get("victim_id") == pid:
+            return {"how": "murdered", "label": _label_of(h)}
+        b = h.get("banish") or {}
+        if b.get("target_id") == pid and b.get("eliminated") and not b.get("already_dead"):
+            return {"how": "banished", "label": _label_of(h)}
+    return None
+
+
+def _recruited_label_from_log(g: Game, name: str) -> Optional[str]:
+    """For players stored before recruits were tracked: the round the event log says they were
+    recruited (the murder reveal reads "No murder — {name} was recruited and is now a Traitor")."""
+    pattern = re.compile(r"(?:^|— )" + re.escape(name) + r" was recruited")
+    for e in g.event_log:
+        if e.get("kind") == "reveal" and pattern.search(e.get("text") or ""):
+            return _label_of(e)
+    return None
+
+
+def story_of(g: Game) -> dict:
+    """Everything that happened in a finished game — every secret revealed."""
+    players = []
+    for p in g.players:
+        recruited = p.recruited_label or _recruited_label_from_log(g, p.name)
+        started = p.started_as or ("faithful" if recruited else p.role)
+        players.append({
+            "id": p.id,
+            "name": p.name,
+            "role": p.role,
+            "started_as": started,
+            "recruited_label": recruited,
+            "exit": _exit_of(g, p.id),
+            "is_host": p.id == g.host_id,
+        })
+    return {
+        "code": g.code,
+        "created_at": g.created_at,
+        "ended_at": g.updated_at,
+        "winner": g.winner,
+        "label": round_label(g),
+        "tables_per_day": g.tables_per_day,
+        "total_days": TOTAL_DAYS,
+        "players": players,
+        "rounds": [{**h, "label": _label_of(h)} for h in g.history],  # murder methods included
+        "vote_log": [{**v, "label": _label_of(v)} for v in g.vote_log],
+        "traitor_chat": [{**m, "label": _label_of(m)} for m in g.traitor_chat],
+        "event_log": [{**e, "label": _label_of(e)} for e in g.event_log],
+    }
+
+
+@api_router.get("/archive")
+async def archive():
+    """Finished games, newest first — everyone can look back at them."""
+    docs = await db.games.find(
+        {"phase": "ended"},
+        {"_id": 0, "code": 1, "created_at": 1, "updated_at": 1, "winner": 1, "players": 1,
+         "day": 1, "cal_day": 1, "session": 1, "tables_per_day": 1},
+    ).sort("updated_at", -1).to_list(ARCHIVE_LIMIT)
+    return {"games": [
+        {
+            "code": d["code"],
+            "created_at": d.get("created_at"),
+            "ended_at": d.get("updated_at"),
+            "winner": d.get("winner"),
+            "players": len(d.get("players") or []),
+            "label": _doc_label(d),
+        }
+        for d in docs
+    ]}
+
+
+@api_router.get("/archive/{code}")
+async def archive_story(code: str):
+    """The whole story of one finished game. Nothing is shown until the game is over."""
+    g = await load_game(code)
+    if not g or g.phase != "ended":
+        raise HTTPException(404, "No finished game found with that code")
+    return story_of(g)
 
 
 @api_router.post("/games")
@@ -1130,25 +1229,29 @@ async def create_game(data: CreateGameIn):
     for p in data.players:
         if not (p.pin.isdigit() and len(p.pin) == 4):
             raise HTTPException(400, f"{p.name.strip()} needs a 4-digit PIN")
-    if data.moderator_pin is not None:
-        if not (data.moderator_pin.isdigit() and len(data.moderator_pin) == 4):
-            raise HTTPException(400, "The ClaudAI PIN must be 4 digits")
-        if any(p.pin == data.moderator_pin for p in data.players):
-            raise HTTPException(400, "Choose a ClaudAI PIN that no player is using")
-    # A random number of Traitors: 1 to 3, always a minority (fewer than the Faithful)
-    n_traitors = random.randint(1, max(1, min(3, (len(names) - 1) // 2)))
+    secret = data.claudai_passphrase or data.moderator_pin  # optional; an empty one counts as none
+    if secret and passphrase_problem(secret):
+        raise HTTPException(400, PASSPHRASE_RULE)
+    if data.tables_per_day not in (1, 2):
+        raise HTTPException(400, "Choose one or two Round Tables a day")
+    # One Traitor for a small group (5 or fewer), otherwise exactly two.
+    n_traitors = 1 if len(names) <= 5 else 2
     traitor_idx = set(random.sample(range(len(names)), n_traitors))
-    players = [
-        Player(name=names[i], pin_hash=hash_pin(p.pin), role="traitor" if i in traitor_idx else "faithful")
-        for i, p in enumerate(data.players)
-    ]
-    g = Game(code=await new_code(), players=players)
+    players = []
+    for i, p in enumerate(data.players):
+        role = "traitor" if i in traitor_idx else "faithful"
+        players.append(Player(name=names[i], pin_hash=hash_pin(p.pin), role=role, started_as=role))
+    g = Game(
+        code=await new_code(), players=players, day=1, cal_day=1,
+        tables_per_day=data.tables_per_day, session="lunch" if data.tables_per_day == 2 else "",
+    )
     g.host_id = players[0].id  # the first player entered is the host/creator
-    if data.moderator_pin:
-        g.moderator_pin_hash = hash_pin(data.moderator_pin)
+    if secret:
+        g.moderator_pin_hash = await asyncio.to_thread(hash_passphrase, secret)
     traitors = ", ".join(pl.name for pl in players if pl.role == "traitor")
-    log(g, "setup", f"Game created: {len(players)} players, host {players[0].name}. Traitors: {traitors}",
-        f"Game created: {len(players)} players, host {players[0].name}")
+    tables = "two Round Tables a day (lunch and 8pm)" if g.tables_per_day == 2 else "one Round Table a day"
+    log(g, "setup", f"Game created: {len(players)} players, host {players[0].name}, {tables}. Traitors: {traitors}",
+        f"Game created: {len(players)} players, host {players[0].name}, {tables}")
     await save(g)
     return public_state(g)
 
@@ -1162,8 +1265,15 @@ class EndGameIn(BaseModel):
 @locked
 async def delete_game(code: str, data: Optional[EndGameIn] = None):
     g = await load_game(code)
+    # A finished game can be cleared from the main screen by anyone — but its whole story
+    # stays published in the archive, so it is only marked as cleared, never deleted.
+    if g and g.phase == "ended":
+        if not g.archived:
+            await db.games.update_one({"code": g.code}, {"$set": {"archived": True}})  # keeps ended_at
+        GAME_LOCKS.pop(g.code, None)
+        return {"exists": False}
     # Ending a game that is still in progress is restricted to the host, so one
-    # player can't wipe everyone's game. A finished game can be cleared by anyone.
+    # player can't wipe everyone's game.
     if g and g.host_id and g.phase != "ended":
         if not data or data.player_id != g.host_id:
             raise HTTPException(403, "Only the host can end the game")
@@ -1271,7 +1381,8 @@ async def take_turn(code: str, data: TurnIn):
         if is_traitor and p.lives > 0 and data.recruit_id:
             # Recruit a Faithful to replace a lost Traitor (instead of murdering tonight)
             if not recruitment_available(g):
-                raise HTTPException(400, "You can only recruit to replace a banished Traitor, or when you are the only Traitor left")
+                raise HTTPException(400, "You can only recruit to replace a banished Traitor, or when you are the only Traitor left "
+                                         f"— never more than {MAX_TRAITORS} Traitors, and only while 6 or more are still in")
             r = g.player(data.recruit_id)
             if not r or r.lives <= 0 or r.role != "faithful":
                 raise HTTPException(400, "Choose a Faithful to recruit")
@@ -1340,7 +1451,7 @@ async def advance(code: str, expected: Optional[str] = None, expected_day: Optio
             raise HTTPException(400, "Every player must see their role first")
         g.phase = "day"
         g.turns_done = []
-        log(g, "stage", "Day 1 began")
+        log(g, "stage", f"{round_label(g)} began")
     elif g.phase == "day":
         # The Traitors now plot BEFORE the Round Table: each day opens with the night,
         # where they pick the victim and the plain-sight action (or recruit). In the
@@ -1381,8 +1492,11 @@ async def advance(code: str, expected: Optional[str] = None, expected_day: Optio
             raise HTTPException(400, f"Everyone must check in first. Still to check in: {', '.join(n for n in missing if n)}")
         recruited = False
         rp = g.player(g.recruit_id)
-        if rp and rp.lives > 0 and rp.role == "faithful":
+        traitors_in = sum(1 for p in g.alive() if p.role == "traitor")
+        if rp and rp.lives > 0 and rp.role == "faithful" and traitors_in < MAX_TRAITORS:
             rp.role = "traitor"  # recruited instead of murdered
+            rp.started_as = rp.started_as or "faithful"
+            rp.recruited_label = round_label(g)
             recruited = True
             if g.recruit_credits > 0:
                 g.recruit_credits -= 1
@@ -1392,7 +1506,7 @@ async def advance(code: str, expected: Optional[str] = None, expected_day: Optio
         else:
             murder = {"success": False}
         g.winner = winner_by_roles(g)  # the murder alone can win it for the Traitors
-        g.history.append({"day": g.day, "murder": murder, "banish": None, "recruited": recruited, "winner": g.winner})
+        g.history.append(new_history_entry(g, murder=murder, banish=None, recruited=recruited, winner=g.winner))
         if recruited:
             log(g, "reveal", f"No murder — {rp.name} was recruited and is now a Traitor", "Murder reveal: no murder — a Faithful was recruited")
         elif murder.get("success"):
@@ -1426,7 +1540,7 @@ async def advance(code: str, expected: Optional[str] = None, expected_day: Optio
         if in_endgame(g) and len(g.end_votes) == len(g.alive()):
             # Everyone voted to end the game: a Traitor still in means the Traitors win.
             g.winner = "traitors" if any(p.role == "traitor" for p in g.alive()) else "faithful"
-            g.history.append({"day": g.day, "murder": None, "banish": None, "ended_by_vote": True, "winner": g.winner})
+            g.history.append(new_history_entry(g, murder=None, banish=None, ended_by_vote=True, winner=g.winner))
             g.phase = "ended"
             log(g, "end", f"Everyone voted to end the game — the {g.winner.capitalize()} win")
         else:
@@ -1455,7 +1569,7 @@ async def advance(code: str, expected: Optional[str] = None, expected_day: Optio
                     h["banish"] = banish
                     h["winner"] = g.winner
                 else:
-                    g.history.append({"day": g.day, "murder": None, "banish": banish, "winner": g.winner})
+                    g.history.append(new_history_entry(g, murder=None, banish=banish, winner=g.winner))
             if banish["tie"] and g.revote_ids:
                 log(g, "banish", f"Round Table tied ({tally}) — revote between "
                     + " and ".join(banish["revote_names"]))
@@ -1471,24 +1585,26 @@ async def advance(code: str, expected: Optional[str] = None, expected_day: Optio
         # The tie has been shown: everyone votes again, only between the tied players.
         _open_revote(g)
     elif g.phase == "banished":
-        # The day is over. The game may be won; the Traitors also win if they survive to the
-        # end of the final day. Otherwise a new day (and a new plot) begins.
+        # The round is over. The game may be won; the Traitors also win if they survive the
+        # final Round Table of the final day. Otherwise the next round (and a new plot) begins:
+        # at two a day, lunch -> evening of the same day, evening -> lunch of the next.
         if g.winner:
             g.phase = "ended"
             log(g, "end", f"Game over — the {g.winner.capitalize()} win")
-        elif g.day >= TOTAL_DAYS:
-            g.winner = "traitors"  # they survived to the final day
+        elif is_final_round(g):
+            g.winner = "traitors"  # they survived to the end of the final day
             if g.history:
                 g.history[-1]["winner"] = g.winner
             g.phase = "ended"
             log(g, "end", f"Game over — the Traitors survived to the end of Day {TOTAL_DAYS} and win")
         else:
-            g.day += 1
+            g.day += 1  # the round counter: never repeats
+            g.cal_day, g.session = next_round(g)
             g.target_id, g.action, g.murder_confirmed, g.action_choices, g.recruit_id = None, None, False, [], None
             g.murder_done = False
             g.turns_done, g.votes, g.end_votes = [], {}, []
             g.phase = "day"
-            log(g, "stage", f"Day {g.day} began")
+            log(g, "stage", f"{round_label(g)} began")
     else:
         raise HTTPException(400, "The game is over")
     await save(g)
