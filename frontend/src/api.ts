@@ -99,6 +99,8 @@ export type PrivateView = {
   my_end_vote?: boolean;
   /** During a tie-break revote: the only players who can be voted for. */
   revote_ids?: string[];
+  /** Unread messages in the Traitors' chat (always 0 for anyone who can't use it). */
+  chat_unread?: number;
   /** This player was recruited into the Traitors today (only ever sent to them). */
   recruited_now?: boolean;
   endgame?: boolean;
