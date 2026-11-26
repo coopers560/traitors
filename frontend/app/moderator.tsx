@@ -6,7 +6,7 @@ import { ActivityIndicator, Pressable, ScrollView, Text, TextInput, View } from 
 import { KeyboardAwareScrollView } from "react-native-keyboard-controller";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-import { api, ApiError, ModAuth, ModeratorView, passphraseProblem, roundLabel, VoteLogEntry } from "@/src/api";
+import { api, ApiError, ModAuth, ModeratorView, passphraseProblem, personalise, roundLabel, VoteLogEntry } from "@/src/api";
 import { ConfirmSheet } from "@/src/components/confirm-sheet";
 import { ScreenHeader } from "@/src/components/screen-header";
 import { Body, Button, ErrorText, Eyebrow, Title } from "@/src/components/ui";
@@ -155,7 +155,24 @@ function ClaudAIPassphrase({ code, auth, onAuthChange }: { code: string; auth: M
   );
 }
 
-/** One Round Table a day, or two (lunch and about 8pm). ClaudAI can switch during the game. */
+/** The choices for the minimum time between murders, in hours. */
+const GAP_CHOICES = [0, 1, 2, 3, 4, 6];
+
+/** "1 hour", "3 hours", "1.5 hours". */
+function hoursText(h: number): string {
+  return `${Number(h.toFixed(2))} hour${h === 1 ? "" : "s"}`;
+}
+
+/** An ISO time as local "HH:MM". */
+function clockOf(t: string): string {
+  const d = new Date(t);
+  return isNaN(d.getTime()) ? "" : d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false });
+}
+
+/**
+ * One Round Table a day, or two (lunch and about 8pm), and the minimum time between murders.
+ * ClaudAI can change both during the game.
+ */
 function Schedule({ code, auth, m }: { code: string; auth: ModAuth; m: ModeratorView }) {
   const styles = useStyles();
   const { colors } = useTheme();
@@ -169,6 +186,13 @@ function Schedule({ code, auth, m }: { code: string; auth: ModAuth; m: Moderator
       qc.setQueryData(["moderator", code], v);
       setStep("idle");
     },
+  });
+  // Minimum time between murders (games from before this setting have the server's default).
+  const gap = m.murder_gap_hours ?? 3;
+  const plotAt = m.next_plot_at && m.phase !== "ended" ? clockOf(m.next_plot_at) : "";
+  const saveGap = useMutation({
+    mutationFn: (hours: number) => api.moderatorMurderGap(code, auth, hours),
+    onSuccess: (v) => qc.setQueryData(["moderator", code], v),
   });
   return (
     <View style={styles.card} testID="moderator-schedule-card">
@@ -209,6 +233,50 @@ function Schedule({ code, auth, m }: { code: string; auth: ModAuth; m: Moderator
           onPress={() => { save.reset(); setStep(two ? "one" : "pick"); }}
         />
       )}
+
+      <View style={styles.gapSection} testID="moderator-gap">
+        <Text style={styles.cardLabel}>Minimum time between murders</Text>
+        <Text style={styles.progressText} testID="moderator-gap-current">
+          {gap > 0 ? `At least ${hoursText(gap)}` : "No minimum"}
+        </Text>
+        <Text style={styles.planText}>
+          {gap > 0
+            ? `After a murder, the Traitors can't plot again for ${hoursText(gap)}.`
+            : "The Traitors can plot again straight after a murder."}
+        </Text>
+        {plotAt ? (
+          <Text style={[styles.planText, { color: colors.onSurface, fontWeight: "700" }]} testID="moderator-gap-next">
+            Traitors can plot again from {plotAt}.
+          </Text>
+        ) : null}
+        <ErrorText testID="moderator-gap-error" message={saveGap.error?.message} />
+        {m.phase === "ended" ? null : (
+          <View style={styles.gapRow} accessibilityRole="radiogroup">
+            {GAP_CHOICES.map((h) => {
+              const on = gap === h;
+              const busy = saveGap.isPending && saveGap.variables === h;
+              return (
+                <Pressable
+                  key={h}
+                  testID={`moderator-gap-${h}`}
+                  onPress={() => { if (!on) { saveGap.reset(); saveGap.mutate(h); } }}
+                  disabled={saveGap.isPending}
+                  style={[styles.gapChip, on && styles.gapChipOn]}
+                  accessibilityRole="radio"
+                  accessibilityState={{ selected: on, disabled: saveGap.isPending }}
+                  accessibilityLabel={h === 0 ? "No minimum" : hoursText(h)}
+                >
+                  {busy ? (
+                    <ActivityIndicator size="small" color={colors.brand} />
+                  ) : (
+                    <Text style={[styles.gapChipText, on && styles.gapChipTextOn]}>{h === 0 ? "None" : `${h}h`}</Text>
+                  )}
+                </Pressable>
+              );
+            })}
+          </View>
+        )}
+      </View>
     </View>
   );
 }
@@ -516,10 +584,10 @@ function Breakdown({
         {/* Tonight's plan */}
         {m.tonight ? (
           <View style={[styles.card, { borderColor: colors.traitor }]} testID="moderator-tonight">
-            <Text style={[styles.cardLabel, { color: colors.traitor }]}>Tonight&apos;s plan</Text>
+            <Text style={[styles.cardLabel, { color: colors.traitor }]}>{m.session ? "The Traitors’ plan" : "Tonight’s plan"}</Text>
             {!rolesShown ? (
               <Text style={[styles.planText, { color: colors.muted }]} testID="moderator-tonight-hidden">
-                Hidden. Tap “Reveal roles” to see who the Traitors are after tonight.
+                Hidden. Tap “Reveal roles” to see who the Traitors are after {m.session ? "this plot" : "tonight"}.
               </Text>
             ) : m.tonight.recruit_name ? (
               <Text style={styles.planText}>
@@ -531,7 +599,7 @@ function Breakdown({
                   Victim: <Text style={styles.planName}>{m.tonight.victim_name}</Text>
                 </Text>
                 <Text style={styles.planText}>
-                  Method: <Text style={styles.planMethod}>{m.tonight.action ?? "not chosen yet"}</Text>
+                  Method: <Text style={styles.planMethod}>{m.tonight.action ? personalise(m.tonight.action, m.tonight.victim_name) : "not chosen yet"}</Text>
                 </Text>
                 <Text style={styles.planStatus}>
                   {!m.tonight.murder_confirmed
@@ -564,7 +632,7 @@ function Breakdown({
               m.traitor_chat.slice(-40).map((c) => (
                 <View key={c.id} style={styles.chatRow}>
                   <Text style={styles.chatMeta}>
-                    {new Date(c.t).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false })} · {labelOf(c.day)} ·{" "}
+                    {new Date(c.t).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false })} · {c.label || labelOf(c.day)} ·{" "}
                     <Text style={{ color: colors.traitor, fontWeight: "700" }}>{c.from_name}</Text>
                   </Text>
                   <Text style={styles.chatText}>{c.text}</Text>
@@ -800,7 +868,7 @@ function DayCard({ h, votes, rolesShown }: { h: ModeratorView["history"][number]
           </View>
           {mu.success ? (
             <Text style={styles.dayLine}>
-              {mu.victim_name} was murdered{rolesShown && mu.action ? ` — ${mu.action}` : ""}.
+              {mu.victim_name} was murdered{rolesShown && mu.action ? ` — ${personalise(mu.action, mu.victim_name)}` : ""}.
             </Text>
           ) : h.recruited ? (
             <Text style={styles.dayLine}>No murder — a Faithful was recruited into the Traitors.</Text>
@@ -931,6 +999,22 @@ const useStyles = makeStyles((c) => ({
   winCard: { backgroundColor: c.surfaceSecondary, borderRadius: radius.lg, padding: spacing.lg, gap: spacing.xs, borderWidth: 1, borderColor: c.border },
   winText: { color: c.onSurfaceSecondary, fontSize: 16, lineHeight: 23 },
   card: { backgroundColor: c.surfaceSecondary, borderRadius: radius.lg, padding: spacing.lg, gap: spacing.xs, borderWidth: 1, borderColor: c.border },
+  gapSection: { gap: spacing.xs, marginTop: spacing.md, paddingTop: spacing.md, borderTopWidth: 1, borderTopColor: c.divider },
+  gapRow: { flexDirection: "row", flexWrap: "wrap", gap: spacing.sm, marginTop: spacing.xs },
+  gapChip: {
+    minWidth: 56,
+    height: 44,
+    paddingHorizontal: spacing.md,
+    borderRadius: radius.pill,
+    borderWidth: 1,
+    borderColor: c.border,
+    backgroundColor: c.surfaceTertiary,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  gapChipOn: { borderColor: c.brand, backgroundColor: c.brandTertiary },
+  gapChipText: { color: c.onSurfaceSecondary, fontSize: 16, fontWeight: "700" },
+  gapChipTextOn: { color: c.brand },
   logHead: { flexDirection: "row", justifyContent: "space-between", alignItems: "baseline" },
   logCount: { color: c.muted, fontSize: 12, fontWeight: "600" },
   logHint: { color: c.muted, fontSize: 13, lineHeight: 18, marginBottom: spacing.xs },

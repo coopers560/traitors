@@ -9,7 +9,7 @@ import { ActivityIndicator, FlatList, Pressable, Text, View } from "react-native
 import Animated, { FadeInDown } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-import { api, ApiError, BanishResult, ChatMessage, DayResult, ModeratorEvent, Role, roundLabel, Story, VoteEdge } from "@/src/api";
+import { api, ApiError, BanishResult, ChatMessage, DayResult, ModeratorEvent, personalise, Role, roundLabel, Story, VoteEdge } from "@/src/api";
 import { ScreenHeader } from "@/src/components/screen-header";
 import { Body, Button, Eyebrow, IMAGES, Title } from "@/src/components/ui";
 import { fonts, makeStyles, radius, spacing, useTheme } from "@/src/theme";
@@ -113,6 +113,32 @@ function winnerText(w: Winner): string {
   return w === "traitors" ? "The Traitors won" : w === "faithful" ? "The Faithful won" : "The game is over";
 }
 
+/**
+ * Why the game ended, from the log's last "end" event — only when it adds something to the
+ * "<winner> won" headline: "Everyone voted to end the game", "The Traitors survived to the end
+ * of Day 12". A plain "Game over — the Traitors win" says nothing more, so it gives null.
+ */
+function endReason(raw: string, endedByVote: boolean): string | null {
+  let s = raw.trim().replace(/^Game over\s*[—–-]\s*/i, "");
+  // The winner is the headline already.
+  s = s.replace(/\s*[—–-]\s*the (traitors|faithful) (win|won)\.?$/i, "");
+  s = s.replace(/\s+and (win|won)\.?$/i, "");
+  if (/^(the )?(traitors|faithful) (win|won)\.?$/i.test(s)) s = "";
+  if (!s && endedByVote) s = "Everyone voted to end the game";
+  return s ? capitalise(s) : null;
+}
+
+/** A "plan" event's text without its prefix ("The plan: …", or "Tonight's plan: …" in older games). */
+function stripPlanPrefix(text: string): string {
+  return text.replace(/^(?:Tonight['’]s|The) plan:\s*/i, "");
+}
+
+/** "murder Ben with “Sit next to them”" → "murder Ben with “Sit next to Ben”". */
+function personalisePlan(plan: string): string {
+  const m = /^(murder )(.+?)( with “)(.*)(”)$/.exec(plan);
+  return m ? `${m[1]}${m[2]}${m[3]}${personalise(m[4], m[2])}${m[5]}` : plan;
+}
+
 /** Everything the screen shows, worked out once from the story. */
 function buildModel(story: Story): Model {
   const players = story.players ?? [];
@@ -183,10 +209,12 @@ function buildModel(story: Story): Model {
       night = { kind: "recruit", name: recruitName.get(i) ?? null };
     } else if (m?.success) {
       const eliminated = m.eliminated ?? (m.lives_left === undefined || m.lives_left === 0);
+      const victim = m.victim_name ?? (m.victim_id ? byId.get(m.victim_id)?.name : undefined) ?? "Someone";
       night = {
         kind: "murder",
-        victim: m.victim_name ?? (m.victim_id ? byId.get(m.victim_id)?.name : undefined) ?? "Someone",
-        method: m.action ?? null,
+        victim,
+        // "them / their" in the method becomes the victim's name.
+        method: m.action ? personalise(m.action, victim === "Someone" ? null : victim) : null,
         eliminated,
         livesLeft: m.lives_left ?? null,
         role: eliminated ? (m.role ?? roleAt(m.victim_id, i)) : null,
@@ -195,8 +223,8 @@ function buildModel(story: Story): Model {
       const reveal = lastEvent(h.day, "reveal")?.text ?? "";
       const stripped = reveal.replace(/^Murder reveal:\s*nobody died\s*—\s*/i, "");
       const why = stripped && stripped !== reveal ? capitalise(stripped) : null;
-      const planText = (lastEvent(h.day, "plan")?.text ?? "").replace(/^Tonight's plan:\s*/i, "");
-      const plan = why && /not carried out/i.test(why) && /^murder /i.test(planText) ? planText : null;
+      const planText = stripPlanPrefix(lastEvent(h.day, "plan")?.text ?? "");
+      const plan = why && /not carried out/i.test(why) && /^murder /i.test(planText) ? personalisePlan(planText) : null;
       night = { kind: "none", why, plan };
     }
 
@@ -234,7 +262,7 @@ function buildModel(story: Story): Model {
   const finalLabel = (last ? roundLabel(last) : storedLabel) ?? "";
   const endEvents = events.filter((e) => e.kind === "end");
   const endRaw = endEvents[endEvents.length - 1]?.text ?? "";
-  const endText = endRaw ? capitalise(endRaw.replace(/^Game over\s*—\s*/i, "")) : null;
+  const endText = endReason(endRaw, !!last?.ended_by_vote);
 
   return {
     story,

@@ -128,37 +128,37 @@ const PHASE_COPY: Record<string, { eyebrow: string; title: string; body: string 
   setup: {
     eyebrow: "The Gathering",
     title: "Discover your role",
-    body: "Pass the phone around, or use several phones at once. Each player taps their own name, enters their PIN and secretly learns if they are Faithful or a Traitor. Tip: to use your own secret actions, edit them in the ⋯ menu before anyone takes a turn.",
+    body: "Tap your name, enter your PIN and secretly see your role.",
   },
   day: {
     eyebrow: "During the day",
     title: "Enjoy the holiday",
-    body: "Mingle, relax and watch everyone closely. When night falls the Traitors choose their victim and the murder in plain sight — then you gather at the Round Table.",
+    body: "Relax — and watch everyone closely.",
   },
   roundtable: {
     eyebrow: "This evening",
     title: "The Round Table",
-    body: "Argue, accuse, defend. Then everyone casts a secret vote to banish someone — on any phone, all at the same time if you like.",
+    body: "Accuse, defend — then vote in secret.",
   },
   banished: {
     eyebrow: "The verdict",
     title: "The banishment",
-    body: "Gather everyone together to see who the table has banished. That closes the day.",
+    body: "Gather round to see who's banished.",
   },
   night: {
     eyebrow: "The plot",
     title: "The Traitors move",
-    body: "Everyone taps their name in private. The Traitors secretly choose their victim and a plain-sight action; everyone else simply passes the phone on — so no one can tell who acted. The murder is carried out during the day.",
+    body: "Everyone takes a turn in private — nobody can tell who's plotting.",
   },
   gather: {
     eyebrow: "This evening",
     title: "Check in for the Round Table",
-    body: "Everyone taps their name to check in. The Traitors also confirm, in secret, whether the murder was carried out. Once everyone has checked in, the murder is revealed — before anyone votes.",
+    body: "Everyone checks in — then the murder is revealed.",
   },
   reveal: {
     eyebrow: "This evening",
     title: "Who did the Traitors take?",
-    body: "Gather everyone together before you open the envelope.",
+    body: "Gather round before you open the envelope.",
   },
 };
 
@@ -217,34 +217,34 @@ function Dashboard({ game, refreshing, onRefresh }: { game: ActiveGame; refreshi
       ? {
           eyebrow: "Tie-break revote",
           title: "Vote again",
-          body: `The Round Table was tied between ${tied}. Everyone votes again, in secret — this time you can only choose between them.`,
+          body: `Tied between ${tied} — vote again, only between them.`,
         }
       : phase === "banished" && game.revote && !game.revote.active
       ? {
           eyebrow: "The verdict",
           title: "The table is divided",
-          body: "Gather everyone together and open the reveal to see the tie and how everyone voted. Then everyone votes again.",
+          body: "Open the reveal to see the tie — then everyone votes again.",
         }
       : phase === "roundtable" && game.endgame
       ? {
           eyebrow: "The final vote",
           title: "Banish, or end the game",
-          body: "Only a few of you remain. Each player votes to banish one more — or to end the game now. If everyone votes to end while a Traitor is still among you, the Traitors win.",
+          body: "Banish one more, or end it — if a Traitor's still here, they win.",
         }
       : PHASE_COPY[phase];
   // Two Round Tables a day: the lunch table's stages happen at lunch, not "this evening".
   if (phase !== "ended" && game.session === "lunch" && copy.eyebrow === "This evening") copy = { ...copy, eyebrow: "At lunch" };
   if (copy === PHASE_COPY.banished && game.session === "lunch") {
-    copy = { ...copy, body: "Gather everyone together to see who the table has banished. Then the afternoon begins — the next Round Table is at about 8pm." };
+    copy = { ...copy, body: "Gather round to see who's banished. Next Round Table about 8pm." };
   }
   // The day's body fits the session (one table a day keeps the night-time wording) and the endgame.
   if (copy === PHASE_COPY.day) {
     if (game.endgame) {
-      copy = { ...copy, body: "Only a few of you remain, so there are no more murders — the final vote decides it. Mingle, watch everyone closely, then gather for the final vote." };
+      copy = { ...copy, body: "No more murders — the final vote decides it." };
     } else if (game.session === "lunch") {
-      copy = { ...copy, body: "Mingle, relax and watch everyone closely. Before lunch the Traitors choose their victim and the murder in plain sight — then you gather at the lunch Round Table." };
+      copy = { ...copy, body: "Relax — the Traitors strike before lunch." };
     } else if (game.session === "evening") {
-      copy = { ...copy, body: "Mingle, relax and watch everyone closely. This afternoon the Traitors choose their victim and the murder in plain sight — then you gather at the Round Table at about 8pm." };
+      copy = { ...copy, body: "Relax — the Traitors strike this afternoon." };
     }
   }
   const startLabel = game.tables_per_day === 2 ? "Begin Day 1 · Lunch" : "Begin Day 1";
@@ -352,7 +352,7 @@ function Dashboard({ game, refreshing, onRefresh }: { game: ActiveGame; refreshi
           <Animated.View entering={FadeInDown.duration(500)} style={styles.phaseCard} testID="phase-card">
             <Title style={styles.phaseTitle}>{copy.title}</Title>
             <Body>{copy.body}</Body>
-            {takingTurns ? (
+            {takingTurns && phase !== "night" ? (
               <View style={styles.turnRow} testID="turn-progress">
                 <Ionicons name="people" size={20} color={colors.brand} />
                 <Text style={styles.turnText}>
@@ -370,7 +370,7 @@ function Dashboard({ game, refreshing, onRefresh }: { game: ActiveGame; refreshi
               <>
                 <Button testID="advance-round-table-button" label={`${game.session === "evening" ? "The Traitors move" : "Night falls"} at ${plotAt}`} icon="time-outline" disabled onPress={() => {}} />
                 <Text style={styles.waitNote} testID="murder-gap-note">
-                  Murders must be at least {game.murder_gap_hours ?? 3} hours apart, so the Traitors can strike again from {plotAt}.
+                  Murders are at least {game.murder_gap_hours ?? 3} hours apart.
                 </Text>
               </>
             ) : phase === "day" ? (
@@ -379,16 +379,16 @@ function Dashboard({ game, refreshing, onRefresh }: { game: ActiveGame; refreshi
               <>
                 <Button testID="advance-reveal-button" label={allDone ? (game.revote?.active ? "Reveal the revote" : game.endgame ? "Reveal the vote" : "Reveal the banishment") : "Everyone must vote first…"} icon="mail-open" disabled={!allDone} loading={advance.isPending && allDone} onPress={() => setConfirmGo({ label: game.revote?.active ? "Reveal the revote" : game.endgame ? "Reveal the vote" : "Reveal the banishment", run: () => advance.mutate() })} />
                 {!allDone ? (
-                  <Text style={styles.waitNote} testID="roundtable-wait-note">Everyone still in must vote before the reveal — otherwise the Traitors could be given away.</Text>
+                  <Text style={styles.waitNote} testID="roundtable-wait-note">Everyone must vote first.</Text>
                 ) : null}
               </>
             ) : phase === "night" ? (
-              <Button testID="advance-murder-button" label={allDone ? "Everyone to the Round Table" : "Waiting for the Traitors…"} icon="flame" disabled={!allDone} loading={advance.isPending} onPress={() => setConfirmGo({ label: "Everyone to the Round Table", run: () => advance.mutate() })} />
+              <Button testID="advance-murder-button" label={allDone ? "Everyone to the Round Table" : "Awaiting treachery…"} icon="flame" disabled={!allDone} loading={advance.isPending} onPress={() => setConfirmGo({ label: "Everyone to the Round Table", run: () => advance.mutate() })} />
             ) : phase === "gather" ? (
               <>
                 <Button testID="advance-gather-button" label={allDone ? "Reveal the murder" : "Everyone must check in first…"} icon="mail-open" disabled={!allDone} loading={advance.isPending && allDone} onPress={() => setConfirmGo({ label: "Reveal the murder", run: () => advance.mutate() })} />
                 {!allDone ? (
-                  <Text style={styles.waitNote} testID="gather-wait-note">Everyone still in must check in before the murder is revealed — otherwise the Traitors could be given away.</Text>
+                  <Text style={styles.waitNote} testID="gather-wait-note">Everyone must check in first.</Text>
                 ) : null}
               </>
             ) : phase === "banished" ? (

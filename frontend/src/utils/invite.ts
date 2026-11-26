@@ -14,7 +14,7 @@ export function inviteLink(): string {
 }
 
 export function inviteMessage(): string {
-  return `Join our Traitors game! Tap to open it, then tap "Join the game": ${inviteLink()}`;
+  return `Join our Traitors game! Tap to open it — it goes straight into the game: ${inviteLink()}`;
 }
 
 /** Open WhatsApp (app or web) with the invite pre-written. */
