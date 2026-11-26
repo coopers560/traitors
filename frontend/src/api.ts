@@ -108,7 +108,10 @@ export type PrivateView = {
   /** This player was recruited into the Traitors today (only ever sent to them). */
   recruited_now?: boolean;
   endgame?: boolean;
+  /** Fellow Traitors still in the game (Traitors only). */
   fellow_traitors?: string[];
+  /** Fellow Traitors who are out — banished (Traitors only). */
+  fellow_traitors_out?: string[];
   target?: { id: string; name: string } | null;
   action?: string | null;
   action_choices?: string[];

@@ -1577,7 +1577,9 @@ def private_out(g: Game, p: Player) -> dict:
         "endgame": in_endgame(g),
     }
     if p.role == "traitor":
-        out["fellow_traitors"] = [x.name for x in g.players if x.role == "traitor" and x.id != p.id]
+        # Fellow Traitors still in the game, and those who are out (banished — Traitors can't be murdered).
+        out["fellow_traitors"] = [x.name for x in g.players if x.role == "traitor" and x.id != p.id and x.lives > 0]
+        out["fellow_traitors_out"] = [x.name for x in g.players if x.role == "traitor" and x.id != p.id and x.lives <= 0]
         out["target"] = {"id": g.target_id, "name": name_of(g, g.target_id)} if g.target_id else None
         out["action"] = g.action
         out["action_choices"] = g.action_choices

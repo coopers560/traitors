@@ -515,6 +515,7 @@ class TestRecruitOnlyToReplace:
         assert S.post(f"{G()}/advance").json()["phase"] == "night"
         # t1 is now alone AND has a banished Traitor to replace
         v = private(t1["id"], pin_of(t1["name"])).json()
+        assert v["fellow_traitors"] == [] and v["fellow_traitors_out"] == [t2["name"]]
         assert v["can_recruit"] is True and v["recruit_reason"] == "banished"
         assert S.post(f"{G()}/turn", json={"player_id": t1["id"], "pin": pin_of(t1["name"]), "recruit_id": fa[0]["id"]}).status_code == 200
         for p in S.get(f"{G()}").json()["players"]:
