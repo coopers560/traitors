@@ -16,12 +16,10 @@ def create(n=5):
 
 
 def create_traitors(n, want):
-    """Create games until the random draw gives exactly `want` Traitors."""
-    for _ in range(400):
-        g = create(n)
-        if list(roles_of(g["code"], g).values()).count("traitor") == want:
-            return g
-    raise AssertionError(f"could not draw {want} traitors out of {n}")
+    """Create a game, checking it has `want` Traitors (1 for 5 or fewer players, else 2)."""
+    g = create(n)
+    assert list(roles_of(g["code"], g).values()).count("traitor") == want
+    return g
 
 
 def roles_of(code, g):
@@ -112,7 +110,7 @@ class TestIsolation:
         assert S.get(G(b["code"])).json()["turns_done"] == 0
 
     def test_actions_per_game_and_used_in_murder(self):
-        a, b = create_traitors(6, 1), create_traitors(6, 1)
+        a, b = create_traitors(6, 2), create_traitors(6, 2)
         custom = ["TEST_Iso One", "TEST_Iso Two", "TEST_Iso Three"]
         r = S.put(f"{G(a['code'])}/actions", json={"actions": custom})
         assert r.status_code == 200 and r.json()["actions"] == custom and r.json()["is_default"] is False

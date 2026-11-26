@@ -17,6 +17,11 @@ STATE = {}
 CUR = {"code": None}
 
 
+MOD_PASS = "Sunny#Pool9"  # the ClaudAI passphrase every test game is set up with
+MOD = {"passphrase": MOD_PASS}
+RULE = "Use at least 8 characters with upper and lower case letters, a number and a symbol"
+
+
 def G(code=None):
     """Base URL of the current (or given) game."""
     return f"{API}/games/{code or CUR['code']}"
@@ -53,10 +58,10 @@ def del_game(code=None):
     return S.delete(G(code), json=body)
 
 
-def setup_game(n=10):
+def setup_game(n=10, **extra):
     if CUR["code"]:
         del_game()  # clean up previous test game
-    r = S.post(f"{API}/games", json={"players": mk_players(n), "murder_gap_hours": 0})
+    r = S.post(f"{API}/games", json={"players": mk_players(n), "claudai_passphrase": MOD_PASS, "murder_gap_hours": 0, **extra})
     assert r.status_code == 200, r.text
     g = r.json()
     CUR["code"] = g["code"]
@@ -67,14 +72,11 @@ def setup_game(n=10):
     return g, roles
 
 
-def setup_game_traitors(n, want):
-    """Like setup_game but retries the random Traitor draw until exactly `want`
-    Traitors are chosen, so multi-day flow tests stay deterministic."""
-    for _ in range(400):
-        g, roles = setup_game(n)
-        if list(roles.values()).count("traitor") == want:
-            return g, roles
-    raise AssertionError(f"could not draw {want} traitors out of {n}")
+def setup_game_traitors(n, want, **extra):
+    """Like setup_game, checking the Traitor count (1 for 5 or fewer players, else 2)."""
+    g, roles = setup_game(n, **extra)
+    assert list(roles.values()).count("traitor") == want, f"expected {want} traitors out of {n}"
+    return g, roles
 
 
 def cast_votes(votes):
@@ -113,12 +115,24 @@ def do_night(roles, murder_target=None):
             r = S.post(f"{G()}/turn", json={"player_id": p["id"], "pin": pin_of(p["name"]), "target_id": murder_target})
             assert r.status_code == 200, r.text
             choices = r.json()["action_choices"]
-            assert len(choices) == 3
+            assert len(choices) == 5
             r2 = S.post(f"{G()}/turn", json={"player_id": p["id"], "pin": pin_of(p["name"]), "action": choices[0]})
             assert r2.status_code == 200 and r2.json()["murder_confirmed"] is True, r2.text
             committed = True
         else:
             assert S.post(f"{G()}/turn", json={"player_id": p["id"], "pin": pin_of(p["name"])}).status_code == 200
+
+
+def banish_round(roles, target_id):
+    """From the 'day' phase: a lie-low night, then everyone banishes `target_id` (whoever is
+    the target votes for someone else). Ends on the banishment reveal."""
+    to_roundtable(roles)
+    alive = [p for p in S.get(G()).json()["players"] if p["alive"]]
+    other = next(p["id"] for p in alive if p["id"] != target_id)
+    cast_votes({p["id"]: (target_id if p["id"] != target_id else other) for p in alive})
+    r = S.post(f"{G()}/advance").json()
+    assert r["phase"] == "banished" and r["history"][-1]["banish"]["target_id"] == target_id, r
+    return r
 
 
 def to_roundtable(roles):
@@ -161,11 +175,13 @@ class TestCreate:
         ps = mk_players(4); ps[0]["name"] = "  "
         assert S.post(f"{API}/games", json={"players": ps}).status_code == 400
 
-    @pytest.mark.parametrize("n", [4, 5, 8, 10, 12, 15])
-    def test_traitor_count_random_minority(self, n):
-        g, roles = setup_game(n)
-        t = list(roles.values()).count("traitor")
-        assert 1 <= t <= min(3, (n - 1) // 2)  # random 1-3, always a minority
+    @pytest.mark.parametrize("n", [4, 5, 6, 7, 8, 10, 12, 15])
+    def test_traitor_count_one_or_two(self, n):
+        # one Traitor for 5 or fewer players, otherwise exactly two (every time)
+        for _ in range(3):
+            g, roles = setup_game(n)
+            t = list(roles.values()).count("traitor")
+            assert t == (1 if n <= 5 else 2)
         assert g["phase"] == "setup" and g["day"] == 1 and g["turns_needed"] == n
 
 
@@ -229,7 +245,7 @@ class TestFlow:
         r = S.post(f"{G()}/turn", json={"player_id": t0["id"], "pin": pin_of(t0["name"]), "target_id": victim["id"]})
         assert r.status_code == 200 and r.json()["target"]["id"] == victim["id"]
         choices = r.json()["action_choices"]
-        assert len(choices) == 3 and r.json()["action"] is None and r.json()["murder_confirmed"] is False
+        assert len(choices) == 5 and r.json()["action"] is None and r.json()["murder_confirmed"] is False
         # an action that was not offered is rejected
         assert S.post(f"{G()}/turn", json={"player_id": t0["id"], "pin": pin_of(t0["name"]), "action": "not a real option"}).status_code == 400
         # step 2: confirm one of the three
@@ -318,8 +334,8 @@ class TestFlow:
         assert S.post(f"{G()}/advance").status_code == 400
 
     def test_traitor_win_by_numbers(self):
-        # 8 players, 3 Traitors: a banishment + a murder brings 3v3 parity before the endgame.
-        g, roles = setup_game_traitors(8, 3)
+        # 6 players, 2 Traitors: a murder + a banishment brings 2v2 parity.
+        g, roles = setup_game_traitors(6, 2)
         ps = g["players"]
         fa = [p for p in ps if roles[p["id"]] == "faithful"]
         finish_setup(ps)  # -> day
@@ -328,10 +344,10 @@ class TestFlow:
         do_night(roles, murder_target=fa[0]["id"])
         assert S.post(f"{G()}/advance").json()["phase"] == "gather"
         do_gather(roles, murder_done=True)
-        rv = S.post(f"{G()}/advance").json()  # murder revealed: 7 alive, 3 Traitors vs 4 Faithful
+        rv = S.post(f"{G()}/advance").json()  # murder revealed: 5 alive, 2 Traitors vs 3 Faithful
         assert rv["phase"] == "reveal" and rv["winner"] is None
         assert S.post(f"{G()}/advance").json()["phase"] == "roundtable"
-        # Round Table: banish fa[1] -> 6 alive, 3 Traitors vs 3 Faithful -> Traitors win
+        # Round Table: banish fa[1] -> 4 alive, 2 Traitors vs 2 Faithful -> Traitors win
         cast_votes({p["id"]: (fa[1]["id"] if p["id"] != fa[1]["id"] else fa[2]["id"]) for p in ps})
         rb = S.post(f"{G()}/advance").json()
         assert rb["phase"] == "banished" and rb["winner"] == "traitors"
@@ -347,7 +363,7 @@ class TestFlow:
 
 class TestMurderChoice:
     def test_three_choices_then_lie_low(self):
-        g, roles = setup_game_traitors(6, 1)  # 6 so a banishment leaves a normal night (not endgame)
+        g, roles = setup_game_traitors(6, 2)  # 6 so a banishment leaves a normal night (not endgame)
         ps = g["players"]
         tr = next(p for p in ps if roles[p["id"]] == "traitor")
         fa = [p for p in ps if roles[p["id"]] == "faithful"]
@@ -357,7 +373,7 @@ class TestMurderChoice:
         # picking a victim offers three distinct actions and commits nothing yet
         r = S.post(f"{G()}/turn", json={"player_id": tr["id"], "pin": pin_of(tr["name"]), "target_id": fa[2]["id"]})
         ch = r.json()["action_choices"]
-        assert len(ch) == 3 and len(set(ch)) == 3 and r.json()["action"] is None and r.json()["murder_confirmed"] is False
+        assert len(ch) == 5 and len(set(ch)) == 5 and r.json()["action"] is None and r.json()["murder_confirmed"] is False
         # the traitor can still lie low after seeing the choices -> nothing sealed, turn taken
         assert S.post(f"{G()}/turn", json={"player_id": tr["id"], "pin": pin_of(tr["name"])}).status_code == 200
         for p in ps:
@@ -372,7 +388,7 @@ class TestMurderChoice:
 
 class TestGatherCheckIn:
     def test_everyone_must_check_in_before_the_murder_is_revealed(self):
-        g, roles = setup_game_traitors(6, 1)
+        g, roles = setup_game_traitors(6, 2)
         ps = g["players"]
         tr = next(p for p in ps if roles[p["id"]] == "traitor")
         fa = [p for p in ps if roles[p["id"]] == "faithful"]
@@ -422,15 +438,25 @@ class TestRoundTableCheckIn:
 
 class TestRecruit:
     def test_recruit_available_at_six_or_more(self):
-        g, roles = setup_game_traitors(8, 1)  # one Traitor so a banishment can't end it early
+        g, roles = setup_game_traitors(8, 2)
         ps = g["players"]
-        tr = next(p for p in ps if roles[p["id"]] == "traitor")
+        tr, t2 = [p for p in ps if roles[p["id"]] == "traitor"]
         fa = [p for p in ps if roles[p["id"]] == "faithful"]
         finish_setup(ps)  # -> day 1
-        # Day 1 night comes first: 8 still in (>= 6) and a lone Traitor, so recruitment is available
+        # Two Traitors already: no recruiting (never more than 2). Banish t2 on Day 1.
+        assert S.post(f"{G()}/advance").json()["phase"] == "night"
+        assert private(tr["id"], pin_of(tr["name"])).json()["can_recruit"] is False
+        do_night(roles)
+        assert S.post(f"{G()}/advance").json()["phase"] == "gather"
+        do_gather(roles)
+        S.post(f"{G()}/advance"); S.post(f"{G()}/advance")  # reveal -> roundtable
+        cast_votes({p["id"]: (t2["id"] if p["id"] != t2["id"] else fa[1]["id"]) for p in ps})
+        assert S.post(f"{G()}/advance").json()["history"][-1]["banish"]["target_id"] == t2["id"]
+        S.post(f"{G()}/advance")  # -> day 2
+        # Day 2 night: 7 still in (>= 6), one Traitor left with one to replace -> recruit
         assert S.post(f"{G()}/advance").json()["phase"] == "night"
         v = private(tr["id"], pin_of(tr["name"])).json()
-        assert v["can_recruit"] is True and v["recruit_reason"] == "alone"
+        assert v["can_recruit"] is True and v["recruit_reason"] == "banished"
         recruit = fa[0]
         assert private(recruit["id"], pin_of(recruit["name"])).json()["role"] == "faithful"
         assert S.post(f"{G()}/turn", json={"player_id": tr["id"], "pin": pin_of(tr["name"]), "recruit_id": recruit["id"]}).status_code == 200
@@ -447,14 +473,15 @@ class TestRecruit:
         assert nv["role"] == "traitor" and tr["name"] in nv["fellow_traitors"]
 
     def test_no_recruit_under_six(self):
-        g, roles = setup_game_traitors(6, 1)
+        g, roles = setup_game_traitors(6, 2)
         ps = g["players"]
-        tr = next(p for p in ps if roles[p["id"]] == "traitor")
+        tr, t2 = [p for p in ps if roles[p["id"]] == "traitor"]
         fa = [p for p in ps if roles[p["id"]] == "faithful"]
         finish_setup(ps)  # -> day 1
-        # Day 1 night (6 still in): lie low. Then banish a Faithful at the Round Table -> 5 left.
+        # Day 1 night (6 still in): lie low. Then banish Traitor t2 at the Round Table -> 5 left,
+        # a lone Traitor with a banished Traitor to replace — but fewer than six are still in.
         to_roundtable(roles)
-        cast_votes({p["id"]: (fa[0]["id"] if p["id"] != fa[0]["id"] else fa[1]["id"]) for p in ps})
+        cast_votes({p["id"]: (t2["id"] if p["id"] != t2["id"] else fa[1]["id"]) for p in ps})
         assert S.post(f"{G()}/advance").json()["phase"] == "banished"  # 5 alive
         assert S.post(f"{G()}/advance").json()["phase"] == "day"  # day 2, not endgame
         # Day 2 night: 5 still in (< 6), so no recruiting
@@ -497,7 +524,7 @@ class TestRecruitOnlyToReplace:
         do_gather(roles)
         assert S.post(f"{G()}/advance").json()["history"][-1]["recruited"] is True
         # the replacement is used up and there are two Traitors again: no more recruiting
-        mod = S.post(f"{G()}/moderator", json={"passphrase": "!Uganda02!"}).json()
+        mod = S.post(f"{G()}/moderator", json=MOD).json()
         assert mod["counts"]["traitors_alive"] == 2
         S.post(f"{G()}/advance")  # -> roundtable
         cast_votes({p["id"]: (fa[1]["id"] if p["id"] != fa[1]["id"] else fa[2]["id"]) for p in S.get(G()).json()["players"] if p["alive"]})
@@ -508,7 +535,7 @@ class TestRecruitOnlyToReplace:
 
 class TestHideRoleAndEndgame:
     def test_banish_role_shown_above_six(self):
-        g, roles = setup_game_traitors(7, 1)
+        g, roles = setup_game_traitors(7, 2)
         ps = g["players"]
         fa = [p for p in ps if roles[p["id"]] == "faithful"]
         finish_setup(ps)  # -> day
@@ -518,7 +545,7 @@ class TestHideRoleAndEndgame:
         assert h["eliminated"] and h["role"] == "faithful" and not h.get("role_hidden")  # 7 remained
 
     def test_banish_role_hidden_at_six(self):
-        g, roles = setup_game_traitors(6, 1)
+        g, roles = setup_game_traitors(6, 2)
         ps = g["players"]
         fa = [p for p in ps if roles[p["id"]] == "faithful"]
         finish_setup(ps)  # -> day
@@ -603,7 +630,7 @@ class TestDelete:
 
 class TestModeratorLog:
     def test_event_log_is_moderator_only_and_detailed(self):
-        g, roles = setup_game_traitors(8, 1)
+        g, roles = setup_game_traitors(8, 2)
         ps = g["players"]
         tr = next(p for p in ps if roles[p["id"]] == "traitor")
         fa = [p for p in ps if roles[p["id"]] == "faithful"]
@@ -618,7 +645,7 @@ class TestModeratorLog:
         pub = S.post(f"{G()}/advance").json()
         # never in the player-facing state
         assert "event_log" not in pub and "event_log" not in S.get(G()).json()
-        mod = S.post(f"{G()}/moderator", json={"passphrase": "!Uganda02!"}).json()
+        mod = S.post(f"{G()}/moderator", json=MOD).json()
         texts = [e["text"] for e in mod["event_log"]]
         kinds = {e["kind"] for e in mod["event_log"]}
         assert {"setup", "role", "stage", "victim", "murder", "pass", "plan", "checkin", "confirm", "reveal", "vote", "banish"} <= kinds
@@ -631,13 +658,13 @@ class TestModeratorLog:
                 assert e["neutral"] is None
             if e["neutral"]:
                 assert "(Traitor)" not in e["neutral"] and "Traitors:" not in e["neutral"]
-        # every entry carries a timestamp, day and phase
-        assert all(e["t"] and e["day"] and e["phase"] for e in mod["event_log"])
+        # every entry carries a timestamp, day, round label and phase
+        assert all(e["t"] and e["day"] and e["phase"] and e["label"] == "Day 1" for e in mod["event_log"])
 
 
 class TestModeratorNow:
     def _mod(self):
-        return S.post(f"{G()}/moderator", json={"passphrase": "!Uganda02!"}).json()
+        return S.post(f"{G()}/moderator", json=MOD).json()
 
     def test_now_says_who_we_are_waiting_for_and_what_is_next(self):
         g, roles = setup_game_traitors(6, 2)
@@ -678,7 +705,7 @@ class TestTieRevote:
     """A tied Round Table goes to a revote: everyone votes again, only between the tied players."""
 
     def _tie(self):
-        g, roles = setup_game_traitors(8, 1)
+        g, roles = setup_game_traitors(8, 2)
         ps = g["players"]
         fa = [p for p in ps if roles[p["id"]] == "faithful"]
         a, b = fa[0], fa[1]
@@ -722,7 +749,7 @@ class TestTieRevote:
         assert h["tie_vote"]["tie"] and len(h["tie_vote"]["votes"]) == 8
         st = S.post(f"{G()}/advance").json()
         assert st["phase"] == "day" and st["day"] == 2
-        mod = S.post(f"{G()}/moderator", json={"passphrase": "!Uganda02!"}).json()
+        mod = S.post(f"{G()}/moderator", json=MOD).json()
         assert [v["round"] for v in mod["vote_log"]] == [1, 2]
         assert mod["revote_available"] is False
 
@@ -740,27 +767,30 @@ class TestTieRevote:
         assert st["revote"] is None and all(p["alive"] for p in st["players"])
         assert S.post(f"{G()}/advance").json()["phase"] == "day"  # no third round
 
-    def test_moderator_revote_needs_passphrase_and_a_tie(self):
+    def test_moderator_revote_needs_the_claudai_passphrase_and_a_tie(self):
         ps, roles, a, b, others = self._tie()
-        assert S.post(f"{G()}/moderator/revote", json={"passphrase": "nope"}).status_code == 403
+        assert S.post(f"{G()}/moderator/revote", json={"passphrase": "Wrong#Pass1"}).status_code == 403
+        assert S.post(f"{G()}/moderator/revote", json={"pin": "0000"}).status_code == 403
         S.post(f"{G()}/advance")  # tie reveal: the revote is already pending
-        r = S.post(f"{G()}/moderator/revote", json={"passphrase": "!Uganda02!"})
+        r = S.post(f"{G()}/moderator/revote", json=MOD)
         assert r.status_code == 400 and "already pending" in r.json()["detail"]
 
 
 class TestRecruitedNow:
     def test_only_the_recruit_is_told_and_only_after_the_reveal(self):
-        g, roles = setup_game_traitors(8, 1)
+        g, roles = setup_game_traitors(8, 2)
         ps = g["players"]
-        tr = next(p for p in ps if roles[p["id"]] == "traitor")
+        tr, t2 = [p for p in ps if roles[p["id"]] == "traitor"]
         fa = [p for p in ps if roles[p["id"]] == "faithful"]
         finish_setup(ps)
+        banish_round(roles, t2["id"])  # a banished Traitor the other may now replace
+        assert S.post(f"{G()}/advance").json()["phase"] == "day"
         assert S.post(f"{G()}/advance").json()["phase"] == "night"
         r = S.post(f"{G()}/turn", json={"player_id": tr["id"], "pin": pin_of(tr["name"]), "recruit_id": fa[0]["id"]})
         assert r.status_code == 200, r.text
         for p in ps:
-            if p["id"] != tr["id"]:
-                S.post(f"{G()}/turn", json={"player_id": p["id"], "pin": pin_of(p["name"])})
+            if p["id"] not in (tr["id"], t2["id"]):
+                assert S.post(f"{G()}/turn", json={"player_id": p["id"], "pin": pin_of(p["name"])}).status_code == 200
         # during the night the target is still Faithful and must not be told anything
         assert private(fa[0]["id"], pin_of(fa[0]["name"])).json()["recruited_now"] is False
         assert S.post(f"{G()}/advance").json()["phase"] == "gather"
@@ -779,7 +809,11 @@ class TestSingleCohort:
     def test_current_game_and_no_second_live_game(self):
         g, roles = setup_game(6)
         cur = S.get(f"{API}/current").json()
-        assert cur["code"] == g["code"] and cur["phase"] == "setup" and cur["players"] == 6
+        assert cur["code"]  # a game is in progress
+        # (with parallel test workers on one server another worker's game may be the most recently
+        # active one; the exact /current answer is covered in-process in test_inprocess_rules.py)
+        if cur["code"] == g["code"]:
+            assert cur["phase"] == "setup" and cur["players"] == 6 and cur["label"] == "Day 1"
         # the app asks for a single game: refused while one is in progress
         r = S.post(f"{API}/games", json={"players": mk_players(5), "single": True})
         assert r.status_code == 409 and "in progress" in r.json()["detail"]
@@ -793,13 +827,15 @@ class TestTraitorChat:
         fa = next(p for p in ps if roles[p["id"]] == "faithful")
         send = lambda p, text: S.post(f"{G()}/chat/send", json={"player_id": p["id"], "pin": pin_of(p["name"]), "text": text})
         read = lambda p: S.post(f"{G()}/chat", json={"player_id": p["id"], "pin": pin_of(p["name"])})
-        # not during setup
+        # not during setup; after that, any time — day or night (scheming never stops)
         assert send(t1, "too early").status_code == 403
         finish_setup(ps)
+        assert send(t1, "daytime").status_code == 200
+        assert S.post(f"{G()}/advance").json()["phase"] == "night"
         assert send(t1, "  Who first?  ").status_code == 200
         assert send(t2, "Not me").status_code == 200
         msgs = read(t2).json()
-        assert msgs["allowed"] is True and [m["text"] for m in msgs["messages"]] == ["Who first?", "Not me"]
+        assert msgs["allowed"] is True and [m["text"] for m in msgs["messages"]] == ["daytime", "Who first?", "Not me"]
         assert msgs["messages"][0]["from_name"] == t1["name"]
         # a Faithful sees nothing and cannot post; a wrong PIN is refused
         assert read(fa).json() == {"allowed": False, "messages": []}
@@ -808,53 +844,107 @@ class TestTraitorChat:
         assert send(t1, "").status_code == 400 and send(t1, "x" * 501).status_code == 400
         # never in the public state; the moderator sees it
         assert "traitor_chat" not in S.get(G()).json()
-        mod = S.post(f"{G()}/moderator", json={"passphrase": "!Uganda02!"}).json()
-        assert len(mod["traitor_chat"]) == 2
+        mod = S.post(f"{G()}/moderator", json=MOD).json()
+        assert len(mod["traitor_chat"]) == 3
 
 
-class TestClaudAIPin:
-    def test_per_game_pin_opens_only_that_game(self):
+class TestClaudAIPassphrase:
+    def test_per_game_passphrase_opens_only_that_game(self):
         if CUR["code"]:
             del_game()
-        r = S.post(f"{API}/games", json={"players": mk_players(5), "moderator_pin": "0001"})
-        assert r.status_code == 400 and "no player" in r.json()["detail"]  # TEST_P1 uses 0001
-        r = S.post(f"{API}/games", json={"players": mk_players(5), "moderator_pin": "12a4"})
-        assert r.status_code == 400
-        r = S.post(f"{API}/games", json={"players": mk_players(5), "moderator_pin": "7777"})
+        # every new passphrase must be strong: 8+ characters, upper, lower, a number and a symbol
+        for weak in ["Ab1!", "abcdefg1!", "ABCDEFG1!", "Abcdefgh!", "Abcdefgh1", "12345678", "9999"]:
+            for key in ("claudai_passphrase", "moderator_pin"):
+                r = S.post(f"{API}/games", json={"players": mk_players(5), key: weak})
+                assert r.status_code == 400 and r.json()["detail"] == RULE, (key, weak, r.text)
+        r = S.post(f"{API}/games", json={"players": mk_players(5), "claudai_passphrase": "Tide&Moon42"})
         assert r.status_code == 200
         CUR["code"] = r.json()["code"]
-        assert "moderator_pin_hash" not in r.json()
-        # the PIN opens this game's ClaudAI; the passphrase still works; nothing else does
-        mod = S.post(f"{G()}/moderator", json={"pin": "7777"}).json()
+        assert r.json()["claudai"] is True and "moderator_pin_hash" not in r.json()
+        assert "Tide&Moon42" not in str(r.json())
+        mod = S.post(f"{G()}/moderator", json={"passphrase": "Tide&Moon42"}).json()
         assert mod["code"] == CUR["code"] and mod["has_moderator_pin"] is True and len(mod["players"]) == 5
-        assert S.post(f"{G()}/moderator", json={"passphrase": "!Uganda02!"}).status_code == 200
-        assert S.post(f"{G()}/moderator", json={"pin": "7778"}).status_code == 403
+        assert "Tide&Moon42" not in str(mod)
+        # the legacy key still carries it
+        assert S.post(f"{G()}/moderator", json={"pin": "Tide&Moon42"}).status_code == 200
+        wrong = S.post(f"{G()}/moderator", json={"passphrase": "Tide&Moon43"})
+        assert wrong.status_code == 403 and wrong.json()["detail"] == "Wrong ClaudAI passphrase"
+        assert S.post(f"{G()}/moderator", json={"passphrase": "tide&moon42"}).status_code == 403  # case matters
         assert S.post(f"{G()}/moderator", json={}).status_code == 403
-        # a game PIN can't list every game or unlock the master view
-        assert S.post(f"{API}/moderator/games", json={"pin": "7777"}).status_code == 403
-        # PIN login finds the game in progress
-        assert S.post(f"{API}/moderator/pin", json={"pin": "7777"}).json() == {"code": CUR["code"]}
-        # change it (needs the current PIN or the passphrase)
-        assert S.post(f"{G()}/moderator/pin", json={"pin": "0000", "new_pin": "1212"}).status_code == 403
-        assert S.post(f"{G()}/moderator/pin", json={"pin": "7777", "new_pin": "1212"}).status_code == 200
-        assert S.post(f"{G()}/moderator", json={"pin": "1212"}).status_code == 200
-        assert S.post(f"{G()}/moderator", json={"pin": "7777"}).status_code == 403
+        # there is no master key
+        assert S.post(f"{G()}/moderator", json={"passphrase": "!Uganda02!"}).status_code == 403
+        assert S.post(f"{API}/moderator/games", json={"passphrase": "!Uganda02!"}).status_code in (404, 405)
+        assert S.post(f"{API}/moderator/unlock", json={"passphrase": "!Uganda02!"}).status_code in (404, 405)
+        # (logging in to "the game in progress" is covered in-process: test_inprocess_rules.py —
+        # with parallel test workers on one server, which game is in progress keeps changing)
+        # change it (needs the current passphrase; the new one must be strong)
+        assert S.post(f"{G()}/moderator/pin", json={"passphrase": "Nope#Nope1", "new_passphrase": "Sand*Castle7"}).status_code == 403
+        r = S.post(f"{G()}/moderator/pin", json={"passphrase": "Tide&Moon42", "new_passphrase": "sandcastle"})
+        assert r.status_code == 400 and r.json()["detail"] == RULE
+        assert S.post(f"{G()}/moderator/pin", json={"passphrase": "Tide&Moon42"}).status_code == 400
+        r = S.post(f"{G()}/moderator/pin", json={"passphrase": "Tide&Moon42", "new_passphrase": "Sand*Castle7"})
+        assert r.status_code == 200 and r.json()["code"] == CUR["code"]
+        assert S.post(f"{G()}/moderator", json={"passphrase": "Sand*Castle7"}).status_code == 200
+        assert S.post(f"{G()}/moderator", json={"passphrase": "Tide&Moon42"}).status_code == 403
+        # the older {pin, new_pin} body still works (the strength rule still applies)
+        assert S.post(f"{G()}/moderator/pin", json={"pin": "Sand*Castle7", "new_pin": "1212"}).status_code == 400
+        assert S.post(f"{G()}/moderator/pin", json={"pin": "Sand*Castle7", "new_pin": "Wave~Rider8"}).status_code == 200
+        assert S.post(f"{G()}/moderator", json={"passphrase": "Wave~Rider8"}).status_code == 200
+        log = S.post(f"{G()}/moderator", json={"passphrase": "Wave~Rider8"}).json()["event_log"]
+        assert any("passphrase was changed" in e["text"] for e in log)
+        assert not any(x in str(log) for x in ("Tide&Moon42", "Sand*Castle7", "Wave~Rider8"))
 
-    def test_too_many_wrong_pins_locks_it(self):
+    def test_too_many_wrong_passphrases_locks_it(self):
         if CUR["code"]:
             del_game()
-        r = S.post(f"{API}/games", json={"players": mk_players(5), "moderator_pin": "4321"})
+        r = S.post(f"{API}/games", json={"players": mk_players(5), "claudai_passphrase": "Lock#Out123"})
         CUR["code"] = r.json()["code"]
-        for _ in range(8):
-            assert S.post(f"{G()}/moderator", json={"pin": "0000"}).status_code == 403
-        r = S.post(f"{G()}/moderator", json={"pin": "4321"})
-        assert r.status_code == 429  # even the right PIN waits
+        for i in range(8):
+            assert S.post(f"{G()}/moderator", json={"passphrase": f"Wrong#Guess{i}"}).status_code == 403
+        r = S.post(f"{G()}/moderator", json={"passphrase": "Lock#Out123"})
+        assert r.status_code == 429  # even the right passphrase waits
 
-    def test_game_without_pin_needs_the_passphrase(self):
-        g, roles = setup_game(5)
-        assert S.post(f"{G()}/moderator", json={"pin": "1234"}).status_code == 403
-        mod = S.post(f"{G()}/moderator", json={"passphrase": "!Uganda02!"}).json()
-        assert mod["has_moderator_pin"] is False
-        # the passphrase can give an existing game a ClaudAI PIN
-        assert S.post(f"{G()}/moderator/pin", json={"passphrase": "!Uganda02!", "new_pin": "5656"}).status_code == 200
-        assert S.post(f"{G()}/moderator", json={"pin": "5656"}).status_code == 200
+    def test_a_stale_passphrase_left_polling_never_locks_it(self):
+        # A phone left open on ClaudAI keeps re-sending the same old passphrase (or none at all):
+        # that's not guessing, so it must never lock the real ClaudAI host out.
+        if CUR["code"]:
+            del_game()
+        r = S.post(f"{API}/games", json={"players": mk_players(5), "claudai_passphrase": "Stay#Open42"})
+        CUR["code"] = r.json()["code"]
+        for _ in range(25):
+            assert S.post(f"{G()}/moderator", json={"passphrase": "Old#Phrase1"}).status_code == 403
+            assert S.post(f"{G()}/moderator", json={}).status_code == 403
+        assert S.post(f"{G()}/moderator", json={"passphrase": "Stay#Open42"}).status_code == 200
+
+    def test_host_nominates_a_claudai_host_for_a_game_without_one(self):
+        if CUR["code"]:
+            del_game()
+        r = S.post(f"{API}/games", json={"players": mk_players(5)})
+        g = r.json()
+        CUR["code"] = g["code"]
+        assert g["claudai"] is False
+        host = next(p for p in g["players"] if p["id"] == g["host_id"])
+        other = next(p for p in g["players"] if p["id"] != g["host_id"])
+        assert S.post(f"{G()}/moderator", json={"passphrase": "Palm+Tree55"}).status_code == 403  # nobody can open it yet
+        nominate = lambda p, pin, new: S.post(f"{G()}/claudai", json={"player_id": p["id"], "pin": pin, "new_passphrase": new})
+        assert nominate(other, pin_of(other["name"]), "Palm+Tree55").status_code == 403  # only the host
+        assert nominate(host, "0000", "Palm+Tree55").status_code == 401  # with the host's own PIN
+        for weak in ["5656", "palmtree", "Palmtree55", "palm+tree55"]:
+            r = nominate(host, pin_of(host["name"]), weak)
+            assert r.status_code == 400 and r.json()["detail"] == RULE, weak
+        r = nominate(host, pin_of(host["name"]), "Palm+Tree55")
+        assert r.status_code == 200 and r.json()["claudai"] is True
+        assert S.post(f"{G()}/moderator", json={"passphrase": "Palm+Tree55"}).status_code == 200
+        # once set, the host can't overwrite it (only ClaudAI can change its passphrase)
+        assert nominate(host, pin_of(host["name"]), "Other+Tree66").status_code == 400
+
+    def test_nominate_accepts_the_older_new_pin_key(self):
+        if CUR["code"]:
+            del_game()
+        g = S.post(f"{API}/games", json={"players": mk_players(5)}).json()
+        CUR["code"] = g["code"]
+        host = next(p for p in g["players"] if p["id"] == g["host_id"])
+        body = {"player_id": host["id"], "pin": pin_of(host["name"])}
+        assert S.post(f"{G()}/claudai", json={**body, "new_pin": "5656"}).status_code == 400  # still must be strong
+        assert S.post(f"{G()}/claudai", json={**body, "new_pin": "Shell=Beach9"}).status_code == 200
+        assert S.post(f"{G()}/moderator", json={"passphrase": "Shell=Beach9"}).status_code == 200

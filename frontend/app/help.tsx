@@ -28,9 +28,10 @@ const SECTIONS: Section[] = [
     icon: "home-outline",
     title: "Start screen",
     tips: [
-      ["Join the game", "a game is already under way — tap it to join. No codes needed: there's only ever one game."],
+      ["Join the game", "a game is already under way — tap it to join. No codes needed: there's only ever one game, until it's ended."],
       ["Begin a new game", "shown when no game is in progress. You set it up for the group."],
       ["How to play", "the rules, in a minute."],
+      ["Previous games", "the whole story of every finished game, for everyone."],
     ],
   },
   {
@@ -41,8 +42,9 @@ const SECTIONS: Section[] = [
       ["Each player", "types their own name and a 4-digit PIN. Keep the PIN to yourself, you need it every turn."],
       ["4 to 15 players.", "Empty rows are ignored. Use the cross to remove a row, or Add a player for more."],
       ["First name on the list", "is the host. Only the host's PIN can end the game for everyone."],
-      ["Add ClaudAI", "optional: tick it and set a 4-digit PIN for a host who sees everything. Pick a PIN no player uses."],
-      ["Choose the Traitors", "starts the game. Roles are dealt in secret, even from the organiser."],
+      ["Round Tables per day", "two (lunch and about 8pm) for a faster game, or one each evening."],
+      ["Add ClaudAI", "optional: a host who sees everything. Set the game's ClaudAI passphrase (8+ characters with upper and lower case, a number and a symbol), typed twice. It can't be recovered and there's no master key — keep it safe."],
+      ["Choose the Traitors", "starts the game. Two Traitors (one with 5 or fewer players), dealt in secret — even from the organiser."],
     ],
   },
   {
@@ -75,12 +77,13 @@ const SECTIONS: Section[] = [
     title: "What to tap, through the day",
     tips: [
       ["Before Day 1", "everyone taps their name to see their role. Then Begin Day 1."],
-      ["Night (first)", "tap your name once — the Traitors secretly pick their victim and method. Then Everyone to the Round Table."],
-      ["During the day", "the Traitors carry out the murder in plain sight. Watch closely."],
-      ["Check in (evening)", "everyone taps their name to check in; the Traitors confirm the kill in secret. Then Reveal the murder — before anyone votes."],
+      ["Two Round Tables a day", "at lunch and at about 8pm (or one each evening). Each one goes like this:"],
+      ["The plot", "everyone taps their name once — the Traitors secretly pick their victim and method. Then Everyone to the Round Table."],
+      ["The murder", "the Traitors carry it out in plain sight before the Round Table. Watch closely."],
+      ["Check in", "everyone taps their name to check in; the Traitors confirm the kill in secret. Then Reveal the murder — before anyone votes."],
       ["The vote", "now everyone votes in private to banish someone — first tapping to check who they are now. Then Reveal the banishment. On a tie, everyone votes again — only the top-voted players can be chosen."],
       ["Everyone must take part", "each reveal stays locked until every player still in has checked in or voted — a missing turn could give the Traitors away."],
-      ["Take your time", "the reveal stays put — everyone can look before you Begin the next day."],
+      ["Take your time", "the reveal stays put — everyone can look before you begin the next Round Table."],
     ],
   },
   {
@@ -93,7 +96,7 @@ const SECTIONS: Section[] = [
       ["Follow the screen.", "Sometimes there is a choice to make, sometimes only a button to pass the phone on."],
       ["Everyone takes a turn", "and every turn looks the same from across the room. Don't skip yours."],
       ["Your role", "press and hold the card to see it; let go and it hides again."],
-      ["Secret chat", "everyone has the button. Only the Traitors can read or send messages there."],
+      ["Traitors' chat", "on everyone's plot screen while the plan is decided. Only the Traitors can read or send; it closes once the plan is sealed."],
       ["Always finish", "with the button at the bottom so the screen is hidden before the phone leaves your hand."],
       ["✕ (top right)", "closes the screen without doing anything."],
     ],
@@ -113,10 +116,12 @@ const SECTIONS: Section[] = [
     icon: "ellipsis-horizontal",
     title: "The menu (⋯)",
     tips: [
-      ["Day history", "what has been announced so far, day by day. Nothing secret is in there."],
+      ["Day history", "what has been announced so far, Round Table by Round Table. Nothing secret is in there."],
       ["Secret actions", "locked. It asks who you are and only opens for the right people."],
       ["Invite players", "a QR code and a link for other phones."],
       ["Leave game on this phone", "the game carries on for everyone else. Come back with Join the game."],
+      ["ClaudAI (host)", "for the ClaudAI host only: opens with this game's ClaudAI passphrase. It shows everything, so never open it where players can see."],
+      ["Nominate a ClaudAI host", "only if the game has none yet. Needs the host's PIN, then sets the ClaudAI passphrase (typed twice, can't be recovered)."],
       ["End this game for everyone", "needs the host's PIN and cannot be undone."],
     ],
   },
@@ -126,8 +131,9 @@ const SECTIONS: Section[] = [
     title: "Game over",
     tips: [
       ["All roles", "are now shown next to the names on the main screen."],
+      ["The whole story", "every role, murder, vote and secret message, round by round — for everyone."],
       ["Share the finale", "makes a picture of the result to send to the family."],
-      ["Start a new game", "clears this one for every phone. Share the picture first."],
+      ["Start a new game", "clears this one from every phone. Its whole story stays in Previous games on the start screen."],
     ],
   },
   {
@@ -137,6 +143,7 @@ const SECTIONS: Section[] = [
     tips: [
       ["Forgot your role?", "Check my secret, then your name."],
       ["Forgot your PIN?", "There is no reset, so choose one you will remember."],
+      ["Lost the ClaudAI passphrase?", "It can't be recovered. The game carries on without ClaudAI."],
       ["Could not reach the castle?", "Check your internet, then Try again. The game is safe."],
       ["Game ended on another phone?", "It was ended for everyone. Start a new one or join another."],
       ["Opened the wrong name?", "Tap ✕. Nothing happens without that player's PIN."],
@@ -154,8 +161,12 @@ const FROM: Record<string, string> = {
   player: "player",
   reveal: "reveal",
   history: "menu",
+  votes: "menu",
   actions: "menu",
+  moderator: "menu",
   finale: "finale",
+  story: "finale",
+  "previous-games": "finale",
 };
 
 export default function Help() {

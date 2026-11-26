@@ -13,7 +13,10 @@ export type PublicPlayer = {
 };
 
 export type DayResult = {
+  /** The round number (unique, ever-increasing). Show `label` to people, not this. */
   day: number;
+  /** e.g. "Day 3 · Lunch" / "Day 3 · Evening" / "Day 3". Missing on entries made before labels existed. */
+  label?: string;
   murder: {
     success: boolean;
     victim_id?: string;
@@ -69,6 +72,15 @@ export type GameState =
       turns_done: number;
       history: DayResult[];
       revote?: Revote | null;
+      /** Whether this game has a ClaudAI host (a ClaudAI passphrase is set). */
+      claudai?: boolean;
+      /** The current round's label, e.g. "Day 3 · Lunch". */
+      label?: string;
+      /** The calendar day of the holiday (1..total_days); `day` is the round number. */
+      cal_day?: number;
+      session?: "" | "lunch" | "evening";
+      /** Round Tables per day: 1, or 2 (lunch and 8pm). */
+      tables_per_day?: number;
       /** Murders can't come in quick succession: the next night can't start before this (ISO time). */
       next_plot_at?: string | null;
       murder_gap_hours?: number;
@@ -121,6 +133,7 @@ export type VoteEdge = { voter_id: string; voter_name: string | null; target_id:
 export type ModeratorEvent = {
   t: string;
   day: number;
+  label?: string;
   phase: Phase;
   kind: string;
   text: string;
@@ -129,6 +142,7 @@ export type ModeratorEvent = {
 
 export type VoteLogEntry = {
   day: number;
+  label?: string;
   round?: number;
   votes: VoteEdge[];
   end_votes: (string | null)[];
@@ -138,6 +152,10 @@ export type ModeratorView = {
   exists: true;
   code: string;
   day: number;
+  label?: string;
+  cal_day?: number;
+  session?: "" | "lunch" | "evening";
+  tables_per_day?: number;
   total_days: number;
   phase: Phase;
   stage: string;
@@ -238,8 +256,13 @@ export const api = {
   /** Look up a game by code without switching to it (used by the Join screen). */
   findGame: (code: string) => request<GameState>(`/games/${encodeURIComponent(code.trim().toUpperCase())}`),
   /** One group, one game: create only if no game is in progress (409 otherwise). */
-  createGame: (players: { name: string; pin: string }[], moderatorPin?: string) =>
-    request<GameState>("/games", "POST", { players, single: true, ...(moderatorPin ? { moderator_pin: moderatorPin } : {}) }),
+  createGame: (players: { name: string; pin: string }[], opts: { claudaiPassphrase?: string; tablesPerDay?: number } = {}) =>
+    request<GameState>("/games", "POST", {
+      players,
+      single: true,
+      tables_per_day: opts.tablesPerDay ?? 2,
+      ...(opts.claudaiPassphrase ? { claudai_passphrase: opts.claudaiPassphrase } : {}),
+    }),
   /** The group's game in progress, if any — phones join it without a code. */
   currentGame: () => request<CurrentGame>("/current"),
   readChat: (player_id: string, pin: string) => request<ChatState>(`/games/${currentCode}/chat`, "POST", { player_id, pin }),
@@ -261,16 +284,28 @@ export const api = {
   }) => request<PrivateView>(`/games/${currentCode}/turn`, "POST", body),
   advance: (expected: Phase, day: number, force?: boolean) =>
     request<GameState>(`/games/${currentCode}/advance?expected=${expected}&expected_day=${day}${force ? "&force=true" : ""}`, "POST"),
-  moderatorUnlock: (passphrase: string) => request<{ ok: boolean }>("/moderator/unlock", "POST", { passphrase }),
-  moderatorGames: (passphrase: string) => request<{ games: ModeratorGame[] }>("/moderator/games", "POST", { passphrase }),
+  /** The game's host nominates a ClaudAI host by giving the game its first ClaudAI PIN. */
+  nominateClaudai: (player_id: string, pin: string, new_passphrase: string) =>
+    request<GameState>(`/games/${currentCode}/claudai`, "POST", { player_id, pin, new_passphrase }),
   moderatorRevote: (code: string, auth: ModAuth) =>
     request<ModeratorView>(`/games/${encodeURIComponent(code.trim().toUpperCase())}/moderator/revote`, "POST", auth),
   moderatorView: (code: string, auth: ModAuth) =>
     request<ModeratorView>(`/games/${encodeURIComponent(code.trim().toUpperCase())}/moderator`, "POST", auth),
-  /** ClaudAI login with the game's own 4-digit PIN; returns the game in progress. */
-  moderatorPinLogin: (pin: string) => request<{ code: string }>("/moderator/pin", "POST", { pin }),
-  moderatorSetPin: (code: string, auth: ModAuth, newPin: string) =>
-    request<ModeratorView>(`/games/${encodeURIComponent(code.trim().toUpperCase())}/moderator/pin`, "POST", { ...auth, new_pin: newPin }),
+  /** ClaudAI login with the game's own ClaudAI passphrase; returns the game in progress. */
+  moderatorLogin: (passphrase: string) => request<{ code: string }>("/moderator/login", "POST", { passphrase }),
+  moderatorSetPassphrase: (code: string, auth: ModAuth, newPassphrase: string) =>
+    request<ModeratorView>(`/games/${encodeURIComponent(code.trim().toUpperCase())}/moderator/pin`, "POST", { ...auth, new_passphrase: newPassphrase }),
+  /** Switch a game between one Round Table a day and two (lunch and 8pm). */
+  moderatorSchedule: (code: string, auth: ModAuth, tablesPerDay: 1 | 2, session?: "lunch" | "evening") =>
+    request<ModeratorView>(`/games/${encodeURIComponent(code.trim().toUpperCase())}/moderator/schedule`, "POST", {
+      ...auth,
+      tables_per_day: tablesPerDay,
+      ...(session ? { session } : {}),
+    }),
+  /** Finished games, newest first. */
+  archive: () => request<{ games: ArchiveGame[] }>("/archive"),
+  /** The whole story of a finished game (everything revealed). */
+  story: (code: string) => request<Story>(`/archive/${encodeURIComponent(code.trim().toUpperCase())}`),
   getActions: () => request<ActionList>(`/games/${currentCode}/actions`),
   saveActions: (actions: string[]) => request<ActionList>(`/games/${currentCode}/actions`, "PUT", { actions }),
   resetActions: () => request<ActionList>(`/games/${currentCode}/actions`, "DELETE"),
@@ -278,8 +313,52 @@ export const api = {
 
 export type ActionList = { actions: string[]; is_default: boolean };
 
-/** ClaudAI access: the master passphrase (every game) or one game's ClaudAI PIN. */
-export type ModAuth = { passphrase?: string; pin?: string };
+/** ClaudAI access: the game's own ClaudAI passphrase (there is no master key). */
+export type ModAuth = { passphrase: string };
+
+/** A finished game in the archive. */
+export type ArchiveGame = {
+  code: string;
+  created_at: string;
+  ended_at: string;
+  winner: "faithful" | "traitors" | null;
+  players: number;
+  label: string;
+};
+
+/** Everything that happened in a finished game. */
+export type Story = {
+  code: string;
+  created_at: string;
+  ended_at: string;
+  winner: "faithful" | "traitors" | null;
+  tables_per_day: number;
+  total_days: number;
+  players: {
+    id: string;
+    name: string;
+    role: Role;
+    started_as: Role;
+    recruited_label: string | null;
+    exit: { how: "murdered" | "banished"; label: string } | null;
+    is_host: boolean;
+  }[];
+  rounds: DayResult[];
+  vote_log: VoteLogEntry[];
+  traitor_chat: ChatMessage[];
+  event_log: ModeratorEvent[];
+};
+
+/** The label to show for a round: its stored label, or "Day N" for older entries. */
+export function roundLabel(x: { day: number; label?: string }): string {
+  return x.label || `Day ${x.day}`;
+}
+
+/** Why a new ClaudAI passphrase isn't strong enough, or null if it's fine. */
+export function passphraseProblem(s: string): string | null {
+  const ok = s.length >= 8 && /[A-Z]/.test(s) && /[a-z]/.test(s) && /[0-9]/.test(s) && /[^A-Za-z0-9]/.test(s);
+  return ok ? null : "Use at least 8 characters with upper and lower case letters, a number and a symbol";
+}
 
 export type CurrentGame = { code: string | null; phase?: Phase; day?: number; players?: number };
 

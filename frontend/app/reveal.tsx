@@ -26,9 +26,20 @@ export default function Reveal() {
   // Freeze the reveal the moment it opens: the game keeps polling and another phone may
   // move it on, but this screen must stay put so everyone can read it in their own time.
   // Captured once, on the first render where the game data is available.
-  const [snap, setSnap] = useState<{ phase: Phase; day: number; result: DayResult } | null>(null);
+  // The schedule (round label, calendar day, lunch/evening) is captured too, so the button can
+  // name the round that comes next.
+  const [snap, setSnap] = useState<Snap | null>(null);
   if (!snap && data?.exists && data.history.length) {
-    setSnap({ phase: data.phase, day: data.day, result: data.history[data.history.length - 1] });
+    setSnap({
+      phase: data.phase,
+      day: data.day,
+      result: data.history[data.history.length - 1],
+      label: data.label,
+      calDay: data.cal_day ?? data.day, // games stored before calendar days: one round a day
+      session: data.session ?? "",
+      tablesPerDay: data.tables_per_day ?? 1,
+      totalDays: data.total_days,
+    });
   }
 
   const advance = useMutation({
@@ -47,6 +58,9 @@ export default function Reveal() {
     );
   }
   const result: DayResult = snap.result;
+  // The round being revealed, e.g. "Day 3 · Lunch" (older entries have no label: "Day N").
+  const label = result.label || (result.day === snap.day ? snap.label : undefined) || `Day ${result.day}`;
+  const next = nextRound(snap);
 
   // The reveal is frozen on open: the Round Table shows the murder then the banishment.
   const isBanish = snap.phase === "banished";
@@ -68,7 +82,9 @@ export default function Reveal() {
     : isBanish
     ? result.winner
       ? "See all the roles"
-      : `Begin Day ${result.day + 1}`
+      : next
+        ? `Begin ${next}`
+        : "See who wins" // the last Round Table of the last day: the game ends here
     : result.winner
       ? "See all the roles"
       : "On to the vote";
@@ -90,7 +106,7 @@ export default function Reveal() {
       <HelpButton from="reveal" testID="reveal-help-button" style={{ position: "absolute", top: insets.top + spacing.sm, right: spacing.md, zIndex: 1 }} />
       <ScrollView contentContainerStyle={[styles.scroll, { paddingTop: insets.top + spacing.xl, paddingBottom: insets.bottom + spacing.lg }]}>
         <View style={{ flex: 1, justifyContent: "center", gap: spacing.lg }}>
-          {current === "intro" ? <Intro day={result.day} kind={isBanish ? "banish" : "murder"} revote={result.banish?.round === 2} /> : null}
+          {current === "intro" ? <Intro label={label} kind={isBanish ? "banish" : "murder"} revote={result.banish?.round === 2} /> : null}
           {counting ? (
             <Countdown kind={current === "banish" ? "banish" : "murder"} onDone={() => setRevealedStep(step)} />
           ) : (
@@ -110,7 +126,7 @@ export default function Reveal() {
               <Button
                 testID="reveal-finish-button"
                 label={finishLabel}
-                icon={result.winner ? "trophy" : revoteNext ? "refresh" : isBanish ? "sunny" : "flame"}
+                icon={result.winner || (isBanish && !revoteNext && !next) ? "trophy" : revoteNext ? "refresh" : isBanish ? "sunny" : "flame"}
                 loading={advance.isPending}
                 onPress={finish}
               />
@@ -123,7 +139,7 @@ export default function Reveal() {
 
       <ConfirmSheet
         visible={confirmFinish}
-        title={revoteNext ? "Start the revote?" : isBanish ? `Begin Day ${result.day + 1}?` : "Start the vote?"}
+        title={revoteNext ? "Start the revote?" : isBanish ? (next ? `Begin ${next}?` : "End the game?") : "Start the vote?"}
         message="This moves the game on for everyone. Make sure the whole group has seen the reveal — you can't come back to this screen."
         confirmLabel={finishLabel}
         loading={advance.isPending}
@@ -132,6 +148,28 @@ export default function Reveal() {
       />
     </View>
   );
+}
+
+type Snap = {
+  phase: Phase;
+  day: number;
+  result: DayResult;
+  label?: string;
+  calDay: number;
+  session: "" | "lunch" | "evening";
+  tablesPerDay: number;
+  totalDays: number;
+};
+
+/**
+ * The label of the round after this one, or null when this was the final Round Table (the
+ * game ends instead). Two a day: lunch → the same day's evening, evening → the next day's lunch.
+ */
+function nextRound(s: Snap): string | null {
+  const twoADay = s.tablesPerDay === 2 && (s.session === "lunch" || s.session === "evening");
+  if (s.calDay >= s.totalDays && !(twoADay && s.session === "lunch")) return null;
+  if (twoADay) return s.session === "lunch" ? `Day ${s.calDay} · Evening` : `Day ${s.calDay + 1} · Lunch`;
+  return `Day ${s.calDay + 1}`;
 }
 
 function Countdown({ kind, onDone }: { kind: "banish" | "murder"; onDone: () => void }) {
@@ -155,7 +193,7 @@ function Countdown({ kind, onDone }: { kind: "banish" | "murder"; onDone: () => 
   }, []);
   return (
     <View style={{ alignItems: "center", gap: spacing.md }} testID="reveal-countdown">
-      <Eyebrow>{kind === "banish" ? "The banished is…" : "Tonight the Traitors took…"}</Eyebrow>
+      <Eyebrow>{kind === "banish" ? "The banished is…" : "The Traitors have taken…"}</Eyebrow>
       <Animated.Text key={n} entering={ZoomIn.duration(300)} style={[styles.countdown, { color: colors.brand }]} testID="reveal-countdown-number">
         {n}
       </Animated.Text>
@@ -163,24 +201,24 @@ function Countdown({ kind, onDone }: { kind: "banish" | "murder"; onDone: () => 
   );
 }
 
-function Intro({ day, kind, revote }: { day: number; kind: "banish" | "murder"; revote?: boolean }) {
+function Intro({ label, kind, revote }: { label: string; kind: "banish" | "murder"; revote?: boolean }) {
   return (
     <Animated.View entering={FadeIn.duration(1200)} style={{ gap: spacing.md }} testID="reveal-intro">
       {kind === "banish" && revote ? (
         <>
-          <Eyebrow>The revote · Day {day}</Eyebrow>
+          <Eyebrow>The revote · {label}</Eyebrow>
           <Title style={{ fontSize: 52, lineHeight: 56 }}>The table has voted again…</Title>
           <Body>Take your time. Here is who the revote has banished — and how everyone voted this time.</Body>
         </>
       ) : kind === "banish" ? (
         <>
-          <Eyebrow>The end of Day {day}</Eyebrow>
+          <Eyebrow>The end of {label}</Eyebrow>
           <Title style={{ fontSize: 52, lineHeight: 56 }}>The Round Table has spoken…</Title>
           <Body>Take your time. Here is who the table has banished — and how everyone voted.</Body>
         </>
       ) : (
         <>
-          <Eyebrow>Day {day}</Eyebrow>
+          <Eyebrow>{label}</Eyebrow>
           <Title style={{ fontSize: 52, lineHeight: 56 }}>The candles flicker…</Title>
           <Body>Before anyone votes: did the Traitors strike today, in plain sight?</Body>
         </>
@@ -197,7 +235,7 @@ function Murder({ r }: { r: DayResult }) {
   if (!m.success) {
     return (
       <Animated.View entering={FadeInDown.duration(900)} style={{ gap: spacing.md }} testID="reveal-murder-failed">
-        <Eyebrow>The night</Eyebrow>
+        <Eyebrow>The plot</Eyebrow>
         {r.recruited ? (
           <>
             <Title testID="reveal-recruited">A new Traitor walks among you.</Title>
@@ -206,7 +244,7 @@ function Murder({ r }: { r: DayResult }) {
         ) : (
           <>
             <Title>Nobody was murdered today.</Title>
-            <Body>The Traitors failed to strike. No one was taken tonight… for now.</Body>
+            <Body>The Traitors failed to strike. No one was taken… for now.</Body>
           </>
         )}
       </Animated.View>
@@ -243,7 +281,7 @@ function Banish({ r }: { r: DayResult }) {
       ) : b.tie || !b.target_id ? (
         <>
           <Title testID="reveal-banish-tie">{b.round === 2 ? "Tied again." : "The table is divided."}</Title>
-          <Body>{b.round === 2 ? "The revote was tied too, so nobody is banished tonight." : "The votes were tied, so nobody is banished tonight."}</Body>
+          <Body>{b.round === 2 ? "The revote was tied too, so nobody is banished this time." : "The votes were tied, so nobody is banished this time."}</Body>
         </>
       ) : (
         <>

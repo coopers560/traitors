@@ -3,11 +3,11 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useEffect, useRef, useState, type ComponentRef } from "react";
 import { Pressable, ScrollView, Text, TextInput, View } from "react-native";
-import { KeyboardAvoidingView } from "react-native-keyboard-controller";
+import { KeyboardAvoidingView, KeyboardAwareScrollView } from "react-native-keyboard-controller";
 import Animated, { FadeIn, FadeInDown } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-import { api, DayResult, exitOf, PrivateView, PublicPlayer } from "@/src/api";
+import { api, DayResult, exitOf, GameState, PrivateView, PublicPlayer, roundLabel } from "@/src/api";
 import { HelpButton } from "@/src/components/help-button";
 import { HoldToReveal } from "@/src/components/hold-reveal";
 import { PinPad } from "@/src/components/pin-pad";
@@ -15,6 +15,19 @@ import { VoteBoard } from "@/src/components/vote-board";
 import { Backdrop, Body, Button, ErrorText, Eyebrow, IMAGES, Title } from "@/src/components/ui";
 import { useMe } from "@/src/me";
 import { fonts, makeStyles, radius, spacing, useTheme } from "@/src/theme";
+
+/** The current round's name ("Day 3 · Lunch"); "Day N" for games stored before round labels. */
+function currentRound(game: GameState | undefined, day: number): string {
+  return game?.exists && game.day === day && game.label ? game.label : `Day ${day}`;
+}
+
+/** How a player left the game, named by the round it happened in. */
+function exitWithLabel(history: DayResult[], playerId: string): { how: "murdered" | "banished"; label: string } | null {
+  const e = exitOf(history, playerId);
+  if (!e) return null;
+  const h = history.find((x) => x.day === e.day);
+  return { how: e.how, label: h ? roundLabel(h) : `Day ${e.day}` };
+}
 
 export default function PlayerTurn() {
   const styles = useStyles();
@@ -38,7 +51,9 @@ export default function PlayerTurn() {
   const autoTried = useRef(false);
 
   const players = game?.exists ? game.players : [];
+  const history = game?.exists ? game.history : [];
   const me = players.find((p) => p.id === id);
+  const round = view ? currentRound(game, view.day) : "";
   const boundHere = boundMe?.playerId === id;
 
   const verify = useMutation({
@@ -109,18 +124,18 @@ export default function PlayerTurn() {
       ) : mode === "turn" && view.phase === "roundtable" && view.alive && !roleChecked ? (
         <RoleCheck view={view} onDone={() => setRoleChecked(true)} />
       ) : (
-        <ScrollView contentContainerStyle={[styles.scroll, { paddingBottom: insets.bottom + spacing.lg }]}>
-          <RoleCard view={view} exit={game?.exists ? exitOf(game.history, view.player_id) : null} onReveal={() => setRoleSeen(true)}>
+        <KeyboardAwareScrollView bottomOffset={24} keyboardShouldPersistTaps="handled" contentContainerStyle={[styles.scroll, { paddingBottom: insets.bottom + spacing.lg }]}>
+          <RoleCard view={view} exit={exitWithLabel(history, view.player_id)} onReveal={() => setRoleSeen(true)}>
             {mode === "turn" && view.phase === "setup" ? (
               view.role === "traitor" ? (
                 <Body testID="setup-traitor-note">
-                  Remember your fellow Traitors. Each day you&apos;ll choose a victim at night, carry out the murder in plain sight during the day, then confirm it at the Round Table.
+                  Remember your fellow Traitors. Before every Round Table you&apos;ll choose a victim (or lie low), carry out the murder in plain sight, then confirm it when everyone checks in.
                 </Body>
               ) : (
                 <FaithfulBrief view={view} />
               )
             ) : isPeek ? (
-              view.role === "traitor" ? <TraitorBrief view={view} /> : <FaithfulBrief view={view} />
+              view.role === "traitor" ? <TraitorBrief view={view} round={round} /> : <FaithfulBrief view={view} />
             ) : null}
           </RoleCard>
           {boundHere ? (
@@ -152,13 +167,13 @@ export default function PlayerTurn() {
           ) : mode === "turn" && view.phase === "gather" && view.alive ? (
             <GatherTurn view={view} pin={pin} onSealed={() => setSealed(true)} />
           ) : mode === "turn" && view.phase === "roundtable" && view.alive ? (
-            <RoundTableTurn view={view} pin={pin} players={players} history={game?.exists ? game.history : []} onSealed={() => setSealed(true)} />
+            <RoundTableTurn view={view} pin={pin} players={players} history={history} onSealed={() => setSealed(true)} />
           ) : mode === "turn" && view.phase === "night" && view.alive ? (
-            <NightTurn view={view} pin={pin} players={players} onSealed={() => setSealed(true)} />
+            <NightTurn view={view} pin={pin} players={players} round={round} onSealed={() => setSealed(true)} />
           ) : (
             <Button testID="player-hide-button" label="Hide & pass the phone back" icon="eye-off" onPress={leave} />
           )}
-        </ScrollView>
+        </KeyboardAwareScrollView>
       )}
     </View>
   );
@@ -219,7 +234,7 @@ function RoleCard({
   children,
 }: {
   view: PrivateView;
-  exit: { how: "murdered" | "banished"; day: number } | null;
+  exit: { how: "murdered" | "banished"; label: string } | null;
   onReveal?: () => void;
   children?: React.ReactNode;
 }) {
@@ -255,9 +270,9 @@ function RoleCard({
           </Text>
           <Body style={{ fontSize: 15, lineHeight: 21 }}>
             {exit?.how === "murdered"
-              ? `The Traitors murdered you in plain sight on Day ${exit.day}.`
+              ? `The Traitors murdered you in plain sight on ${exit.label}.`
               : exit?.how === "banished"
-                ? `The Round Table voted you out on Day ${exit.day}.`
+                ? `The Round Table voted you out on ${exit.label}.`
                 : "You have been eliminated."}{" "}
             Please keep the secrets — no hints to anyone still playing.
           </Body>
@@ -267,12 +282,12 @@ function RoleCard({
   );
 }
 
-function TraitorBrief({ view }: { view: PrivateView }) {
+function TraitorBrief({ view, round }: { view: PrivateView; round: string }) {
   const styles = useStyles();
   if (!view.target) return <Body>No murder is planned right now.</Body>;
   return (
     <View style={styles.brief} testID="traitor-brief">
-      <Eyebrow>Today&apos;s murder · Day {view.day}</Eyebrow>
+      <Eyebrow>Today&apos;s murder · {round}</Eyebrow>
       <Text style={styles.briefTarget} testID="traitor-target-name">{view.target.name}</Text>
       <Text style={styles.briefLabel}>Your secret action — do it in plain sight:</Text>
       <Text style={styles.briefAction} testID="traitor-action">{view.action}</Text>
@@ -358,7 +373,19 @@ function ActionChoices({
   );
 }
 
-function NightTurn({ view, pin, players, onSealed }: { view: PrivateView; pin: string; players: PublicPlayer[]; onSealed: () => void }) {
+function NightTurn({
+  view,
+  pin,
+  players,
+  round,
+  onSealed,
+}: {
+  view: PrivateView;
+  pin: string;
+  players: PublicPlayer[];
+  round: string;
+  onSealed: () => void;
+}) {
   const styles = useStyles();
   const { colors } = useTheme();
   const traitor = view.role === "traitor";
@@ -387,21 +414,29 @@ function NightTurn({ view, pin, players, onSealed }: { view: PrivateView; pin: s
     mutationFn: (rid: string) => api.takeTurn({ player_id: view.player_id, pin, recruit_id: rid }),
     onSuccess: () => setRecruitedName(players.find((p) => p.id === recruitTarget)?.name ?? "a new Traitor"),
   });
+  // Passing: agreeing with a fellow Traitor's sealed plan, or lying low. `unseal` is for lying low
+  // after "Change the plan" on a fellow's sealed murder: naming the same victim again unseals it,
+  // so the pass then leaves nothing sealed — lying low really does mean no murder.
   const pass = useMutation({
-    mutationFn: () => api.takeTurn({ player_id: view.player_id, pin }),
+    mutationFn: async (unseal: boolean) => {
+      if (unseal && view.target) await api.takeTurn({ player_id: view.player_id, pin, target_id: view.target.id });
+      return api.takeTurn({ player_id: view.player_id, pin });
+    },
     onSuccess: () => onSealed(),
   });
+  // Changing a fellow Traitor's sealed murder, not yet re-planned.
+  const reopening = override && !!view.murder_confirmed && choices.length === 0;
 
   // Faithful (and eliminated players) have nothing to do; everyone still takes a
   // night turn so watching who taps never reveals the Traitors.
   if (!traitor) {
-    return <FaithfulNight view={view} pin={pin} players={players} onSealed={onSealed} />;
+    return <FaithfulNight view={view} pin={pin} players={players} round={round} onSealed={onSealed} />;
   }
   // This phone just sealed the murder.
   if (result) {
     return (
       <>
-        <TraitorBrief view={result} />
+        <TraitorBrief view={result} round={round} />
         <Button testID="night-done-button" label="Hide & pass the phone" icon="eye-off" onPress={onSealed} />
       </>
     );
@@ -413,7 +448,7 @@ function NightTurn({ view, pin, players, onSealed }: { view: PrivateView; pin: s
         <View style={styles.brief} testID="recruit-done">
           <Eyebrow>A new Traitor joins you</Eyebrow>
           <Text style={styles.briefTarget}>{recruitedName}</Text>
-          <Body style={{ fontSize: 15 }}>They will find out they have turned the next time they check their secret. No murder tonight.</Body>
+          <Body style={{ fontSize: 15 }}>They will find out they have turned the next time they check their secret. No murder this time.</Body>
         </View>
         <Button testID="night-done-button" label="Hide & pass the phone" icon="eye-off" onPress={onSealed} />
       </>
@@ -423,10 +458,10 @@ function NightTurn({ view, pin, players, onSealed }: { view: PrivateView; pin: s
   if (view.murder_confirmed && !override && choices.length === 0) {
     return (
       <>
-        <TraitorBrief view={view} />
+        <TraitorBrief view={view} round={round} />
         <ErrorText testID="turn-error" message={pass.error?.message} />
-        <Button testID="night-agree-button" label="Agreed — pass the phone" icon="eye-off" loading={pass.isPending} onPress={() => pass.mutate()} />
-        <Button testID="night-change-button" label="Change the plan" variant="ghost" icon="create-outline" onPress={() => { setOverride(true); setChoices([]); }} />
+        <Button testID="night-agree-button" label="Agreed — pass the phone" icon="eye-off" loading={pass.isPending} onPress={() => pass.mutate(false)} />
+        <Button testID="night-change-button" label="Change the plan — or lie low" variant="secondary" icon="create-outline" onPress={() => { setOverride(true); setChoices([]); }} />
       </>
     );
   }
@@ -435,11 +470,11 @@ function NightTurn({ view, pin, players, onSealed }: { view: PrivateView; pin: s
     const victimName = players.find((p) => p.id === (target ?? view.target?.id))?.name ?? view.target?.name;
     return (
       <>
-        <Body>Victim: {victimName}. Choose how you&apos;ll do it — pick one of these three secret actions to perform in plain sight:</Body>
+        <Body>Victim: {victimName}. Choose how you&apos;ll do it — pick one of these five secret actions to perform in plain sight:</Body>
         <ActionChoices options={choices} selected={chosen} onSelect={setChosen} />
         <ErrorText testID="turn-error" message={confirm.error?.message || pass.error?.message} />
         <Button testID="night-confirm-button" label="Seal the murder" icon="lock-closed" disabled={!chosen} loading={confirm.isPending} onPress={() => chosen && confirm.mutate(chosen)} />
-        <Button testID="night-skip-button" label="Lie low — no murder tonight" variant="ghost" loading={pass.isPending} onPress={() => pass.mutate()} />
+        <Button testID="night-skip-button" label="Lie low — no murder this time" variant="secondary" icon="play-skip-forward-outline" loading={pass.isPending} onPress={() => pass.mutate(false)} />
       </>
     );
   }
@@ -459,42 +494,68 @@ function NightTurn({ view, pin, players, onSealed }: { view: PrivateView; pin: s
       ) : null}
       {view.can_recruit && mode === "recruit" ? (
         <>
-          <Body>Recruit one of the Faithful to join the Traitors — instead of a murder tonight.</Body>
+          <Body>Recruit one of the Faithful to join the Traitors — instead of a murder this time.</Body>
           <Body testID="recruit-reason" style={{ fontSize: 15 }}>
             {view.recruit_reason === "alone"
               ? "You may recruit because you are the only Traitor left."
-              : "You may recruit because a Traitor has been banished — one recruit replaces each banished Traitor."}
+              : "You may recruit because a Traitor has been banished — one recruit replaces each banished Traitor."}{" "}
+            There can never be more than two Traitors.
           </Body>
-          <VictimPicker label={`New Traitor · Day ${view.day}`} prefix="night-recruit" players={candidates} selected={recruitTarget} onSelect={setRecruitTarget} />
+          <VictimPicker label={`New Traitor · ${round}`} prefix="night-recruit" players={candidates} selected={recruitTarget} onSelect={setRecruitTarget} />
           <ErrorText testID="turn-error" message={recruit.error?.message || pass.error?.message} />
           <Button testID="night-recruit-button" label="Seal the recruitment" icon="lock-closed" disabled={!recruitTarget} loading={recruit.isPending} onPress={() => recruitTarget && recruit.mutate(recruitTarget)} />
           <Button testID="night-no-recruit-button" label="Don't recruit — murder instead" variant="secondary" icon="skull-outline" onPress={() => { setMode("murder"); setRecruitTarget(null); }} />
-          <Button testID="night-skip-button" label="Lie low — nothing tonight" variant="ghost" loading={pass.isPending} onPress={() => pass.mutate()} />
+          <Button testID="night-skip-button" label="Lie low — nothing this time" variant="secondary" icon="play-skip-forward-outline" loading={pass.isPending} onPress={() => pass.mutate(reopening)} />
         </>
       ) : (
         <>
-          <Body>
-            The day begins. Choose who the Traitors will murder in plain sight today — you&apos;ll then pick from three
-            secret actions to carry out before the Round Table. Or lie low and spare everyone.
-          </Body>
-          <VictimPicker label={`Tonight's victim · Day ${view.day}`} prefix="night-victim" players={candidates} selected={target} onSelect={setTarget} />
+          {reopening ? (
+            <Body testID="night-reopen-note">
+              A fellow Traitor sealed this plan. Choose a new victim — or lie low to call the murder off.
+            </Body>
+          ) : (
+            <Body>
+              Choose who the Traitors will murder in plain sight before the next Round Table — you&apos;ll then pick
+              from five secret actions. Or lie low and spare everyone.
+            </Body>
+          )}
+          <VictimPicker label={`The victim · ${round}`} prefix="night-victim" players={candidates} selected={target} onSelect={setTarget} />
           <ErrorText testID="turn-error" message={pickVictim.error?.message || pass.error?.message} />
           <Button testID="night-pick-button" label="Choose the method" icon="arrow-forward" disabled={!target} loading={pickVictim.isPending} onPress={() => target && pickVictim.mutate(target)} />
-          <Button testID="night-skip-button" label="Lie low — no murder tonight" variant="ghost" loading={pass.isPending} onPress={() => pass.mutate()} />
+          <Button
+            testID="night-skip-button"
+            label={reopening ? "Lie low — call the murder off" : "Lie low — no murder this time"}
+            variant="secondary"
+            icon="play-skip-forward-outline"
+            loading={pass.isPending}
+            onPress={() => pass.mutate(reopening)}
+          />
         </>
       )}
     </>
   );
 }
 
-const SURE = ["Just a hunch", "Fairly sure", "Certain — it's them"];
+const SURE = ["Just a feeling", "A hunch", "Fairly sure", "Very sure", "Certain — it's them"];
 
 /**
  * The Faithful's night turn. It has exactly the shape of a Traitor's — pick a name, then one
  * of three options, then seal — so nobody watching can tell the two apart. Nothing chosen
  * here is sent or saved; sealing simply takes the night turn.
  */
-function FaithfulNight({ view, pin, players, onSealed }: { view: PrivateView; pin: string; players: PublicPlayer[]; onSealed: () => void }) {
+function FaithfulNight({
+  view,
+  pin,
+  players,
+  round,
+  onSealed,
+}: {
+  view: PrivateView;
+  pin: string;
+  players: PublicPlayer[];
+  round: string;
+  onSealed: () => void;
+}) {
   const styles = useStyles();
   const [suspect, setSuspect] = useState<string | null>(null);
   const [step, setStep] = useState<1 | 2 | 3>(1);
@@ -507,11 +568,11 @@ function FaithfulNight({ view, pin, players, onSealed }: { view: PrivateView; pi
     return (
       <>
         <View style={styles.brief} testID="suspect-brief">
-          <Eyebrow>Your suspicion · Day {view.day}</Eyebrow>
+          <Eyebrow>Your suspicion · {round}</Eyebrow>
           <Text style={styles.briefTarget}>{name}</Text>
           <Text style={styles.briefLabel}>How sure you are:</Text>
           <Text style={styles.briefAction}>{sure}</Text>
-          <Body style={{ fontSize: 15 }}>Only you know this — it isn&apos;t shared or saved. Watch them closely tomorrow.</Body>
+          <Body style={{ fontSize: 15 }}>Only you know this — it isn&apos;t shared or saved. Watch them closely before the Round Table.</Body>
         </View>
         <Button testID="night-done-button" label="Hide & pass the phone" icon="eye-off" onPress={onSealed} />
       </>
@@ -520,24 +581,24 @@ function FaithfulNight({ view, pin, players, onSealed }: { view: PrivateView; pi
   if (step === 2) {
     return (
       <>
-        <Body>Suspect: {name}. How sure are you? Pick one — it&apos;s only for you:</Body>
+        <Body>Suspect: {name}. How sure are you? Pick one of these five — it&apos;s only for you:</Body>
         <ActionChoices options={SURE} selected={sure} onSelect={setSure} label="How sure are you?" />
         <ErrorText testID="turn-error" message={error} />
         <Button testID="night-confirm-button" label="Seal my suspicion" icon="lock-closed" disabled={!sure} loading={seal.isPending} onPress={() => seal.mutate()} />
-        <Button testID="night-skip-button" label="Skip — pass the phone on" variant="ghost" loading={skip.isPending} onPress={() => skip.mutate()} />
+        <Button testID="night-skip-button" label="Skip — pass the phone on" variant="secondary" icon="play-skip-forward-outline" loading={skip.isPending} onPress={() => skip.mutate()} />
       </>
     );
   }
   return (
     <>
       <Body testID="night-faithful-note">
-        The castle sleeps while the Traitors plot. Choose who you suspect most — then how sure you are. It&apos;s only for
-        you: nothing here is shared or saved.
+        The Traitors are plotting in secret. Choose who you suspect most — then how sure you are, from five
+        options. It&apos;s only for you: nothing here is shared or saved.
       </Body>
-      <VictimPicker label={`Your suspect · Day ${view.day}`} prefix="night-suspect" players={players} selected={suspect} onSelect={setSuspect} excludeId={view.player_id} />
+      <VictimPicker label={`Your suspect · ${round}`} prefix="night-suspect" players={players} selected={suspect} onSelect={setSuspect} excludeId={view.player_id} />
       <ErrorText testID="turn-error" message={error} />
       <Button testID="night-pick-button" label="Choose how sure" icon="arrow-forward" disabled={!suspect} onPress={() => setStep(2)} />
-      <Button testID="night-skip-button" label="Skip — pass the phone on" variant="ghost" loading={skip.isPending} onPress={() => skip.mutate()} />
+      <Button testID="night-skip-button" label="Skip — pass the phone on" variant="secondary" icon="play-skip-forward-outline" loading={skip.isPending} onPress={() => skip.mutate()} />
     </>
   );
 }
@@ -714,9 +775,9 @@ function GatherTurn({ view, pin, onSealed }: { view: PrivateView; pin: string; o
   const note = needsAnswer
     ? null
     : traitor && view.murder_done
-      ? { id: "gather-already-confirmed", text: "A fellow Traitor has already confirmed tonight's murder." }
+      ? { id: "gather-already-confirmed", text: "A fellow Traitor has already confirmed today's murder." }
       : traitor
-        ? { id: "gather-no-murder", text: "No murder to confirm tonight." }
+        ? { id: "gather-no-murder", text: "No murder to confirm this time." }
         : { id: "gather-faithful-note", text: "Think back over the day." };
   const yesId = needsAnswer ? "carried-yes" : "gather-yes";
   const noId = needsAnswer ? "carried-no" : "gather-no";
@@ -819,13 +880,13 @@ const useStyles = makeStyles((c) => ({
   chatList: { padding: spacing.lg, gap: spacing.sm, flexGrow: 1, justifyContent: "flex-end" },
   chatEmpty: { flex: 1, alignItems: "center", justifyContent: "center", gap: spacing.sm, paddingVertical: spacing.xl },
   chatEmptyText: { color: c.muted, fontSize: 16 },
+  chatBar: { flexDirection: "row", alignItems: "flex-end", gap: spacing.sm, paddingHorizontal: spacing.md, paddingTop: spacing.sm, borderTopWidth: 1, borderTopColor: c.divider },
   bubble: { maxWidth: "82%", borderRadius: radius.lg, paddingHorizontal: spacing.md, paddingVertical: spacing.sm, gap: 2 },
   bubbleMine: { alignSelf: "flex-end", backgroundColor: c.brandTertiary, borderBottomRightRadius: 4 },
   bubbleTheirs: { alignSelf: "flex-start", backgroundColor: c.surfaceSecondary, borderWidth: 1, borderColor: c.border, borderBottomLeftRadius: 4 },
   bubbleName: { color: c.brand, fontSize: 13, fontWeight: "700" },
   bubbleText: { color: c.onSurface, fontSize: 17, lineHeight: 23 },
   bubbleTime: { color: c.muted, fontSize: 11, alignSelf: "flex-end" },
-  chatBar: { flexDirection: "row", alignItems: "flex-end", gap: spacing.sm, paddingHorizontal: spacing.md, paddingTop: spacing.sm, borderTopWidth: 1, borderTopColor: c.divider },
   chatInput: {
     flex: 1,
     minHeight: 48,

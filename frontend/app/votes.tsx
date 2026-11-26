@@ -4,7 +4,7 @@ import { ScrollView, Text, View } from "react-native";
 import Animated, { FadeInDown } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-import { api, BanishResult, GameState } from "@/src/api";
+import { api, BanishResult, GameState, roundLabel } from "@/src/api";
 import { HoldRole } from "@/src/components/hold-reveal";
 import { ScreenHeader } from "@/src/components/screen-header";
 import { Body, Eyebrow, Title } from "@/src/components/ui";
@@ -28,14 +28,14 @@ function revealedRounds(game: Game): { rounds: Round[]; revealing: boolean } {
   game.history.forEach((h, i) => {
     const latest = i === game.history.length - 1 && game.phase === "banished";
     if (h.tie_vote) {
-      rounds.push({ key: `${h.day}-1`, day: h.day, label: `Day ${h.day}`, revote: false, vote: h.tie_vote });
+      rounds.push({ key: `${h.day}-1`, day: h.day, label: roundLabel(h), revote: false, vote: h.tie_vote });
     }
     if (h.banish) {
       if (latest) {
         revealing = true;
         return;
       }
-      rounds.push({ key: `${h.day}-${h.tie_vote ? 2 : 1}`, day: h.day, label: `Day ${h.day}`, revote: !!h.tie_vote, vote: h.banish });
+      rounds.push({ key: `${h.day}-${h.tie_vote ? 2 : 1}`, day: h.day, label: roundLabel(h), revote: !!h.tie_vote, vote: h.banish });
     }
   });
   return { rounds, revealing };
