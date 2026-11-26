@@ -7,6 +7,7 @@ import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { KeyboardProvider } from "react-native-keyboard-controller";
 
 import { ErrorBoundary } from "@/src/components/error-boundary";
+import { UpdateBanner } from "@/src/components/update-banner";
 import { GameCodeProvider } from "@/src/game-code";
 import { MeProvider } from "@/src/me";
 import { queryClient } from "@/src/query-client";
@@ -43,6 +44,7 @@ export default function RootLayout() {
                 <ActivityIndicator color={colors.brand} size="large" />
               </View>
             )}
+            <UpdateBanner />
           </KeyboardProvider>
           </MeProvider>
           </GameCodeProvider>
