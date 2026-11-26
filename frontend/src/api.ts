@@ -276,6 +276,7 @@ export const api = {
       single: true,
       tables_per_day: opts.tablesPerDay ?? 2,
       murder_window_minutes: 30, // the Traitors get 30 minutes to carry out each murder
+      skip_day: true, // straight from the start / the banishment into the next plot
       ...(opts.claudaiPassphrase ? { claudai_passphrase: opts.claudaiPassphrase } : {}),
     }),
   /** The group's game in progress, if any — phones join it without a code. */

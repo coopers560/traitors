@@ -215,6 +215,8 @@ class Game(BaseModel):
     # tied to anything public). recruit_applied_at is set once it has happened.
     recruit_at: Optional[str] = None
     recruit_applied_at: Optional[str] = None
+    # Go straight from the start / the banishment into the next plot (no "the Traitors move" tap).
+    skip_day: bool = True
     murder_window_minutes: float = DEFAULT_MURDER_WINDOW_MIN
     # Optional per-game ClaudAI login: the hashed ClaudAI passphrase that opens this game's
     # god-view (games from before passphrases may hold the plain hash of a 4-digit PIN).
@@ -313,6 +315,8 @@ class CreateGameIn(BaseModel):
     murder_gap_hours: Optional[float] = None
     # Minutes the Round Table stays shut after the plot. Left out = 0 (API/tests); the app sends 30.
     murder_window_minutes: Optional[float] = None
+    # Skip the empty "day" step between rounds. Left out = off (API/tests); the app sends true.
+    skip_day: Optional[bool] = None
 
 
 class AuthIn(BaseModel):
@@ -503,6 +507,22 @@ def next_plot_at(g: Game) -> Optional[datetime]:
     # Retired: the owner wanted time between planning and carrying out a murder, not hours
     # between murders. Kept so older clients still get a field (always None now).
     return None
+
+
+def begin_round(g: Game) -> None:
+    """Start the round: the Traitors' plot — or, in the endgame (no more murders), straight to
+    the final vote."""
+    if in_endgame(g):
+        g.phase = "roundtable"
+        g.turns_done, g.votes, g.end_votes = [], {}, []
+        log(g, "stage", "Endgame: straight to the final vote — banish one more, or end the game")
+        return
+    g.phase = "night"
+    g.turns_done, g.target_id, g.action, g.murder_confirmed, g.action_choices, g.recruit_id = [], None, None, False, [], None
+    g.murder_done = False
+    g.plot_done_at = None
+    g.recruit_at = g.recruit_applied_at = None
+    log(g, "stage", f"The Traitors plot ({round_label(g)})")
 
 
 def apply_recruit(g: Game) -> bool:
@@ -1516,6 +1536,7 @@ async def create_game(data: CreateGameIn):
     if data.murder_gap_hours is not None:
         g.murder_gap_hours = max(0.0, min(MAX_MURDER_GAP_HOURS, data.murder_gap_hours))
     g.murder_window_minutes = max(0.0, min(MAX_MURDER_WINDOW_MIN, data.murder_window_minutes or 0.0))
+    g.skip_day = bool(data.skip_day)
     traitors = ", ".join(pl.name for pl in players if pl.role == "traitor")
     tables = "two Round Tables a day (lunch and 8pm)" if g.tables_per_day == 2 else "one Round Table a day"
     log(g, "setup", f"Game created: {len(players)} players, host {players[0].name}, {tables}. Traitors: {traitors}",
@@ -1744,27 +1765,11 @@ async def advance(code: str, expected: Optional[str] = None, expected_day: Optio
         g.phase = "day"
         g.turns_done = []
         log(g, "stage", f"{round_label(g)} began")
+        if g.skip_day:
+            begin_round(g)  # straight into the plot — no extra "the Traitors move" tap
     elif g.phase == "day":
-        # The Traitors now plot BEFORE the Round Table: each day opens with the night,
-        # where they pick the victim and the plain-sight action (or recruit). In the
-        # endgame there are no murders, so the day goes straight to the final vote.
-        if in_endgame(g):
-            g.phase = "roundtable"
-            g.turns_done, g.votes, g.end_votes = [], {}, []
-            log(g, "stage", "Endgame: straight to the final vote — banish one more, or end the game")
-        else:
-            wait = next_plot_at(g)
-            if wait:
-                raise HTTPException(
-                    400,
-                    f"Too soon after the last murder — the Traitors can strike again {g.murder_gap_hours:g} hours after it.",
-                )
-            g.phase = "night"
-            g.turns_done, g.target_id, g.action, g.murder_confirmed, g.action_choices, g.recruit_id = [], None, None, False, [], None
-            g.murder_done = False
-            g.plot_done_at = None
-            g.recruit_at = g.recruit_applied_at = None
-            log(g, "stage", f"The Traitors plot ({round_label(g)})")
+        # Games set up without skip_day (and any game left waiting here) start the round now.
+        begin_round(g)
     elif g.phase == "night":
         # The Traitors have planned their victim and action. The murder itself is carried
         # out in plain sight during the day; the group then gathers to check in.
@@ -1911,6 +1916,8 @@ async def advance(code: str, expected: Optional[str] = None, expected_day: Optio
             g.turns_done, g.votes, g.end_votes = [], {}, []
             g.phase = "day"
             log(g, "stage", f"{round_label(g)} began")
+            if g.skip_day:
+                begin_round(g)  # straight into the plot — no extra "the Traitors move" tap
     else:
         raise HTTPException(400, "The game is over")
     await save(g)
