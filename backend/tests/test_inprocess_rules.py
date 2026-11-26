@@ -146,6 +146,46 @@ def test_login_errors_and_no_game_in_progress():
         assert r.json()["detail"] == "This game has no ClaudAI host yet — the game's host can nominate one from the ⋯ menu"
 
 
+def test_login_with_the_passphrase_finds_the_game_in_progress():
+    clear()
+    with TestClient(server.app) as c:
+        g = new_game(c, claudai_passphrase=PASS)
+        code = g["code"]
+        assert c.post("/api/moderator/login", json={"passphrase": PASS}).json() == {"code": code}
+        # the older route and body still work
+        assert c.post("/api/moderator/pin", json={"passphrase": PASS}).json() == {"code": code}
+        assert c.post("/api/moderator/pin", json={"pin": PASS}).json() == {"code": code}
+        assert c.post("/api/moderator/login", json={"pin": PASS}).json() == {"code": code}
+        for body in ({"passphrase": "Nope#Nope1"}, {"passphrase": PASS.lower()}, {}):
+            r = c.post("/api/moderator/login", json=body)
+            assert r.status_code == 403 and r.json()["detail"] == "Wrong ClaudAI passphrase", body
+        # 8 wrong guesses in 10 minutes lock it — even the right passphrase waits
+        for _ in range(5):
+            assert c.post("/api/moderator/login", json={"passphrase": "Wrong#Guess1"}).status_code == 403
+        r = c.post("/api/moderator/login", json={"passphrase": PASS})
+        assert r.status_code == 429
+        assert mod_view(c, code).status_code == 429
+        server.PIN_FAILS.pop(code, None)
+        assert c.post("/api/moderator/login", json={"passphrase": PASS}).json() == {"code": code}
+
+
+def test_host_nominates_then_claudai_logs_in():
+    clear()
+    with TestClient(server.app) as c:
+        g = new_game(c)
+        code = g["code"]
+        host = next(p for p in g["players"] if p["id"] == g["host_id"])
+        host_pin = f"{2000 + NAMES.index(host['name'])}"
+        r = c.post("/api/moderator/login", json={"passphrase": "Palm+Tree55"})
+        assert r.status_code == 403 and "no ClaudAI host yet" in r.json()["detail"]
+        r = c.post(f"/api/games/{code}/claudai", json={"player_id": host["id"], "pin": host_pin, "new_passphrase": "palm"})
+        assert r.status_code == 400 and r.json()["detail"] == server.PASSPHRASE_RULE
+        r = c.post(f"/api/games/{code}/claudai", json={"player_id": host["id"], "pin": host_pin, "new_passphrase": "Palm+Tree55"})
+        assert r.status_code == 200 and r.json()["claudai"] is True
+        assert get_doc(code)["moderator_pin_hash"].startswith("pbkdf2_sha256$")
+        assert c.post("/api/moderator/login", json={"passphrase": "Palm+Tree55"}).json() == {"code": code}
+
+
 def test_passphrase_is_stored_salted_and_slow_hashed():
     with TestClient(server.app) as c:
         a, b = new_game(c, claudai_passphrase=PASS), new_game(c, claudai_passphrase=PASS)
@@ -156,6 +196,10 @@ def test_passphrase_is_stored_salted_and_slow_hashed():
         assert mod_view(c, a["code"]).status_code == 200 and mod_view(c, b["code"]).status_code == 200
         assert server.verify_secret(ha, PASS) and not server.verify_secret(ha, PASS + "x")
         assert not server.verify_secret("pbkdf2_sha256$broken", PASS) and not server.verify_secret(None, PASS)
+        # an older app's `moderator_pin` key still carries it (with the same strength rule)
+        old = new_game(c, moderator_pin=PASS)
+        assert old["claudai"] is True and mod_view(c, old["code"]).status_code == 200
+        assert get_doc(old["code"])["moderator_pin_hash"].startswith("pbkdf2_sha256$")
 
 
 def test_passphrase_rule():
@@ -239,13 +283,15 @@ def test_live_game_window_is_seven_days():
         code = g["code"]
         ago = lambda days: (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
         patch(code, lambda d: d.update(updated_at=ago(6)))
-        assert c.get("/api/current").json()["code"] == code
+        assert c.get("/api/current").json() == {"code": code, "phase": "setup", "day": 1, "label": "Day 1", "players": 8}
         players = [{"name": n, "pin": f"{3000 + i}"} for i, n in enumerate(NAMES[:5])]
         assert c.post("/api/games", json={"players": players, "single": True}).status_code == 409
         patch(code, lambda d: d.update(updated_at=ago(8)))
         assert c.get("/api/current").json()["code"] is None
-        r = c.post("/api/games", json={"players": players, "single": True})
-        assert r.status_code == 200 and c.get("/api/current").json()["code"] == r.json()["code"]
+        r = c.post("/api/games", json={"players": players, "single": True, "tables_per_day": 2})
+        assert r.status_code == 200
+        cur = c.get("/api/current").json()
+        assert cur["code"] == r.json()["code"] and cur["label"] == "Day 1 · Lunch"
 
 
 # ---------------- The published story of an older game ----------------

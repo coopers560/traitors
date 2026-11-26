@@ -927,7 +927,7 @@ async def nominate_claudai(code: str, data: NominateIn):
     new = data.new_secret()
     if passphrase_problem(new):
         raise HTTPException(400, PASSPHRASE_RULE)
-    g.moderator_pin_hash = hash_passphrase(new)
+    g.moderator_pin_hash = await asyncio.to_thread(hash_passphrase, new)
     log(g, "stage", f"{p.name} (host) nominated a ClaudAI host")
     await save(g)
     return public_state(g)
@@ -942,7 +942,7 @@ async def moderator_set_pin(code: str, data: ModeratorPinIn):
     new = data.new_secret()
     if passphrase_problem(new):
         raise HTTPException(400, PASSPHRASE_RULE)
-    g.moderator_pin_hash = hash_passphrase(new)
+    g.moderator_pin_hash = await asyncio.to_thread(hash_passphrase, new)
     log(g, "stage", "The ClaudAI passphrase was changed")
     await save(g)
     return moderator_state(g)

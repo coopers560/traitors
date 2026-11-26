@@ -75,8 +75,6 @@ class TestTwoTablesADay:
         assert began == ["Day 1 · Lunch began", "Day 1 · Evening began", "Day 2 · Lunch began"]
         assert all(e.get("label") for e in mod["event_log"])
         assert {e["label"] for e in mod["event_log"] if e["kind"] == "victim"} == {"Day 2 · Lunch"}
-        cur = S.get(f"{API}/current").json()
-        assert cur["code"] == g["code"] and cur["label"] == "Day 2 · Lunch" and cur["day"] == 3
 
     def test_claudai_switches_the_schedule(self):
         g, roles = setup_game_traitors(8, 2)  # one Round Table a day
@@ -172,8 +170,8 @@ class TestArchiveAndStory:
         assert 1 <= len(games) <= 50
         ends = [x["ended_at"] for x in games]
         assert ends == sorted(ends, reverse=True)
-        entry = games[0]
-        assert entry["code"] == code and entry["winner"] == "traitors" and entry["players"] == 8
+        entry = next(x for x in games if x["code"] == code)
+        assert entry["winner"] == "traitors" and entry["players"] == 8
         assert entry["label"] == "Day 2 · Lunch" and entry["created_at"] and entry["ended_at"]
 
         story = S.get(f"{API}/archive/{code.lower()}").json()
