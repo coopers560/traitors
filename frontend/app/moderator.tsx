@@ -6,15 +6,15 @@ import { ActivityIndicator, Pressable, ScrollView, Text, TextInput, View } from 
 import { KeyboardAwareScrollView } from "react-native-keyboard-controller";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-import { api, ApiError, ModAuth, ModeratorView, VoteLogEntry } from "@/src/api";
+import { api, ApiError, ModAuth, ModeratorView, passphraseProblem, roundLabel, VoteLogEntry } from "@/src/api";
 import { ConfirmSheet } from "@/src/components/confirm-sheet";
 import { ScreenHeader } from "@/src/components/screen-header";
 import { Body, Button, ErrorText, Eyebrow, Title } from "@/src/components/ui";
 import { fonts, makeStyles, radius, spacing, useTheme } from "@/src/theme";
 
-// The moderator ("Claudia") god-view. Reached only by a long press on a help
-// button, then the game's own ClaudAI PIN, checked by the server. There is no master key.
-// It reveals every role, so it must never be opened in front of the players.
+// The moderator ("Claudia") god-view. Reached from the dashboard's ⋯ menu ("ClaudAI (host)"),
+// then the game's own ClaudAI passphrase, checked by the server. There is no master key and no
+// way to recover the passphrase. It reveals every role, so it must never be opened in front of the players.
 
 export default function Moderator() {
   const styles = useStyles();
@@ -25,12 +25,12 @@ export default function Moderator() {
   const [auth, setAuth] = useState<ModAuth | null>(null);
   const [code, setCode] = useState<string | null>(null);
 
-  // There is no master key: this game's ClaudAI PIN opens the game in progress, and only it.
+  // There is no master key: this game's ClaudAI passphrase opens the game in progress, and only it.
   const unlock = useMutation({
-    mutationFn: () => api.moderatorPinLogin(pass),
+    mutationFn: () => api.moderatorLogin(pass),
     onSuccess: (r) => {
       setCode(r.code);
-      setAuth({ pin: pass });
+      setAuth({ passphrase: pass });
     },
   });
   const unlockError = unlock.error ? unlock.error.message : null;
@@ -46,24 +46,29 @@ export default function Moderator() {
           <View style={{ gap: spacing.sm }}>
             <Eyebrow>Hosts only · sees everything</Eyebrow>
             <Title testID="claudai-title">Claud<Text style={{ color: colors.traitor }}>AI</Text></Title>
-            <Body>Like Claudia, but it never forgets. Enter this game&apos;s 4-digit ClaudAI PIN — ClaudAI sees every role and every move, so never open it where players can see. No ClaudAI host yet? The game&apos;s host can nominate one from the ⋯ menu.</Body>
+            <Body>Like Claudia, but it never forgets. Enter this game&apos;s ClaudAI passphrase — ClaudAI sees every role and every move, so never open it where players can see. No ClaudAI host yet? The game&apos;s host can nominate one from the ⋯ menu.</Body>
           </View>
           <TextInput
             testID="moderator-pass-input"
             value={pass}
-            onChangeText={(t) => { unlock.reset(); setPass(t.replace(/\D/g, "").slice(0, 4)); }}
-            placeholder="ClaudAI PIN"
+            onChangeText={(t) => { unlock.reset(); setPass(t); }}
+            placeholder="ClaudAI passphrase"
             placeholderTextColor="#8E989E"
-            keyboardType="number-pad"
-            maxLength={4}
+            maxLength={64}
             secureTextEntry
+            autoCapitalize="none"
+            autoCorrect={false}
+            autoComplete="off"
+            textContentType="none"
+            spellCheck={false}
             autoFocus
             returnKeyType="go"
-            onSubmitEditing={() => pass.length === 4 && unlock.mutate()}
+            onSubmitEditing={() => pass.length > 0 && unlock.mutate()}
             style={styles.input}
           />
           <ErrorText testID="moderator-pass-error" message={unlockError} />
-          <Button testID="moderator-unlock-button" label="Unlock" icon="lock-open" disabled={pass.length !== 4} loading={unlock.isPending} onPress={() => unlock.mutate()} />
+          <Button testID="moderator-unlock-button" label="Unlock" icon="lock-open" disabled={!pass} loading={unlock.isPending} onPress={() => unlock.mutate()} />
+          <Text style={styles.gateNote}>The passphrase can&apos;t be recovered or reset — there is no master key.</Text>
         </KeyboardAwareScrollView>
       </View>
     );
@@ -97,50 +102,182 @@ function NowRow({ icon, label, text, tone, testID }: { icon: ComponentProps<type
   );
 }
 
-/** Set or change this game's ClaudAI PIN — the per-game ClaudAI login. */
-function ClaudAIPin({ code, auth, hasPin, onAuthChange }: { code: string; auth: ModAuth; hasPin: boolean; onAuthChange: (a: ModAuth) => void }) {
+/** Change this game's ClaudAI passphrase (e.g. to hand ClaudAI to someone else). It can't be recovered. */
+function ClaudAIPassphrase({ code, auth, onAuthChange }: { code: string; auth: ModAuth; onAuthChange: (a: ModAuth) => void }) {
   const styles = useStyles();
-  const { colors } = useTheme();
   const qc = useQueryClient();
   const [open, setOpen] = useState(false);
-  const [pin, setPin] = useState("");
+  const [pass, setPass] = useState("");
+  const [pass2, setPass2] = useState("");
+  const ok = !passphraseProblem(pass) && pass === pass2;
+  const close = () => {
+    setOpen(false);
+    setPass("");
+    setPass2("");
+  };
   const save = useMutation({
-    mutationFn: () => api.moderatorSetPin(code, auth, pin),
+    mutationFn: async () => {
+      // Don't let a refresh still using the old passphrase land after the change.
+      await qc.cancelQueries({ queryKey: ["moderator", code] });
+      return api.moderatorSetPassphrase(code, auth, pass);
+    },
     onSuccess: (v) => {
-      // Signed in with the old PIN? Carry on with the new one.
-      if (auth.pin) onAuthChange({ pin });
+      // Carry on signed in with the new passphrase.
+      onAuthChange({ passphrase: pass });
       qc.setQueryData(["moderator", code], v);
-      setOpen(false);
-      setPin("");
+      close();
     },
   });
   return (
     <View style={styles.card} testID="moderator-pin-card">
-      <Text style={styles.cardLabel}>ClaudAI PIN for this game</Text>
+      <Text style={styles.cardLabel}>ClaudAI passphrase</Text>
       <Text style={styles.planText}>
-        {hasPin
-          ? "Set — the ClaudAI host enters it on the ClaudAI screen. Change it here to hand ClaudAI to someone else."
-          : "Not set."}
+        Only the ClaudAI host should know it. It can never be recovered or reset — change it here to hand ClaudAI to someone
+        else, and write the new one down somewhere safe.
       </Text>
       {open ? (
         <>
-          <TextInput
+          <PassphraseFields
             testID="moderator-new-pin-input"
-            value={pin}
-            onChangeText={(t) => { save.reset(); setPin(t.replace(/\D/g, "").slice(0, 4)); }}
-            placeholder="New 4-digit PIN"
-            placeholderTextColor={colors.muted}
-            keyboardType="number-pad"
-            secureTextEntry
-            maxLength={4}
-            style={styles.input}
+            value={pass}
+            confirm={pass2}
+            onChange={(t) => { save.reset(); setPass(t); }}
+            onConfirmChange={(t) => { save.reset(); setPass2(t); }}
           />
           <ErrorText testID="moderator-pin-error" message={save.error?.message} />
-          <Button testID="moderator-pin-save" label="Save ClaudAI PIN" icon="key" disabled={pin.length !== 4} loading={save.isPending} onPress={() => save.mutate()} />
+          <Button testID="moderator-pin-save" label="Save the new passphrase" icon="key" disabled={!ok} loading={save.isPending} onPress={() => save.mutate()} />
+          <Button testID="moderator-pin-cancel" label="Cancel" variant="ghost" onPress={() => { save.reset(); close(); }} />
         </>
       ) : (
-        <Button testID="moderator-pin-open" label={hasPin ? "Change the ClaudAI PIN" : "Set a ClaudAI PIN"} variant="secondary" icon="key-outline" onPress={() => setOpen(true)} />
+        <Button testID="moderator-pin-open" label="Change the ClaudAI passphrase" variant="secondary" icon="key-outline" onPress={() => setOpen(true)} />
       )}
+    </View>
+  );
+}
+
+/** One Round Table a day, or two (lunch and about 8pm). ClaudAI can switch during the game. */
+function Schedule({ code, auth, m }: { code: string; auth: ModAuth; m: ModeratorView }) {
+  const styles = useStyles();
+  const { colors } = useTheme();
+  const qc = useQueryClient();
+  const [step, setStep] = useState<"idle" | "pick" | "one">("idle");
+  const two = m.tables_per_day === 2;
+  const calDay = m.cal_day ?? m.day;
+  const save = useMutation({
+    mutationFn: (v: { tables: 1 | 2; session?: "lunch" | "evening" }) => api.moderatorSchedule(code, auth, v.tables, v.session),
+    onSuccess: (v) => {
+      qc.setQueryData(["moderator", code], v);
+      setStep("idle");
+    },
+  });
+  return (
+    <View style={styles.card} testID="moderator-schedule-card">
+      <Text style={styles.cardLabel}>Schedule</Text>
+      <Text style={styles.progressText} testID="moderator-schedule-current">
+        {two ? "2 a day (lunch & 8pm)" : "1 Round Table a day"}
+      </Text>
+      <Text style={styles.planText}>
+        {two
+          ? "A Round Table at lunch and another at about 8pm, with a murder (or recruit) before each."
+          : "One Round Table each evening, with one murder (or recruit) a day."}
+        {m.phase !== "ended" ? ` Now: ${roundLabel(m)}.` : ""}
+      </Text>
+      <ErrorText testID="moderator-schedule-error" message={save.error?.message} />
+      {m.phase === "ended" ? null : step === "pick" ? (
+        <>
+          <Text style={[styles.planText, { color: colors.onSurface, fontWeight: "700" }]} testID="moderator-schedule-question">
+            Is the current round Day {calDay}&apos;s Lunch or Evening Round Table?
+          </Text>
+          <Button testID="moderator-schedule-lunch" label="Lunch" icon="sunny-outline" loading={save.isPending && save.variables?.session === "lunch"} disabled={save.isPending} onPress={() => save.mutate({ tables: 2, session: "lunch" })} />
+          <Button testID="moderator-schedule-evening" label="Evening (8pm)" icon="moon-outline" loading={save.isPending && save.variables?.session === "evening"} disabled={save.isPending} onPress={() => save.mutate({ tables: 2, session: "evening" })} />
+          <Button testID="moderator-schedule-cancel" label="Cancel" variant="ghost" onPress={() => { save.reset(); setStep("idle"); }} />
+        </>
+      ) : step === "one" ? (
+        <>
+          <Text style={[styles.planText, { color: colors.onSurface, fontWeight: "700" }]} testID="moderator-schedule-question">
+            Switch to one Round Table a day? The current round becomes Day {calDay}, and every day after has a single evening Round Table.
+          </Text>
+          <Button testID="moderator-schedule-one-confirm" label="Switch to 1 a day" icon="calendar-outline" loading={save.isPending} onPress={() => save.mutate({ tables: 1 })} />
+          <Button testID="moderator-schedule-cancel" label="Cancel" variant="ghost" onPress={() => { save.reset(); setStep("idle"); }} />
+        </>
+      ) : (
+        <Button
+          testID="moderator-schedule-switch"
+          label={two ? "Switch to 1 Round Table a day" : "Switch to 2 a day (lunch & 8pm)"}
+          variant="secondary"
+          icon="calendar-outline"
+          onPress={() => { save.reset(); setStep(two ? "one" : "pick"); }}
+        />
+      )}
+    </View>
+  );
+}
+
+const PASS_RULES: { label: string; ok: (s: string) => boolean }[] = [
+  { label: "8+ characters", ok: (s) => s.length >= 8 },
+  { label: "Upper case", ok: (s) => /[A-Z]/.test(s) },
+  { label: "Lower case", ok: (s) => /[a-z]/.test(s) },
+  { label: "A number", ok: (s) => /[0-9]/.test(s) },
+  { label: "A symbol", ok: (s) => /[^A-Za-z0-9]/.test(s) },
+];
+
+/** A new ClaudAI passphrase typed twice, with a live checklist of what it still needs. */
+function PassphraseFields({
+  testID,
+  value,
+  confirm,
+  onChange,
+  onConfirmChange,
+}: {
+  testID: string;
+  value: string;
+  confirm: string;
+  onChange: (v: string) => void;
+  onConfirmChange: (v: string) => void;
+}) {
+  const styles = useStyles();
+  const { colors } = useTheme();
+  const [show, setShow] = useState(false);
+  const strong = !passphraseProblem(value);
+  const match = confirm.length > 0 && confirm === value;
+  const missing = PASS_RULES.filter((r) => !r.ok(value)).map((r) => r.label.toLowerCase());
+  const status = !value
+    ? "At least 8 characters with upper and lower case letters, a number and a symbol."
+    : !strong
+      ? `Still needs: ${missing.join(", ")}.`
+      : !confirm
+        ? "Strong. Now type it again to confirm."
+        : match
+          ? "Strong, and both match ✓"
+          : "The two don't match yet.";
+  const field = {
+    placeholderTextColor: colors.muted,
+    style: styles.input,
+    secureTextEntry: !show,
+    autoCapitalize: "none" as const,
+    autoCorrect: false,
+    autoComplete: "off" as const,
+    textContentType: "none" as const,
+    spellCheck: false,
+    maxLength: 64,
+  };
+  return (
+    <View style={{ gap: spacing.sm }}>
+      <TextInput testID={testID} value={value} onChangeText={onChange} placeholder="New ClaudAI passphrase" {...field} />
+      <TextInput testID={`${testID.replace(/-input$/, "")}-confirm`} value={confirm} onChangeText={onConfirmChange} placeholder="Type it again to confirm" {...field} />
+      <View style={styles.checks} testID={`${testID}-checks`}>
+        {[...PASS_RULES.map((r) => ({ label: r.label, ok: r.ok(value) })), { label: "Both match", ok: match }].map((r) => (
+          <View key={r.label} style={styles.check}>
+            <Ionicons name={r.ok ? "checkmark-circle" : "ellipse-outline"} size={16} color={r.ok ? colors.brand : colors.muted} />
+            <Text style={[styles.checkText, r.ok && { color: colors.onSurface }]}>{r.label}</Text>
+          </View>
+        ))}
+      </View>
+      <Text style={[styles.passStatus, strong && match && { color: colors.brand }]} testID={`${testID}-status`}>{status}</Text>
+      <Pressable testID={`${testID}-show`} onPress={() => setShow((v) => !v)} style={styles.showRow} hitSlop={6}>
+        <Ionicons name={show ? "eye-off-outline" : "eye-outline"} size={18} color={colors.brand} />
+        <Text style={styles.showText}>{show ? "Hide what I typed" : "Show what I typed"}</Text>
+      </Pressable>
     </View>
   );
 }
@@ -187,14 +324,14 @@ function Breakdown({
       </View>
     );
   }
-  if (error || !data) {
+  if (!data) {
     return (
       <View style={styles.root} testID="moderator-screen">
         <ScreenHeader title="ClaudAI" testID="moderator" />
         <View style={[styles.scroll, { gap: spacing.md }]}>
           <ErrorText
             testID="moderator-view-error"
-            message={error instanceof ApiError && error.status !== 404 ? error.message : `No game found with the code ${code}.`}
+            message={error instanceof ApiError && error.status !== 404 ? error.message : error ? `No game found with the code ${code}.` : "Could not load the game."}
           />
           <Button testID="moderator-lock-button" label="Lock and leave" icon="lock-closed" onPress={onLock} />
         </View>
@@ -205,7 +342,6 @@ function Breakdown({
   const m: ModeratorView = data;
   const lastEntry = m.history.length ? m.history[m.history.length - 1] : null;
   const lastTie = lastEntry?.banish?.tie ? lastEntry.banish : null;
-  const lastDay = lastEntry?.day;
   // The players with the most votes in that tie: the only ones who can be chosen in the revote.
   const topVotes = lastTie?.tally[0]?.votes ?? 0;
   const topList = (lastTie?.tally ?? []).filter((t) => t.votes === topVotes).map((t) => t.name);
@@ -213,7 +349,12 @@ function Breakdown({
   const traitors = m.players.filter((p) => p.role === "traitor");
   const faithful = m.players.filter((p) => p.role === "faithful");
   const voteByDay = new Map<number, VoteLogEntry>(m.vote_log.map((v) => [v.day, v]));
-  const eyebrow = m.phase === "ended" ? "Game over" : m.phase === "setup" ? "Before Day 1" : `Day ${m.day} of ${m.total_days}`;
+  const eyebrow = m.phase === "ended" ? "Game over" : m.phase === "setup" ? "Before Day 1" : dayOf(m);
+  // Each round's label ("Day 3 · Lunch"), for things stored with only the round number (the chat).
+  const labels = new Map<number, string>();
+  for (const x of [...m.event_log, ...m.vote_log, ...m.history]) if (x.label) labels.set(x.day, x.label);
+  if (m.label) labels.set(m.day, m.label);
+  const labelOf = (day: number) => labels.get(day) ?? `Day ${day}`;
 
   return (
     <View style={styles.root} testID="moderator-screen">
@@ -224,6 +365,13 @@ function Breakdown({
       </View>
 
       <ScrollView contentContainerStyle={[styles.scroll, { paddingBottom: insets.bottom + spacing.lg }]}>
+        {/* A refresh failed: keep the last good view, but say so */}
+        {error ? (
+          <ErrorText
+            testID="moderator-refresh-error"
+            message={`Couldn't refresh: ${error instanceof ApiError && error.status === 404 ? `no game found with the code ${code}.` : error.message}`}
+          />
+        ) : null}
         {/* The one-glance answer: what's happening, who we're waiting for, what's next */}
         <View style={styles.nowCard} testID="moderator-now">
           <NowRow icon="radio-button-on" label="Right now" text={m.now.doing} testID="moderator-now-doing" />
@@ -246,7 +394,7 @@ function Breakdown({
               Re-run it as a revote between the top-voted players only:{" "}
               <Text style={{ color: colors.onSurface, fontWeight: "700" }}>{topNames}</Text>
               {topVotes ? ` (${topVotes} vote${topVotes === 1 ? "" : "s"} each)` : ""}. Everyone votes again and can only choose one of them.
-              {lastDay && m.day > lastDay ? ` This takes the game back to Day ${lastDay}'s Round Table.` : ""}
+              {lastEntry && m.day > lastEntry.day ? ` This takes the game back to the ${roundLabel(lastEntry)} Round Table.` : ""}
             </Text>
             {m.revote_note ? (
               <Text style={[styles.planText, { color: colors.traitor }]} testID="moderator-revote-note">{m.revote_note}</Text>
@@ -403,7 +551,7 @@ function Breakdown({
               m.traitor_chat.slice(-40).map((c) => (
                 <View key={c.id} style={styles.chatRow}>
                   <Text style={styles.chatMeta}>
-                    {new Date(c.t).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false })} · Day {c.day} ·{" "}
+                    {new Date(c.t).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false })} · {labelOf(c.day)} ·{" "}
                     <Text style={{ color: colors.traitor, fontWeight: "700" }}>{c.from_name}</Text>
                   </Text>
                   <Text style={styles.chatText}>{c.text}</Text>
@@ -416,7 +564,7 @@ function Breakdown({
         ) : null}
 
         {/* Claudia's log: every action, newest first */}
-        <EventLog events={m.event_log} currentDay={m.day} rolesShown={rolesShown} />
+        <EventLog events={m.event_log} currentDay={m.day} currentLabel={roundLabel(m)} rolesShown={rolesShown} />
 
         {/* Roster — grouped by allegiance when revealed, one neutral list when hidden */}
         {rolesShown ? (
@@ -436,12 +584,14 @@ function Breakdown({
         {/* Day-by-day timeline */}
         {m.history.length ? (
           <>
-            <Text style={[styles.sectionTitle, { marginTop: spacing.md }]}>Day by day</Text>
+            <Text style={[styles.sectionTitle, { marginTop: spacing.md }]}>{m.tables_per_day === 2 ? "Round by round" : "Day by day"}</Text>
             {m.history.map((h) => <DayCard key={h.day} h={h} votes={voteByDay.get(h.day)} rolesShown={rolesShown} />)}
           </>
         ) : null}
 
-        <ClaudAIPin code={code} auth={auth} hasPin={!!m.has_moderator_pin} onAuthChange={onAuthChange} />
+        <Schedule code={code} auth={auth} m={m} />
+
+        <ClaudAIPassphrase code={code} auth={auth} onAuthChange={onAuthChange} />
 
         <View style={{ gap: spacing.sm, marginTop: spacing.lg }}>
           <Button testID="moderator-refresh-button" label="Refresh now" variant="secondary" icon="refresh" onPress={() => refetch()} />
@@ -483,7 +633,17 @@ const EVENT_ICON: Record<string, { icon: ComponentProps<typeof Ionicons>["name"]
 
 const SECRET_NIGHT_KINDS = new Set(["murder", "recruit", "lielow", "pass"]);
 
-function EventLog({ events, currentDay, rolesShown }: { events: ModeratorView["event_log"]; currentDay: number; rolesShown: boolean }) {
+function EventLog({
+  events,
+  currentDay,
+  currentLabel,
+  rolesShown,
+}: {
+  events: ModeratorView["event_log"];
+  currentDay: number;
+  currentLabel: string;
+  rolesShown: boolean;
+}) {
   const styles = useStyles();
   const { colors } = useTheme();
   const [showAll, setShowAll] = useState(false);
@@ -494,11 +654,14 @@ function EventLog({ events, currentDay, rolesShown }: { events: ModeratorView["e
     .reverse();
   const rows = showAll ? visible : visible.filter((e) => e.day === currentDay);
   const hiddenCount = visible.length - rows.length;
-  const byDay: { day: number; items: typeof rows }[] = [];
+  // Grouped by round, headed with each round's label ("Day 3 · Lunch"; "Day 3" for older entries).
+  const byRound: { key: string; label: string; items: typeof rows }[] = [];
   for (const e of rows) {
-    const last = byDay[byDay.length - 1];
-    if (last && last.day === e.day) last.items.push(e);
-    else byDay.push({ day: e.day, items: [e] });
+    const label = roundLabel(e);
+    const key = `${e.day}|${label}`;
+    const last = byRound[byRound.length - 1];
+    if (last && last.key === key) last.items.push(e);
+    else byRound.push({ key, label, items: [e] });
   }
   const tone = (t: "traitor" | "gold" | "muted") => (t === "traitor" ? colors.traitor : t === "gold" ? colors.brand : colors.muted);
   return (
@@ -508,9 +671,9 @@ function EventLog({ events, currentDay, rolesShown }: { events: ModeratorView["e
         <Text style={styles.logCount}>{visible.length} events</Text>
       </View>
       {!rolesShown ? <Text style={styles.logHint}>Roles hidden: secret Traitor moves are left out. Tap “Reveal roles” for the full log.</Text> : null}
-      {byDay.map((d) => (
-        <View key={d.day} style={{ gap: 2 }}>
-          <Text style={styles.logDay}>Day {d.day}</Text>
+      {byRound.map((d, gi) => (
+        <View key={`${d.key}-${gi}`} style={{ gap: 2 }}>
+          <Text style={styles.logDay}>{d.label}</Text>
           {d.items.map((e, i) => {
             // With roles hidden every night turn must look identical — a Traitor's move
             // (murder / recruit / lying low) shows exactly like a Faithful's pass.
@@ -529,11 +692,18 @@ function EventLog({ events, currentDay, rolesShown }: { events: ModeratorView["e
       ))}
       {hiddenCount > 0 || showAll ? (
         <Pressable testID="moderator-log-toggle" onPress={() => setShowAll((v) => !v)} hitSlop={8}>
-          <Text style={styles.logMore}>{showAll ? "Show today only" : `Show earlier days (${hiddenCount} more)`}</Text>
+          <Text style={styles.logMore}>{showAll ? `Show ${currentLabel} only` : `Show earlier rounds (${hiddenCount} more)`}</Text>
         </Pressable>
       ) : null}
     </View>
   );
+}
+
+/** "Day 3 of 12 · Lunch": the current round's label with the length of the holiday. */
+function dayOf(g: { day: number; label?: string; cal_day?: number; total_days: number }): string {
+  const label = roundLabel(g);
+  const prefix = `Day ${g.cal_day ?? g.day}`;
+  return label.startsWith(prefix) ? `${prefix} of ${g.total_days}${label.slice(prefix.length)}` : `${label} of ${g.total_days}`;
 }
 
 function Count({ label, value, color }: { label: string; value: number; color: string }) {
@@ -604,7 +774,7 @@ function DayCard({ h, votes, rolesShown }: { h: ModeratorView["history"][number]
 
   return (
     <View style={styles.dayCard} testID={`moderator-day-${h.day}`}>
-      <Text style={styles.dayHead}>Day {h.day}</Text>
+      <Text style={styles.dayHead}>{roundLabel(h)}</Text>
 
       {h.ended_by_vote ? <Text style={styles.dayLine}>The players voted to end the game.</Text> : null}
 
@@ -698,6 +868,13 @@ const useStyles = makeStyles((c) => ({
     fontSize: 20,
     paddingHorizontal: spacing.md,
   },
+  gateNote: { color: c.muted, fontSize: 14, lineHeight: 20, textAlign: "center" },
+  checks: { flexDirection: "row", flexWrap: "wrap", columnGap: spacing.md, rowGap: spacing.xs },
+  check: { flexDirection: "row", alignItems: "center", gap: 4 },
+  checkText: { color: c.muted, fontSize: 14, fontWeight: "600" },
+  passStatus: { color: c.muted, fontSize: 14, lineHeight: 20 },
+  showRow: { flexDirection: "row", alignItems: "center", gap: spacing.xs, alignSelf: "flex-start", minHeight: 32 },
+  showText: { color: c.brand, fontSize: 14, fontWeight: "700" },
   codeInput: { fontSize: 36, fontWeight: "700", letterSpacing: 10, textAlign: "center", color: c.brand, borderColor: c.brandSecondary, height: 80 },
   listHead: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
   listHeadText: { color: c.muted, fontSize: 13, letterSpacing: 1.5, textTransform: "uppercase", fontWeight: "700" },

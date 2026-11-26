@@ -3,11 +3,12 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Image } from "expo-image";
 import { useRouter } from "expo-router";
 import { useEffect, useState } from "react";
-import { ActivityIndicator, Modal, Pressable, RefreshControl, ScrollView, Text, View } from "react-native";
+import { ActivityIndicator, Modal, Pressable, RefreshControl, ScrollView, Text, TextInput, View } from "react-native";
+import { KeyboardAvoidingView } from "react-native-keyboard-controller";
 import Animated, { FadeInDown } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-import { api, exitOf, GameState, PublicPlayer } from "@/src/api";
+import { api, ApiError, DayResult, exitOf, GameState, passphraseProblem, PublicPlayer, roundLabel } from "@/src/api";
 import { ConfirmSheet } from "@/src/components/confirm-sheet";
 import { HoldRole } from "@/src/components/hold-reveal";
 import { PinPad } from "@/src/components/pin-pad";
@@ -20,6 +21,21 @@ import { inviteLink, shareInvite, shareToWhatsApp } from "@/src/utils/invite";
 import { fonts, makeStyles, radius, spacing, useTheme } from "@/src/theme";
 
 type ActiveGame = Extract<GameState, { exists: true }>;
+
+/** "Day 3 of 12 · Lunch": the current round's label with the length of the holiday. */
+function dayOf(g: { day: number; label?: string; cal_day?: number; total_days: number }): string {
+  const label = roundLabel(g);
+  const prefix = `Day ${g.cal_day ?? g.day}`;
+  return label.startsWith(prefix) ? `${prefix} of ${g.total_days}${label.slice(prefix.length)}` : `${label} of ${g.total_days}`;
+}
+
+/** How and when (by round label) a player left the game. */
+function exitWithLabel(history: DayResult[], playerId: string): { how: "murdered" | "banished"; label: string } | null {
+  const e = exitOf(history, playerId);
+  if (!e) return null;
+  const h = history.find((x) => x.day === e.day);
+  return { how: e.how, label: h ? roundLabel(h) : `Day ${e.day}` };
+}
 
 export default function Home() {
   const styles = useStyles();
@@ -68,6 +84,14 @@ function Welcome({ gone }: { gone: boolean }) {
   // One group, one game: find the game in progress so this phone can join it without a code.
   const { data: current } = useQuery({ queryKey: ["current"], queryFn: api.currentGame, refetchInterval: 10000 });
   const live = current?.code ? (current as { code: string; phase?: string; day?: number; players?: number }) : null;
+  // The live game's round label ("Day 3 · Lunch") — `day` alone is the round number.
+  const { data: liveGame } = useQuery({
+    queryKey: ["current-label", live?.code],
+    queryFn: () => api.findGame(live?.code ?? ""),
+    enabled: !!live?.code && live.phase !== "setup",
+    refetchInterval: 30000,
+  });
+  const liveLabel = liveGame?.exists ? liveGame.label : undefined;
   return (
     <View style={styles.root} testID="welcome-screen">
       <Backdrop image={IMAGES.castle} />
@@ -92,7 +116,7 @@ function Welcome({ gone }: { gone: boolean }) {
             <>
               <Button testID="welcome-join-button" label="Join the game" icon="enter-outline" onPress={() => setCode(live.code)} />
               <Text style={styles.liveNote} testID="welcome-live-note">
-                {live.phase === "setup" ? "A new game is being set up" : `Day ${live.day} is under way`} · {live.players} players
+                {live.phase === "setup" ? "A new game is being set up" : liveLabel ? `${liveLabel} is under way` : "A game is under way"} · {live.players} players
               </Text>
             </>
           ) : (
@@ -111,7 +135,13 @@ function Welcome({ gone }: { gone: boolean }) {
             variant="ghost"
             icon="help-circle-outline"
             onPress={() => router.push({ pathname: "/help", params: { from: "welcome" } })}
-            onLongPress={() => router.push("/moderator")}
+          />
+          <Button
+            testID="welcome-previous-games-button"
+            label="Previous games"
+            variant="ghost"
+            icon="library-outline"
+            onPress={() => router.push("/previous-games")}
           />
         </Animated.View>
       </View>
@@ -208,7 +238,7 @@ function Dashboard({ game, refreshing, onRefresh }: { game: ActiveGame; refreshi
   // During a revote everyone can see the tied first vote (it was already revealed to all).
   const lastResult = game.history.length ? game.history[game.history.length - 1] : null;
   const firstVote = phase === "roundtable" && game.revote?.active && lastResult?.day === game.day && lastResult.banish?.tie ? lastResult.banish : null;
-  const copy =
+  let copy =
     phase === "roundtable" && game.revote?.active
       ? {
           eyebrow: "Tie-break revote",
@@ -228,9 +258,15 @@ function Dashboard({ game, refreshing, onRefresh }: { game: ActiveGame; refreshi
           body: "Only a few of you remain. Each player votes to banish one more — or to end the game now. If everyone votes to end while a Traitor is still among you, the Traitors win.",
         }
       : PHASE_COPY[phase];
+  // Two Round Tables a day: the lunch table's stages happen at lunch, not "this evening".
+  if (phase !== "ended" && game.session === "lunch" && copy.eyebrow === "This evening") copy = { ...copy, eyebrow: "At lunch" };
+  const plotLabel = game.endgame ? "Gather for the final vote" : game.session === "evening" ? "The Traitors move" : "Night falls — the Traitors move";
   const takingTurns = phase === "setup" || phase === "night" || phase === "gather" || phase === "roundtable";
   const alive = game.players.filter((p) => p.alive);
   const out = game.players.filter((p) => !p.alive);
+  // Progress through the holiday's calendar days (a lunch table is half way through its day).
+  const calDay = game.cal_day ?? game.day;
+  const progressDays = game.tables_per_day === 2 && game.session === "lunch" ? calDay - 0.5 : calDay;
 
   const onPlayer = (p: PublicPlayer) => {
     if (phase === "ended") return;
@@ -248,7 +284,7 @@ function Dashboard({ game, refreshing, onRefresh }: { game: ActiveGame; refreshi
     <View style={styles.root} testID="dashboard-screen">
       <View style={[styles.header, { paddingTop: insets.top + spacing.sm }]}>
         <View style={{ flex: 1 }}>
-          <Eyebrow>{phase === "setup" ? "Before Day 1" : phase === "ended" ? "Game over" : `Day ${game.day} of ${game.total_days}`}</Eyebrow>
+          <Eyebrow>{phase === "setup" ? "Before Day 1" : phase === "ended" ? "Game over" : dayOf(game)}</Eyebrow>
           <Text style={styles.headerTitle} testID="dashboard-day-title">
             {phase === "ended" ? "The Final Verdict" : copy.eyebrow}
           </Text>
@@ -262,7 +298,7 @@ function Dashboard({ game, refreshing, onRefresh }: { game: ActiveGame; refreshi
       </View>
       {phase !== "setup" && phase !== "ended" ? (
         <View style={styles.progress}>
-          <View style={[styles.progressFill, { width: `${(game.day / game.total_days) * 100}%` }]} />
+          <View style={[styles.progressFill, { width: `${Math.min(100, (progressDays / game.total_days) * 100)}%` }]} />
         </View>
       ) : null}
 
@@ -278,6 +314,7 @@ function Dashboard({ game, refreshing, onRefresh }: { game: ActiveGame; refreshi
             <Button testID="menu-forget-me-button" label={`Forget me on this phone (${boundPlayer.name})`} variant="secondary" icon="phone-portrait-outline" onPress={() => { setMenu(false); clearMe(); }} />
           ) : null}
           <Button testID="menu-leave-game-button" label="Leave game on this phone" variant="secondary" icon="exit-outline" onPress={() => { setMenu(false); setConfirmLeave(true); }} />
+          <Button testID="menu-claudai-button" label="ClaudAI (host)" variant="secondary" icon="shield-half" onPress={() => { setMenu(false); router.push("/moderator"); }} />
           {!game.claudai && phase !== "ended" ? (
             <Button testID="menu-nominate-claudai-button" label="Nominate a ClaudAI host" variant="secondary" icon="shield-half-outline" onPress={() => { setMenu(false); setNominate(true); }} />
           ) : null}
@@ -298,7 +335,7 @@ function Dashboard({ game, refreshing, onRefresh }: { game: ActiveGame; refreshi
                 {phase === "ended"
                   ? "Game over"
                   : !boundPlayer.alive
-                    ? (() => { const e = exitOf(game.history, boundPlayer.id); return e ? `${e.how === "murdered" ? "Murdered" : "Banished"} on Day ${e.day} — tap to peek` : "You're out — tap to peek"; })()
+                    ? (() => { const e = exitWithLabel(game.history, boundPlayer.id); return e ? `${e.how === "murdered" ? "Murdered" : "Banished"} · ${e.label} — tap to peek` : "You're out — tap to peek"; })()
                     : takingTurns
                       ? boundPlayer.turn_done ? "You've taken your turn" : "Your turn · no PIN"
                       : "Tap to check your secret"}
@@ -338,7 +375,7 @@ function Dashboard({ game, refreshing, onRefresh }: { game: ActiveGame; refreshi
             {phase === "setup" ? (
               <Button testID="advance-start-day-button" label="Begin Day 1" icon="sunny" disabled={!allDone} loading={advance.isPending} onPress={() => setConfirmGo({ label: "Begin Day 1", run: () => advance.mutate() })} />
             ) : phase === "day" ? (
-              <Button testID="advance-round-table-button" label={game.endgame ? "Gather for the final vote" : "Night falls — the Traitors move"} icon={game.endgame ? "flame" : "moon"} loading={advance.isPending} onPress={() => setConfirmGo({ label: game.endgame ? "Gather for the final vote" : "Night falls — the Traitors move", run: () => advance.mutate() })} />
+              <Button testID="advance-round-table-button" label={plotLabel} icon={game.endgame ? "flame" : "moon"} loading={advance.isPending} onPress={() => setConfirmGo({ label: plotLabel, run: () => advance.mutate() })} />
             ) : phase === "roundtable" ? (
               <>
                 <Button testID="advance-reveal-button" label={allDone ? (game.revote?.active ? "Reveal the revote" : game.endgame ? "Reveal the vote" : "Reveal the banishment") : "Everyone must vote first…"} icon="mail-open" disabled={!allDone} loading={advance.isPending && allDone} onPress={() => setConfirmGo({ label: game.revote?.active ? "Reveal the revote" : game.endgame ? "Reveal the vote" : "Reveal the banishment", run: () => advance.mutate() })} />
@@ -395,7 +432,7 @@ function Dashboard({ game, refreshing, onRefresh }: { game: ActiveGame; refreshi
             <Text style={[styles.sectionTitle, { marginTop: spacing.lg }]}>Eliminated</Text>
             <View style={{ gap: spacing.sm }}>
               {out.map((p, i) => (
-                <PlayerRow key={p.id} p={p} index={i} showTurn={false} onPress={() => onPlayer(p)} disabled={!peekMode} exit={exitOf(game.history, p.id)} holdRole={phase !== "ended"} />
+                <PlayerRow key={p.id} p={p} index={i} showTurn={false} onPress={() => onPlayer(p)} disabled={!peekMode} exit={exitWithLabel(game.history, p.id)} holdRole={phase !== "ended"} />
               ))}
             </View>
           </>
@@ -450,7 +487,7 @@ function PlayerRow({
   showTurn: boolean;
   onPress: () => void;
   disabled?: boolean;
-  exit?: { how: "murdered" | "banished"; day: number } | null;
+  exit?: { how: "murdered" | "banished"; label: string } | null;
   /** During the game an out player's allegiance shows only while held. */
   holdRole?: boolean;
 }) {
@@ -474,13 +511,13 @@ function PlayerRow({
           {!p.alive && exit && holdRole ? (
             <>
               <Text style={styles.rowExit} testID={`player-exit-${p.id}`}>
-                {exit.how === "murdered" ? "Murdered" : "Banished"} · Day {exit.day}
+                {exit.how === "murdered" ? "Murdered" : "Banished"} · {exit.label}
               </Text>
               {p.role ? <HoldRole role={p.role} testID={`player-role-${p.id}`} /> : null}
             </>
           ) : !p.alive && exit ? (
             <Text style={styles.rowExit} testID={`player-exit-${p.id}`}>
-              {exit.how === "murdered" ? "Murdered" : "Banished"} · Day {exit.day}
+              {exit.how === "murdered" ? "Murdered" : "Banished"} · {exit.label}
               {p.role ? (
                 <Text style={{ color: p.role === "traitor" ? colors.traitor : colors.brand }} testID={`player-role-${p.id}`}>
                   {" · "}{p.role === "traitor" ? "Traitor" : "Faithful"}
@@ -518,7 +555,7 @@ function MurderMethods({ game }: { game: ActiveGame }) {
       <Text style={styles.methodsTitle}>How the murders were done</Text>
       {murders.map((h) => (
         <View key={h.day} style={styles.methodRow}>
-          <Text style={styles.methodDay}>Day {h.day}</Text>
+          <Text style={styles.methodDay}>{roundLabel(h)}</Text>
           <Text style={styles.methodText}>
             <Text style={{ fontWeight: "700" }}>{h.murder.victim_name}</Text> — {h.murder.action}
           </Text>
@@ -545,7 +582,15 @@ function EndedCard({ game }: { game: ActiveGame }) {
       {endedByVote ? <Body testID="ended-by-vote">The players voted to end the game.</Body> : null}
       <Body>All roles are now revealed below. Well played, everyone.</Body>
       <MurderMethods game={game} />
-      <Button testID="share-finale-button" label="Share the finale" icon="share-social" onPress={() => router.push("/finale")} />
+      <Button
+        testID="ended-whole-story-button"
+        label="The whole story"
+        icon="book"
+        onPress={() => router.push({ pathname: "/story", params: { code: game.code } })}
+        style={{ minHeight: 72 }}
+      />
+      <Text style={styles.storyNote}>Every role, murder, vote and secret message — kept in Previous games for everyone.</Text>
+      <Button testID="share-finale-button" label="Share the finale" variant="secondary" icon="share-social" onPress={() => router.push("/finale")} />
       <Button testID="ended-history-button" label="Day history" variant="secondary" icon="time-outline" onPress={() => router.push("/history")} />
       <Button testID="new-game-button" label="Start a new game" variant="ghost" icon="refresh" onPress={() => setConfirmNew(true)} />
       <ConfirmSheet
@@ -594,57 +639,146 @@ function InviteSheet({ visible, onClose }: { visible: boolean; onClose: () => vo
 }
 
 /**
- * The game's host nominates a ClaudAI host by giving the game its ClaudAI PIN: first the
- * host's own PIN, then the new ClaudAI PIN. Only possible while the game has none.
+ * The game's host nominates a ClaudAI host by giving the game its ClaudAI passphrase: first the
+ * host's own PIN, then the new passphrase, typed twice. Only possible while the game has none.
+ * The passphrase can never be recovered — there is no master key.
  */
 function NominateSheet({ hostId, hostName, onClose }: { hostId: string; hostName: string; onClose: () => void }) {
   const styles = useStyles();
   const insets = useSafeAreaInsets();
   const qc = useQueryClient();
   const [hostPin, setHostPin] = useState("");
-  const [newPin, setNewPin] = useState("");
+  const [pass, setPass] = useState("");
+  const [pass2, setPass2] = useState("");
   const [step, setStep] = useState<"host" | "claudai">("host");
+  const ok = !passphraseProblem(pass) && pass === pass2;
   const save = useMutation({
-    mutationFn: () => api.nominateClaudai(hostId, hostPin, newPin),
+    mutationFn: () => api.nominateClaudai(hostId, hostPin, pass),
     onSuccess: (s) => {
       qc.setQueryData(["game"], s);
       onClose();
     },
-    onError: () => {
-      setHostPin("");
-      setNewPin("");
-      setStep("host");
+    onError: (e) => {
+      // Wrong host PIN (or too many tries): back to the host's PIN, keeping the passphrase.
+      // Anything else (e.g. the passphrase isn't strong enough) is fixed on this step.
+      if (e instanceof ApiError && [401, 403, 404, 429].includes(e.status)) {
+        setHostPin("");
+        setStep("host");
+      }
     },
   });
   return (
     <Modal visible transparent animationType="fade" onRequestClose={onClose}>
-      <Pressable style={styles.scrim} onPress={onClose} testID="nominate-scrim" />
-      <View style={[styles.endSheet, { paddingBottom: insets.bottom + spacing.lg }]} testID="nominate-sheet">
-        <Title style={{ fontSize: 28, lineHeight: 34 }}>Nominate a ClaudAI host</Title>
-        <Body>
-          {step === "host"
-            ? `ClaudAI sees every role and move. Only ${hostName} (the host) can set it up — enter ${hostName}'s PIN.`
-            : "Now choose a 4-digit ClaudAI PIN and give it only to the ClaudAI host. It must differ from every player's PIN."}
-        </Body>
-        <ErrorText testID="nominate-error" message={save.error?.message} />
-        {step === "host" ? (
-          <PinPad
-            value={hostPin}
-            onChange={(v) => {
-              save.reset();
-              setHostPin(v);
-              if (v.length === 4) setStep("claudai");
-            }}
-          />
-        ) : (
-          <>
-            <PinPad value={newPin} onChange={setNewPin} disabled={save.isPending} />
-            <Button testID="nominate-save-button" label="Set the ClaudAI PIN" icon="shield-half" disabled={newPin.length !== 4} loading={save.isPending} onPress={() => save.mutate()} />
-          </>
-        )}
-        <Button testID="nominate-cancel-button" label="Cancel" variant="secondary" onPress={onClose} />
-      </View>
+      <KeyboardAvoidingView behavior="padding" style={{ flex: 1 }}>
+        <Pressable style={styles.scrim} onPress={onClose} testID="nominate-scrim" />
+        <ScrollView
+          style={styles.sheetScroll}
+          contentContainerStyle={[styles.endSheetContent, { paddingBottom: insets.bottom + spacing.lg }]}
+          keyboardShouldPersistTaps="handled"
+          testID="nominate-sheet"
+        >
+          <Title style={{ fontSize: 28, lineHeight: 34 }}>Nominate a ClaudAI host</Title>
+          <Body>
+            {step === "host"
+              ? `ClaudAI sees every role and move. Only ${hostName} (the host) can set it up — enter ${hostName}'s PIN.`
+              : "Now choose the ClaudAI passphrase and give it only to the ClaudAI host. Type it twice: it can never be recovered or reset, so write it down somewhere safe."}
+          </Body>
+          <ErrorText testID="nominate-error" message={save.error?.message} />
+          {step === "host" ? (
+            <PinPad
+              value={hostPin}
+              onChange={(v) => {
+                save.reset();
+                setHostPin(v);
+                if (v.length === 4) setStep("claudai");
+              }}
+            />
+          ) : (
+            <>
+              <PassphraseFields
+                testID="nominate-pass-input"
+                value={pass}
+                confirm={pass2}
+                onChange={(t) => { save.reset(); setPass(t); }}
+                onConfirmChange={(t) => { save.reset(); setPass2(t); }}
+              />
+              <Button testID="nominate-save-button" label="Set the ClaudAI passphrase" icon="shield-half" disabled={!ok} loading={save.isPending} onPress={() => save.mutate()} />
+              <Button testID="nominate-back-button" label="Re-enter the host PIN" variant="ghost" icon="keypad-outline" onPress={() => { save.reset(); setHostPin(""); setStep("host"); }} />
+            </>
+          )}
+          <Button testID="nominate-cancel-button" label="Cancel" variant="secondary" onPress={onClose} />
+        </ScrollView>
+      </KeyboardAvoidingView>
     </Modal>
+  );
+}
+
+const PASS_RULES: { label: string; ok: (s: string) => boolean }[] = [
+  { label: "8+ characters", ok: (s) => s.length >= 8 },
+  { label: "Upper case", ok: (s) => /[A-Z]/.test(s) },
+  { label: "Lower case", ok: (s) => /[a-z]/.test(s) },
+  { label: "A number", ok: (s) => /[0-9]/.test(s) },
+  { label: "A symbol", ok: (s) => /[^A-Za-z0-9]/.test(s) },
+];
+
+/** A new ClaudAI passphrase typed twice, with a live checklist of what it still needs. */
+function PassphraseFields({
+  testID,
+  value,
+  confirm,
+  onChange,
+  onConfirmChange,
+}: {
+  testID: string;
+  value: string;
+  confirm: string;
+  onChange: (v: string) => void;
+  onConfirmChange: (v: string) => void;
+}) {
+  const styles = useStyles();
+  const { colors } = useTheme();
+  const [show, setShow] = useState(false);
+  const strong = !passphraseProblem(value);
+  const match = confirm.length > 0 && confirm === value;
+  const missing = PASS_RULES.filter((r) => !r.ok(value)).map((r) => r.label.toLowerCase());
+  const status = !value
+    ? "At least 8 characters with upper and lower case letters, a number and a symbol."
+    : !strong
+      ? `Still needs: ${missing.join(", ")}.`
+      : !confirm
+        ? "Strong. Now type it again to confirm."
+        : match
+          ? "Strong, and both match ✓"
+          : "The two don't match yet.";
+  const field = {
+    placeholderTextColor: colors.muted,
+    style: styles.passInput,
+    secureTextEntry: !show,
+    autoCapitalize: "none" as const,
+    autoCorrect: false,
+    autoComplete: "off" as const,
+    textContentType: "none" as const,
+    spellCheck: false,
+    maxLength: 64,
+  };
+  return (
+    <View style={{ gap: spacing.sm }}>
+      <TextInput testID={testID} value={value} onChangeText={onChange} placeholder="ClaudAI passphrase" autoFocus {...field} />
+      <TextInput testID={`${testID.replace(/-input$/, "")}-confirm`} value={confirm} onChangeText={onConfirmChange} placeholder="Type it again to confirm" {...field} />
+      <View style={styles.checks} testID={`${testID}-checks`}>
+        {[...PASS_RULES.map((r) => ({ label: r.label, ok: r.ok(value) })), { label: "Both match", ok: match }].map((r) => (
+          <View key={r.label} style={styles.check}>
+            <Ionicons name={r.ok ? "checkmark-circle" : "ellipse-outline"} size={16} color={r.ok ? colors.brand : colors.muted} />
+            <Text style={[styles.checkText, r.ok && { color: colors.onSurface }]}>{r.label}</Text>
+          </View>
+        ))}
+      </View>
+      <Text style={[styles.passStatus, strong && match && { color: colors.brand }]} testID={`${testID}-status`}>{status}</Text>
+      <Pressable testID={`${testID}-show`} onPress={() => setShow((v) => !v)} style={styles.showRow} hitSlop={6}>
+        <Ionicons name={show ? "eye-off-outline" : "eye-outline"} size={18} color={colors.brand} />
+        <Text style={styles.showText}>{show ? "Hide what I typed" : "Show what I typed"}</Text>
+      </Pressable>
+    </View>
   );
 }
 
@@ -697,7 +831,34 @@ const useStyles = makeStyles((c) => ({
   },
   methodsTitle: { color: c.brand, fontSize: 13, letterSpacing: 1.5, textTransform: "uppercase", fontWeight: "700" },
   methodRow: { flexDirection: "row", gap: spacing.sm, alignItems: "flex-start" },
-  methodDay: { color: c.muted, fontSize: 13, fontWeight: "700", minWidth: 46 },
+  methodDay: { color: c.muted, fontSize: 13, fontWeight: "700", minWidth: 46, maxWidth: 120 },
+  storyNote: { color: c.muted, fontSize: 14, lineHeight: 20, textAlign: "center", marginTop: -spacing.xs },
+  sheetScroll: {
+    flexGrow: 0,
+    flexShrink: 1,
+    backgroundColor: c.surfaceSecondary,
+    borderTopLeftRadius: radius.lg * 1.5,
+    borderTopRightRadius: radius.lg * 1.5,
+    borderTopWidth: 1,
+    borderColor: c.brandSecondary,
+  },
+  endSheetContent: { padding: spacing.lg, gap: spacing.md },
+  passInput: {
+    height: 56,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: c.border,
+    backgroundColor: c.surfaceTertiary,
+    color: c.onSurface,
+    fontSize: 18,
+    paddingHorizontal: spacing.md,
+  },
+  checks: { flexDirection: "row", flexWrap: "wrap", columnGap: spacing.md, rowGap: spacing.xs },
+  check: { flexDirection: "row", alignItems: "center", gap: 4 },
+  checkText: { color: c.muted, fontSize: 14, fontWeight: "600" },
+  passStatus: { color: c.muted, fontSize: 14, lineHeight: 20 },
+  showRow: { flexDirection: "row", alignItems: "center", gap: spacing.xs, alignSelf: "flex-start", minHeight: 32 },
+  showText: { color: c.brand, fontSize: 14, fontWeight: "700" },
   methodText: { color: c.onSurface, fontSize: 15, flex: 1, lineHeight: 21 },
   scrim: { flex: 1, backgroundColor: c.scrim },
   inviteSheet: {

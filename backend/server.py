@@ -7,11 +7,13 @@ import asyncio
 import functools
 import logging
 import random
+import re
 import hashlib
+import hmac
 import uuid
 from collections import Counter
 from pathlib import Path
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 from typing import List, Optional, Dict
 from datetime import datetime, timedelta, timezone
 
@@ -34,7 +36,8 @@ async def health():
 
 api_router = APIRouter(prefix="/api")
 
-TOTAL_DAYS = 12
+TOTAL_DAYS = 12  # calendar days of the holiday; the Traitors win if they survive the last one
+MAX_TRAITORS = 2  # recruiting never takes the Traitors above this many still in the game
 START_LIVES = 1  # one hit — a murder or a banishment — puts a player out
 HIDE_ROLE_AT = 6  # once this many (or fewer) remain, a banished player's role stays secret
 ENDGAME_AT = 4  # at this many (or fewer) remain, each round is a "banish again or end the game" vote
@@ -42,7 +45,11 @@ CODE_CHARS = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"  # no 0/O, 1/I/L mix-ups
 CODE_LEN = 5
 
 # ClaudAI (the moderator god-view) has no master key: each game nominates its own host,
-# who opens that game's ClaudAI with a 4-digit ClaudAI PIN.
+# who opens that game's ClaudAI with that game's ClaudAI passphrase. The passphrase is only
+# ever stored as a salted, slow hash and there is no reset or recovery path.
+
+# Round Tables per day: 1 (as before), or 2 — one at lunch and one at 8pm.
+SESSIONS = {"lunch": "Lunch", "evening": "Evening"}
 
 # Simple, family friendly "murders in plain sight" — subtle holiday small talk
 # and gestures that look completely natural around a resort or by the pool.
@@ -101,6 +108,50 @@ def hash_pin(pin: str) -> str:
     return hashlib.sha256(pin.encode()).hexdigest()
 
 
+PASSPHRASE_RULE = "Use at least 8 characters with upper and lower case letters, a number and a symbol"
+PBKDF2_PREFIX = "pbkdf2_sha256"
+PBKDF2_ITERATIONS = 200_000
+
+
+def passphrase_problem(s: Optional[str]) -> Optional[str]:
+    """Why a NEW ClaudAI passphrase isn't strong enough (the same rule as the app), or None."""
+    ok = (
+        bool(s) and len(s) >= 8
+        and re.search(r"[A-Z]", s) and re.search(r"[a-z]", s)
+        and re.search(r"[0-9]", s) and re.search(r"[^A-Za-z0-9]", s)
+    )
+    return None if ok else PASSPHRASE_RULE
+
+
+def hash_passphrase(secret: str) -> str:
+    """A salted, slow hash of a ClaudAI passphrase (stored in Game.moderator_pin_hash)."""
+    salt = os.urandom(16)
+    digest = hashlib.pbkdf2_hmac("sha256", secret.encode(), salt, PBKDF2_ITERATIONS).hex()
+    return f"{PBKDF2_PREFIX}${PBKDF2_ITERATIONS}${salt.hex()}${digest}"
+
+
+def verify_secret(stored: Optional[str], secret: Optional[str]) -> bool:
+    """Does `secret` match the stored ClaudAI hash? Accepts the salted passphrase hash and, for
+    games set up before passphrases, the old plain hash of a 4-digit ClaudAI PIN."""
+    if not stored or not secret:
+        return False
+    if stored.startswith(PBKDF2_PREFIX + "$"):
+        try:
+            _, iterations, salt, digest = stored.split("$")
+            calc = hashlib.pbkdf2_hmac("sha256", secret.encode(), bytes.fromhex(salt), int(iterations)).hex()
+        except ValueError:
+            return False
+        return hmac.compare_digest(calc, digest)
+    return hmac.compare_digest(hash_pin(secret), stored)
+
+
+def label_for(tables_per_day: int, cal_day: int, session: str) -> str:
+    """What a round is called: "Day 3 · Lunch" / "Day 3 · Evening", or "Day 3" at one a day."""
+    if tables_per_day == 2 and session in SESSIONS:
+        return f"Day {cal_day} · {SESSIONS[session]}"
+    return f"Day {cal_day}"
+
+
 # ---------------- Models ----------------
 class Player(BaseModel):
     id: str = Field(default_factory=lambda: uuid.uuid4().hex[:8])
@@ -109,13 +160,25 @@ class Player(BaseModel):
     role: str  # "traitor" | "faithful"
     lives: int = START_LIVES
     role_revealed: bool = True  # set False when eliminated while roles are being kept secret
+    # The role dealt at the start (None for players stored before this was tracked — the
+    # story infers it), and the round they were recruited into the Traitors, if they were.
+    started_as: Optional[str] = None
+    recruited_label: Optional[str] = None
 
 
 class Game(BaseModel):
     code: str
     host_id: Optional[str] = None  # the creator; only they may end a game in progress
     actions: List[str] = Field(default_factory=lambda: list(ACTIONS))
+    # The ROUND counter: unique and ever-increasing (history/vote_log entries are keyed on it).
+    # With two Round Tables a day there are two rounds per calendar day (cal_day).
     day: int = 1
+    cal_day: int = 1  # the calendar day of the holiday (games stored before this load as cal_day = day)
+    session: str = ""  # "" (one Round Table a day) | "lunch" | "evening"
+    tables_per_day: int = 1  # Round Tables a day: 1, or 2 (lunch and 8pm)
+    # A finished game someone has cleared from the main screen: kept for the archive (the
+    # whole story stays published) but gone from play.
+    archived: bool = False
     phase: str = "setup"  # setup | day | roundtable | reveal | ended
     players: List[Player]
     turns_done: List[str] = []
@@ -133,7 +196,8 @@ class Game(BaseModel):
     recruit_id: Optional[str] = None  # a Faithful the Traitors recruit tonight (instead of murdering)
     # Recruits the Traitors have earned: +1 each time a Traitor is banished, -1 when they use it.
     recruit_credits: int = 0
-    # Optional per-game ClaudAI login: a 4-digit PIN (hashed) that opens this game's god-view.
+    # Optional per-game ClaudAI login: the hashed ClaudAI passphrase that opens this game's
+    # god-view (games from before passphrases may hold the plain hash of a 4-digit PIN).
     moderator_pin_hash: Optional[str] = None
     # The Traitors' secret group chat. Only Traitors still in the game can read or post; never
     # sent in the public state. The moderator sees it.
@@ -152,6 +216,14 @@ class Game(BaseModel):
     winner: Optional[str] = None
     created_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
     updated_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+
+    @model_validator(mode="before")
+    @classmethod
+    def _legacy_defaults(cls, data):
+        # Games stored before calendar days existed: every round was its own day.
+        if isinstance(data, dict) and data.get("cal_day") is None:
+            data = {**data, "cal_day": data.get("day", 1)}
+        return data
 
     @classmethod
     def from_mongo(cls, doc: dict) -> "Game":
@@ -192,9 +264,10 @@ class CreateGameIn(BaseModel):
     players: List[PlayerIn]
     # One group plays one game at a time: when set, refuse while another game is in progress.
     single: bool = False
-    # Optional ClaudAI PIN for this game (a host who sees everything).
-    moderator_pin: Optional[str] = None
-
+    # Optional ClaudAI passphrase for this game (a host who sees everything).
+    claudai_passphrase: Optional[str] = None
+    moderator_pin: Optional[str] = None  # older apps' name for it (the same strength rule applies)
+    tables_per_day: int = 1  # Round Tables a day: 1, or 2 (lunch and 8pm)
 
 
 class AuthIn(BaseModel):
@@ -207,11 +280,24 @@ class ChatIn(AuthIn):
 
 
 class ModeratorIn(BaseModel):
-    pin: Optional[str] = None  # this game's ClaudAI PIN
+    passphrase: Optional[str] = None  # this game's ClaudAI passphrase
+    pin: Optional[str] = None  # older apps sent it under this name
+
+    def secret(self) -> Optional[str]:
+        return self.passphrase or self.pin
 
 
 class ModeratorPinIn(ModeratorIn):
-    new_pin: str
+    new_passphrase: Optional[str] = None
+    new_pin: Optional[str] = None  # older apps' name for it
+
+    def new_secret(self) -> Optional[str]:
+        return self.new_passphrase if self.new_passphrase is not None else self.new_pin
+
+
+class ScheduleIn(ModeratorIn):
+    tables_per_day: int
+    session: Optional[str] = None  # which Round Table the CURRENT round is, when switching to 2
 
 
 class TurnIn(AuthIn):
@@ -250,9 +336,42 @@ class ActionsIn(BaseModel):
 
 async def require_game(code: str) -> Game:
     g = await load_game(code)
-    if not g:
+    if not g or g.archived:
         raise HTTPException(404, "No game found with that code")
     return g
+
+
+def round_label(g: Game) -> str:
+    """The current round's label, e.g. "Day 3 · Lunch" (two a day) or "Day 3" (one a day)."""
+    return label_for(g.tables_per_day, g.cal_day, g.session)
+
+
+def next_round(g: Game) -> tuple:
+    """(cal_day, session) of the round after this one."""
+    if g.tables_per_day == 2:
+        if g.session == "lunch":
+            return g.cal_day, "evening"
+        return g.cal_day + 1, "lunch"
+    return g.cal_day + 1, ""
+
+
+def prev_round(g: Game) -> tuple:
+    """(cal_day, session) of the round before this one (for rewinding into a tied round)."""
+    if g.tables_per_day == 2:
+        if g.session == "evening":
+            return g.cal_day, "lunch"
+        return max(1, g.cal_day - 1), "evening"
+    return max(1, g.cal_day - 1), ""
+
+
+def is_final_round(g: Game) -> bool:
+    """The last Round Table of the last calendar day: the Traitors win if they survive it."""
+    return g.cal_day >= TOTAL_DAYS and (g.tables_per_day != 2 or g.session != "lunch")
+
+
+def new_history_entry(g: Game, **fields) -> dict:
+    """A history entry for the current round, labelled at creation."""
+    return {"day": g.day, "label": round_label(g), "cal_day": g.cal_day, "session": g.session, **fields}
 
 
 async def save(g: Game):
@@ -278,6 +397,10 @@ def public_state(g: Game) -> dict:
         "exists": True,
         "code": g.code,
         "day": g.day,
+        "label": round_label(g),
+        "cal_day": g.cal_day,
+        "session": g.session,
+        "tables_per_day": g.tables_per_day,
         "total_days": TOTAL_DAYS,
         "phase": g.phase,
         "winner": g.winner,
@@ -297,7 +420,7 @@ def public_state(g: Game) -> dict:
             for p in g.players
         ],
         "revote": _revote_info(g),
-        "claudai": bool(g.moderator_pin_hash),  # whether this game has a ClaudAI host (never the PIN)
+        "claudai": bool(g.moderator_pin_hash),  # whether this game has a ClaudAI host (never the secret)
         "turns_needed": len(g.players) if g.phase == "setup" else len(g.alive()),
         "turns_done": len(g.turns_done),
         # never reveal which secret action was used (strip from older records too);
@@ -336,7 +459,7 @@ def _public_history(h: dict, reveal_actions: bool = False) -> dict:
     return {**h, "murder": pub}
 
 
-# Wrong ClaudAI PINs per game, to stop anyone working through all 10,000 PINs.
+# Wrong ClaudAI passphrases per game, to stop anyone working through guesses.
 PIN_FAILS: Dict[str, List[float]] = {}
 PIN_FAIL_LIMIT = 8
 PIN_FAIL_WINDOW = 10 * 60  # seconds
@@ -349,19 +472,20 @@ def _pin_locked(code: str) -> bool:
     return len(recent) >= PIN_FAIL_LIMIT
 
 
-def check_moderator_pin(g: "Game", pin: Optional[str]) -> None:
-    import hmac
+async def check_moderator_secret(g: "Game", secret: Optional[str]) -> None:
     if _pin_locked(g.code):
-        raise HTTPException(429, "Too many wrong ClaudAI PINs — wait a few minutes and try again")
-    if not g.moderator_pin_hash or not pin or not hmac.compare_digest(hash_pin(pin), g.moderator_pin_hash):
-        PIN_FAILS.setdefault(g.code, []).append(datetime.now(timezone.utc).timestamp())
-        raise HTTPException(403, "Wrong ClaudAI PIN")
+        raise HTTPException(429, "Too many wrong ClaudAI passphrases — wait a few minutes and try again")
+    # Counted as a miss until proven right, so parallel guesses can't slip past the lockout
+    # while the (deliberately slow) hash is being checked.
+    PIN_FAILS.setdefault(g.code, []).append(datetime.now(timezone.utc).timestamp())
+    if not await asyncio.to_thread(verify_secret, g.moderator_pin_hash, secret):
+        raise HTTPException(403, "Wrong ClaudAI passphrase")
     PIN_FAILS.pop(g.code, None)
 
 
-def check_game_moderator(g: "Game", data: "ModeratorIn") -> None:
-    """ClaudAI for one game: only that game's own ClaudAI PIN opens it."""
-    check_moderator_pin(g, data.pin)
+async def check_game_moderator(g: "Game", data: "ModeratorIn") -> None:
+    """ClaudAI for one game: only that game's own ClaudAI passphrase opens it."""
+    await check_moderator_secret(g, data.secret())
 
 
 STAGE_LABEL = {
@@ -376,7 +500,9 @@ STAGE_LABEL = {
 }
 
 
-EVENT_LOG_CAP = 2000
+# Generous enough for a full 12-day game at two Round Tables a day (the whole story is
+# published at the end).
+EVENT_LOG_CAP = 4000
 
 
 def log(g: Game, kind: str, text: str, neutral: Optional[str] = "same") -> None:
@@ -385,6 +511,7 @@ def log(g: Game, kind: str, text: str, neutral: Optional[str] = "same") -> None:
     g.event_log.append({
         "t": datetime.now(timezone.utc).isoformat(),
         "day": g.day,
+        "label": round_label(g),
         "phase": g.phase,
         "kind": kind,
         "text": text,
@@ -413,6 +540,7 @@ def snapshot_votes(g: Game) -> dict:
     """Freeze who voted for whom this Round Table, for the moderator-only vote log."""
     return {
         "day": g.day,
+        "label": round_label(g),
         "round": 2 if g.revote_ids else 1,
         "votes": [
             {"voter_id": vid, "voter_name": name_of(g, vid), "target_id": tid, "target_name": name_of(g, tid)}
@@ -442,7 +570,9 @@ def _next_step(g: Game) -> str:
         "reveal": "Show the murder, then the table votes." if not g.winner else "Show the murder — the game is won.",
         "roundtable": "Reveal the banishment." if alive_done else "Waiting for everyone to vote.",
         "banished": ("Show the tie, then start the revote." if g.revote_ids
-                     else "Show the banishment, then begin the next day." if not g.winner else "Show the banishment — the game is won."),
+                     else "Show the banishment — the game is won." if g.winner
+                     else "Show the banishment — the Traitors have survived to the end." if is_final_round(g)
+                     else f"Show the banishment, then begin {label_for(g.tables_per_day, *next_round(g))}."),
         "ended": "The game is over.",
     }.get(g.phase, "")
 
@@ -459,7 +589,7 @@ def _now(g: Game) -> dict:
         doing, what = "Everyone is looking at their secret role", "to see their role"
         nxt = tap("Begin Day 1") if ready else "Pass the phone round until everyone has seen their role"
     elif g.phase == "day":
-        doing, what, waiting = f"Day {g.day} — enjoy the holiday", "", []
+        doing, what, waiting = f"{round_label(g)} — enjoy the holiday", "", []
         nxt = tap("Gather for the final vote") if in_endgame(g) else tap("Night falls — the Traitors move")
     elif g.phase == "night":
         doing, what = "Night — everyone takes a turn while the Traitors secretly plot", "to take their night turn"
@@ -478,7 +608,8 @@ def _now(g: Game) -> dict:
     elif g.phase == "banished":
         doing, what, waiting = ("The tie is on screen — a revote follows" if g.revote_ids else "The banishment reveal is on screen"), "", []
         nxt = ("Read the reveal together, then tap “Start the revote”" if g.revote_ids
-               else "Game over after this reveal" if g.winner else f"Read the reveal together, then tap “Begin Day {g.day + 1}”")
+               else "Game over after this reveal" if g.winner or is_final_round(g)
+               else f"Read the reveal together, then begin {label_for(g.tables_per_day, *next_round(g))}")
     else:
         doing, what, waiting, nxt = "The game is over", "", [], "Nothing — the game has ended"
     return {"doing": doing, "waiting_on": waiting, "waiting_for": what, "next": nxt, "ready": ready}
@@ -497,7 +628,7 @@ def _win_note(g: Game) -> str:
     if need == 0:
         traitor_part = "Traitors are already at parity — they win at the next reveal."
     else:
-        traitor_part = f"Traitors win by reaching {t} v {t} ({need} more Faithful out) or surviving to Day {TOTAL_DAYS}."
+        traitor_part = f"Traitors win by reaching {t} v {t} ({need} more Faithful out) or surviving to the end of Day {TOTAL_DAYS}."
     return f"{faithful_part} {traitor_part}"
 
 
@@ -543,6 +674,10 @@ def moderator_state(g: Game) -> dict:
         "exists": True,
         "code": g.code,
         "day": g.day,
+        "label": round_label(g),
+        "cal_day": g.cal_day,
+        "session": g.session,
+        "tables_per_day": g.tables_per_day,
         "total_days": TOTAL_DAYS,
         "phase": g.phase,
         "stage": _stage(g),
@@ -620,11 +755,13 @@ ACTION_CHOICES = 5  # secret murder methods a Traitor chooses from each night
 def recruit_reason(g: Game) -> Optional[str]:
     """Why the Traitors may recruit tonight, or None if they may not. They may only recruit to
     replace a banished Traitor (one recruit per Traitor banished), or when only one Traitor is
-    left — and only while at least six players are still in."""
+    left — only while at least six players are still in, and never above MAX_TRAITORS."""
     alive = g.alive()
     traitors = [p for p in alive if p.role == "traitor"]
     faithful = [p for p in alive if p.role == "faithful"]
     if len(alive) < RECRUIT_MIN_PLAYERS or not traitors or not faithful:
+        return None
+    if len(traitors) >= MAX_TRAITORS:
         return None
     if g.recruit_credits > 0:
         return "banished"
@@ -747,46 +884,50 @@ async def reset_actions(code: str):
 
 @api_router.post("/games/{code}/moderator")
 async def moderator_view(code: str, data: ModeratorIn):
-    """The god-view for one game. Passphrase- or ClaudAI-PIN-gated; reveals every secret."""
+    """The god-view for one game. Gated by the game's ClaudAI passphrase; reveals every secret."""
     g = await require_game(code)
-    check_game_moderator(g, data)
+    await check_game_moderator(g, data)
     return moderator_state(g)
 
 
-@api_router.post("/moderator/pin")
-async def moderator_pin_login(data: ModeratorIn):
-    """ClaudAI login with the game's own PIN. There is only one game in progress, so the PIN
-    is checked against it; returns its code so ClaudAI can open it."""
+@api_router.post("/moderator/login")
+@api_router.post("/moderator/pin")  # the older name, kept working
+async def moderator_login(data: ModeratorIn):
+    """ClaudAI login with the game's own ClaudAI passphrase. There is only one game in progress,
+    so the passphrase is checked against it; returns its code so ClaudAI can open it."""
     d = await current_game_doc()
     if not d:
         raise HTTPException(404, "There is no game in progress")
     g = await require_game(d["code"])
     if not g.moderator_pin_hash:
         raise HTTPException(403, "This game has no ClaudAI host yet — the game's host can nominate one from the ⋯ menu")
-    check_moderator_pin(g, data.pin)
+    await check_moderator_secret(g, data.secret())
     return {"code": g.code}
 
 
 class NominateIn(AuthIn):
-    new_pin: str
+    new_passphrase: Optional[str] = None
+    new_pin: Optional[str] = None  # older apps' name for it
+
+    def new_secret(self) -> Optional[str]:
+        return self.new_passphrase if self.new_passphrase is not None else self.new_pin
 
 
 @api_router.post("/games/{code}/claudai")
 @locked
 async def nominate_claudai(code: str, data: NominateIn):
-    """The game's host nominates a ClaudAI host by giving the game its ClaudAI PIN — for a
-    game set up without one. Once set, only the ClaudAI PIN itself can change it."""
+    """The game's host nominates a ClaudAI host by giving the game its ClaudAI passphrase — for
+    a game set up without one. Once set, only the ClaudAI passphrase itself can change it."""
     g = await require_game(code)
     p = auth(g, data)
     if p.id != g.host_id:
         raise HTTPException(403, "Only the game's host can nominate a ClaudAI host")
     if g.moderator_pin_hash:
-        raise HTTPException(400, "This game already has a ClaudAI host — change the PIN from ClaudAI")
-    if not (data.new_pin.isdigit() and len(data.new_pin) == 4):
-        raise HTTPException(400, "The ClaudAI PIN must be 4 digits")
-    if any(pl.pin_hash == hash_pin(data.new_pin) for pl in g.players):
-        raise HTTPException(400, "Choose a ClaudAI PIN that no player is using")
-    g.moderator_pin_hash = hash_pin(data.new_pin)
+        raise HTTPException(400, "This game already has a ClaudAI host — change the passphrase from ClaudAI")
+    new = data.new_secret()
+    if passphrase_problem(new):
+        raise HTTPException(400, PASSPHRASE_RULE)
+    g.moderator_pin_hash = hash_passphrase(new)
     log(g, "stage", f"{p.name} (host) nominated a ClaudAI host")
     await save(g)
     return public_state(g)
@@ -795,15 +936,39 @@ async def nominate_claudai(code: str, data: NominateIn):
 @api_router.post("/games/{code}/moderator/pin")
 @locked
 async def moderator_set_pin(code: str, data: ModeratorPinIn):
-    """Change this game's ClaudAI PIN (needs the current ClaudAI PIN)."""
+    """Change this game's ClaudAI passphrase (needs the current one). There is no reset."""
     g = await require_game(code)
-    check_game_moderator(g, data)
-    if not (data.new_pin.isdigit() and len(data.new_pin) == 4):
-        raise HTTPException(400, "The ClaudAI PIN must be 4 digits")
-    if any(p.pin_hash == hash_pin(data.new_pin) for p in g.players):
-        raise HTTPException(400, "Choose a ClaudAI PIN that no player is using")
-    g.moderator_pin_hash = hash_pin(data.new_pin)
-    log(g, "stage", "The ClaudAI PIN was changed")
+    await check_game_moderator(g, data)
+    new = data.new_secret()
+    if passphrase_problem(new):
+        raise HTTPException(400, PASSPHRASE_RULE)
+    g.moderator_pin_hash = hash_passphrase(new)
+    log(g, "stage", "The ClaudAI passphrase was changed")
+    await save(g)
+    return moderator_state(g)
+
+
+@api_router.post("/games/{code}/moderator/schedule")
+@locked
+async def moderator_schedule(code: str, data: ScheduleIn):
+    """Switch between one Round Table a day and two (lunch and 8pm). `session` says which of
+    the two the CURRENT round is; the round counter (day) is never touched."""
+    g = await require_game(code)
+    await check_game_moderator(g, data)
+    if g.phase == "ended":
+        raise HTTPException(400, "The game is over")
+    if data.tables_per_day not in (1, 2):
+        raise HTTPException(400, "Choose one or two Round Tables a day")
+    if data.tables_per_day == 2:
+        if data.session not in SESSIONS:
+            raise HTTPException(400, "Say whether this round is the lunch or the evening Round Table")
+        session = data.session
+    else:
+        session = ""
+    before = round_label(g)
+    g.tables_per_day, g.session = data.tables_per_day, session
+    plan = "two Round Tables a day (lunch and 8pm)" if g.tables_per_day == 2 else "one Round Table a day"
+    log(g, "schedule", f"ClaudAI switched the game to {plan} — {before} is now {round_label(g)}")
     await save(g)
     return moderator_state(g)
 
@@ -847,7 +1012,7 @@ async def moderator_revote(code: str, data: ModeratorIn):
     """Re-run the most recent tied Round Table as a tie-break revote (for a tie that was
     resolved before revotes existed, or the host wants it now). Rewinds an untouched next day."""
     g = await require_game(code)
-    check_game_moderator(g, data)
+    await check_game_moderator(g, data)
     ok, why = _revote_available(g)
     if not ok:
         raise HTTPException(400, why)
@@ -861,6 +1026,10 @@ async def moderator_revote(code: str, data: ModeratorIn):
         if g.action and g.action in g.used_actions:
             g.used_actions.remove(g.action)
         g.day = h["day"]
+        if h.get("cal_day") is not None:
+            g.cal_day, g.session = h["cal_day"], h.get("session") or ""
+        else:  # an entry from before calendar days were stored
+            g.cal_day, g.session = prev_round(g)
         g.target_id, g.action, g.murder_confirmed, g.action_choices, g.recruit_id = None, None, False, [], None
         g.murder_done = False
     log(g, "stage", "Host re-ran the tied Round Table as a revote")
@@ -906,6 +1075,7 @@ async def send_chat(code: str, data: ChatIn):
         "id": uuid.uuid4().hex[:10],
         "t": datetime.now(timezone.utc).isoformat(),
         "day": g.day,
+        "label": round_label(g),
         "from_id": p.id,
         "from_name": p.name,
         "text": text,
