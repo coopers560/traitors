@@ -5,7 +5,7 @@ import { Platform, ScrollView, Text, View } from "react-native";
 import { captureRef } from "react-native-view-shot";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-import { api, exitOf } from "@/src/api";
+import { api, exitOf, roundLabel } from "@/src/api";
 import { ScreenHeader } from "@/src/components/screen-header";
 import { Button } from "@/src/components/ui";
 import { fonts, makeStyles, radius, spacing, useTheme } from "@/src/theme";
@@ -29,7 +29,8 @@ export default function Finale() {
   }
 
   const traitorsWin = data.winner === "traitors";
-  const daysPlayed = data.history.length;
+  // Calendar days played (two Round Tables a day means more rounds than days).
+  const daysPlayed = data.cal_day ?? data.history.length;
   const sorted = [...data.players].sort((a, b) => (a.role === b.role ? 0 : a.role === "traitor" ? -1 : 1));
 
   const share = async () => {
@@ -66,13 +67,14 @@ export default function Finale() {
           <View style={styles.divider} />
           {sorted.map((p) => {
             const exit = exitOf(data.history, p.id);
+            const exitRound = exit ? data.history.find((h) => h.day === exit.day) : undefined;
             const traitor = p.role === "traitor";
             return (
               <View key={p.id} style={styles.row} testID={`finale-player-${p.id}`}>
                 <View style={{ flex: 1, minWidth: 0 }}>
                   <Text style={styles.name} numberOfLines={1}>{p.name}</Text>
                   <Text style={styles.status}>
-                    {exit ? `${exit.how === "murdered" ? "Murdered" : "Banished"} on Day ${exit.day}` : "Survived to the end"}
+                    {exit ? `${exit.how === "murdered" ? "Murdered" : "Banished"} on ${exitRound ? roundLabel(exitRound) : `Day ${exit.day}`}` : "Survived to the end"}
                   </Text>
                 </View>
                 <View style={{ alignItems: "flex-end", gap: 4 }}>
