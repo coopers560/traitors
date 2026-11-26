@@ -135,6 +135,8 @@ class Game(BaseModel):
     recruit_id: Optional[str] = None  # a Faithful the Traitors recruit tonight (instead of murdering)
     # Recruits the Traitors have earned: +1 each time a Traitor is banished, -1 when they use it.
     recruit_credits: int = 0
+    # Optional per-game ClaudAI login: a 4-digit PIN (hashed) that opens this game's god-view.
+    moderator_pin_hash: Optional[str] = None
     # The Traitors' secret group chat. Only Traitors still in the game can read or post; never
     # sent in the public state. The moderator sees it.
     traitor_chat: List[dict] = []
@@ -192,6 +194,8 @@ class CreateGameIn(BaseModel):
     players: List[PlayerIn]
     # One group plays one game at a time: when set, refuse while another game is in progress.
     single: bool = False
+    # Optional ClaudAI PIN for this game (a host who sees everything).
+    moderator_pin: Optional[str] = None
 
 
 
@@ -205,7 +209,13 @@ class ChatIn(AuthIn):
 
 
 class ModeratorIn(BaseModel):
-    passphrase: str
+    # Either the master passphrase (every game) or this game's ClaudAI PIN (that game only).
+    passphrase: Optional[str] = None
+    pin: Optional[str] = None
+
+
+class ModeratorPinIn(ModeratorIn):
+    new_pin: str
 
 
 class TurnIn(AuthIn):
@@ -334,6 +344,37 @@ def check_moderator(passphrase: Optional[str]):
     import hmac
     if not passphrase or not hmac.compare_digest(passphrase, MODERATOR_PASSPHRASE):
         raise HTTPException(403, "Wrong moderator passphrase")
+
+
+# Wrong ClaudAI PINs per game, to stop anyone working through all 10,000 PINs.
+PIN_FAILS: Dict[str, List[float]] = {}
+PIN_FAIL_LIMIT = 8
+PIN_FAIL_WINDOW = 10 * 60  # seconds
+
+
+def _pin_locked(code: str) -> bool:
+    now = datetime.now(timezone.utc).timestamp()
+    recent = [t for t in PIN_FAILS.get(code, []) if now - t < PIN_FAIL_WINDOW]
+    PIN_FAILS[code] = recent
+    return len(recent) >= PIN_FAIL_LIMIT
+
+
+def check_moderator_pin(g: "Game", pin: Optional[str]) -> None:
+    import hmac
+    if _pin_locked(g.code):
+        raise HTTPException(429, "Too many wrong ClaudAI PINs — wait a few minutes and try again")
+    if not g.moderator_pin_hash or not pin or not hmac.compare_digest(hash_pin(pin), g.moderator_pin_hash):
+        PIN_FAILS.setdefault(g.code, []).append(datetime.now(timezone.utc).timestamp())
+        raise HTTPException(403, "Wrong ClaudAI PIN")
+    PIN_FAILS.pop(g.code, None)
+
+
+def check_game_moderator(g: "Game", data: "ModeratorIn") -> None:
+    """ClaudAI for one game: the master passphrase, or that game's own ClaudAI PIN."""
+    if data.passphrase:
+        check_moderator(data.passphrase)
+    else:
+        check_moderator_pin(g, data.pin)
 
 
 STAGE_LABEL = {
@@ -555,8 +596,9 @@ def moderator_state(g: Game) -> dict:
         "tonight": tonight,
         "round_table": round_table,
         "vote_log": g.vote_log,  # moderator-only: who voted for whom, each past Round Table
-        "event_log": g.event_log,
-        "traitor_chat": g.traitor_chat,  # moderator-only: the Traitors' secret chat  # moderator-only: every action, in order
+        "event_log": g.event_log,  # moderator-only: every action, in order
+        "traitor_chat": g.traitor_chat,  # moderator-only: the Traitors' secret chat
+        "has_moderator_pin": bool(g.moderator_pin_hash),
         "history": g.history,  # the full record, murder methods included
     }
 
@@ -754,9 +796,40 @@ async def moderator_games(data: ModeratorIn):
 
 @api_router.post("/games/{code}/moderator")
 async def moderator_view(code: str, data: ModeratorIn):
-    """The god-view for one game. Passphrase-gated; reveals every role and secret."""
-    check_moderator(data.passphrase)
-    return moderator_state(await require_game(code))
+    """The god-view for one game. Passphrase- or ClaudAI-PIN-gated; reveals every secret."""
+    g = await require_game(code)
+    check_game_moderator(g, data)
+    return moderator_state(g)
+
+
+@api_router.post("/moderator/pin")
+async def moderator_pin_login(data: ModeratorIn):
+    """ClaudAI login with the game's own PIN. There is only one game in progress, so the PIN
+    is checked against it; returns its code so ClaudAI can open it."""
+    d = await current_game_doc()
+    if not d:
+        raise HTTPException(404, "There is no game in progress")
+    g = await require_game(d["code"])
+    if not g.moderator_pin_hash:
+        raise HTTPException(403, "This game has no ClaudAI PIN — use the passphrase")
+    check_moderator_pin(g, data.pin)
+    return {"code": g.code}
+
+
+@api_router.post("/games/{code}/moderator/pin")
+@locked
+async def moderator_set_pin(code: str, data: ModeratorPinIn):
+    """Set or change this game's ClaudAI PIN (needs the passphrase or the current PIN)."""
+    g = await require_game(code)
+    check_game_moderator(g, data)
+    if not (data.new_pin.isdigit() and len(data.new_pin) == 4):
+        raise HTTPException(400, "The ClaudAI PIN must be 4 digits")
+    if any(p.pin_hash == hash_pin(data.new_pin) for p in g.players):
+        raise HTTPException(400, "Choose a ClaudAI PIN that no player is using")
+    g.moderator_pin_hash = hash_pin(data.new_pin)
+    log(g, "stage", "The ClaudAI PIN was set" if not data.pin else "The ClaudAI PIN was changed")
+    await save(g)
+    return moderator_state(g)
 
 
 def _open_revote(g: Game) -> None:
@@ -797,8 +870,8 @@ def _revote_available(g: Game) -> tuple:
 async def moderator_revote(code: str, data: ModeratorIn):
     """Re-run the most recent tied Round Table as a tie-break revote (for a tie that was
     resolved before revotes existed, or the host wants it now). Rewinds an untouched next day."""
-    check_moderator(data.passphrase)
     g = await require_game(code)
+    check_game_moderator(g, data)
     ok, why = _revote_available(g)
     if not ok:
         raise HTTPException(400, why)
@@ -909,6 +982,11 @@ async def create_game(data: CreateGameIn):
     for p in data.players:
         if not (p.pin.isdigit() and len(p.pin) == 4):
             raise HTTPException(400, f"{p.name.strip()} needs a 4-digit PIN")
+    if data.moderator_pin is not None:
+        if not (data.moderator_pin.isdigit() and len(data.moderator_pin) == 4):
+            raise HTTPException(400, "The ClaudAI PIN must be 4 digits")
+        if any(p.pin == data.moderator_pin for p in data.players):
+            raise HTTPException(400, "Choose a ClaudAI PIN that no player is using")
     # A random number of Traitors: 1 to 3, always a minority (fewer than the Faithful)
     n_traitors = random.randint(1, max(1, min(3, (len(names) - 1) // 2)))
     traitor_idx = set(random.sample(range(len(names)), n_traitors))
@@ -918,6 +996,8 @@ async def create_game(data: CreateGameIn):
     ]
     g = Game(code=await new_code(), players=players)
     g.host_id = players[0].id  # the first player entered is the host/creator
+    if data.moderator_pin:
+        g.moderator_pin_hash = hash_pin(data.moderator_pin)
     traitors = ", ".join(pl.name for pl in players if pl.role == "traitor")
     log(g, "setup", f"Game created: {len(players)} players, host {players[0].name}. Traitors: {traitors}",
         f"Game created: {len(players)} players, host {players[0].name}")

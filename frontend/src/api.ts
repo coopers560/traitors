@@ -189,6 +189,7 @@ export type ModeratorView = {
   vote_log: VoteLogEntry[];
   event_log: ModeratorEvent[];
   traitor_chat?: ChatMessage[];
+  has_moderator_pin?: boolean;
   history: DayResult[];
 };
 
@@ -234,7 +235,8 @@ export const api = {
   /** Look up a game by code without switching to it (used by the Join screen). */
   findGame: (code: string) => request<GameState>(`/games/${encodeURIComponent(code.trim().toUpperCase())}`),
   /** One group, one game: create only if no game is in progress (409 otherwise). */
-  createGame: (players: { name: string; pin: string }[]) => request<GameState>("/games", "POST", { players, single: true }),
+  createGame: (players: { name: string; pin: string }[], moderatorPin?: string) =>
+    request<GameState>("/games", "POST", { players, single: true, ...(moderatorPin ? { moderator_pin: moderatorPin } : {}) }),
   /** The group's game in progress, if any — phones join it without a code. */
   currentGame: () => request<CurrentGame>("/current"),
   readChat: (player_id: string, pin: string) => request<ChatState>(`/games/${currentCode}/chat`, "POST", { player_id, pin }),
@@ -258,16 +260,23 @@ export const api = {
     request<GameState>(`/games/${currentCode}/advance?expected=${expected}&expected_day=${day}${force ? "&force=true" : ""}`, "POST"),
   moderatorUnlock: (passphrase: string) => request<{ ok: boolean }>("/moderator/unlock", "POST", { passphrase }),
   moderatorGames: (passphrase: string) => request<{ games: ModeratorGame[] }>("/moderator/games", "POST", { passphrase }),
-  moderatorRevote: (code: string, passphrase: string) =>
-    request<ModeratorView>(`/games/${encodeURIComponent(code.trim().toUpperCase())}/moderator/revote`, "POST", { passphrase }),
-  moderatorView: (code: string, passphrase: string) =>
-    request<ModeratorView>(`/games/${encodeURIComponent(code.trim().toUpperCase())}/moderator`, "POST", { passphrase }),
+  moderatorRevote: (code: string, auth: ModAuth) =>
+    request<ModeratorView>(`/games/${encodeURIComponent(code.trim().toUpperCase())}/moderator/revote`, "POST", auth),
+  moderatorView: (code: string, auth: ModAuth) =>
+    request<ModeratorView>(`/games/${encodeURIComponent(code.trim().toUpperCase())}/moderator`, "POST", auth),
+  /** ClaudAI login with the game's own 4-digit PIN; returns the game in progress. */
+  moderatorPinLogin: (pin: string) => request<{ code: string }>("/moderator/pin", "POST", { pin }),
+  moderatorSetPin: (code: string, auth: ModAuth, newPin: string) =>
+    request<ModeratorView>(`/games/${encodeURIComponent(code.trim().toUpperCase())}/moderator/pin`, "POST", { ...auth, new_pin: newPin }),
   getActions: () => request<ActionList>(`/games/${currentCode}/actions`),
   saveActions: (actions: string[]) => request<ActionList>(`/games/${currentCode}/actions`, "PUT", { actions }),
   resetActions: () => request<ActionList>(`/games/${currentCode}/actions`, "DELETE"),
 };
 
 export type ActionList = { actions: string[]; is_default: boolean };
+
+/** ClaudAI access: the master passphrase (every game) or one game's ClaudAI PIN. */
+export type ModAuth = { passphrase?: string; pin?: string };
 
 export type CurrentGame = { code: string | null; phase?: Phase; day?: number; players?: number };
 

@@ -41,6 +41,7 @@ const SECTIONS: Section[] = [
       ["Each player", "types their own name and a 4-digit PIN. Keep the PIN to yourself, you need it every turn."],
       ["4 to 15 players.", "Empty rows are ignored. Use the cross to remove a row, or Add a player for more."],
       ["First name on the list", "is the host. Only the host's PIN can end the game for everyone."],
+      ["Add ClaudAI", "optional: tick it and set a 4-digit PIN for a host who sees everything. Pick a PIN no player uses."],
       ["Choose the Traitors", "starts the game. Roles are dealt in secret, even from the organiser."],
     ],
   },

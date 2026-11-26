@@ -6,7 +6,7 @@ import { ActivityIndicator, Pressable, ScrollView, Text, TextInput, View } from 
 import { KeyboardAwareScrollView } from "react-native-keyboard-controller";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-import { api, ModeratorView, VoteLogEntry } from "@/src/api";
+import { api, ApiError, ModAuth, ModeratorView, VoteLogEntry } from "@/src/api";
 import { ConfirmSheet } from "@/src/components/confirm-sheet";
 import { ScreenHeader } from "@/src/components/screen-header";
 import { Body, Button, ErrorText, Eyebrow, Title } from "@/src/components/ui";
@@ -22,21 +22,31 @@ export default function Moderator() {
   const insets = useSafeAreaInsets();
 
   const [pass, setPass] = useState("");
-  const [unlockedPass, setUnlockedPass] = useState<string | null>(null);
+  const [auth, setAuth] = useState<ModAuth | null>(null);
   const [codeInput, setCodeInput] = useState("");
   const [code, setCode] = useState<string | null>(null);
+  const isPin = /^\d{4}$/.test(pass);
 
   const unlock = useMutation({
-    mutationFn: () => api.moderatorUnlock(pass),
-    onSuccess: async () => {
+    mutationFn: async () => {
+      if (isPin) {
+        // This game's own ClaudAI PIN: opens the game in progress, and only that game.
+        const r = await api.moderatorPinLogin(pass);
+        setCode(r.code);
+        setAuth({ pin: pass });
+        return;
+      }
+      await api.moderatorUnlock(pass);
       // One group, one game: go straight to the game in progress ("Watch another game" still lists them all).
       const cur = await api.currentGame().catch(() => null);
       if (cur?.code) setCode(cur.code);
-      setUnlockedPass(pass);
+      setAuth({ passphrase: pass });
     },
   });
+  const unlockError =
+    unlock.error instanceof ApiError && isPin ? unlock.error.message : unlock.error ? "That passphrase isn't right." : null;
 
-  if (!unlockedPass) {
+  if (!auth) {
     return (
       <View style={styles.root} testID="moderator-screen">
         <ScreenHeader title="ClaudAI" testID="moderator" />
@@ -47,13 +57,13 @@ export default function Moderator() {
           <View style={{ gap: spacing.sm }}>
             <Eyebrow>Hosts only · sees everything</Eyebrow>
             <Title testID="claudai-title">Claud<Text style={{ color: colors.traitor }}>AI</Text></Title>
-            <Body>Like Claudia, but it never forgets. Enter the passphrase — ClaudAI sees every role and every move, so never open it where players can see.</Body>
+            <Body>Like Claudia, but it never forgets. Enter this game&apos;s 4-digit ClaudAI PIN (or the passphrase) — ClaudAI sees every role and every move, so never open it where players can see.</Body>
           </View>
           <TextInput
             testID="moderator-pass-input"
             value={pass}
             onChangeText={(t) => { unlock.reset(); setPass(t); }}
-            placeholder="Passphrase"
+            placeholder="ClaudAI PIN or passphrase"
             placeholderTextColor="#8E989E"
             secureTextEntry
             autoCapitalize="none"
@@ -63,7 +73,7 @@ export default function Moderator() {
             onSubmitEditing={() => pass && unlock.mutate()}
             style={styles.input}
           />
-          <ErrorText testID="moderator-pass-error" message={unlock.error ? "That passphrase isn't right." : null} />
+          <ErrorText testID="moderator-pass-error" message={unlockError} />
           <Button testID="moderator-unlock-button" label="Unlock" icon="lock-open" disabled={!pass} loading={unlock.isPending} onPress={() => unlock.mutate()} />
         </KeyboardAwareScrollView>
       </View>
@@ -71,16 +81,18 @@ export default function Moderator() {
   }
 
   if (!code) {
-    return <PickGame passphrase={unlockedPass} codeInput={codeInput} setCodeInput={setCodeInput} onPick={setCode} />;
+    // Only the passphrase can browse games; a game PIN always has its game.
+    return auth.passphrase ? <PickGame passphrase={auth.passphrase} codeInput={codeInput} setCodeInput={setCodeInput} onPick={setCode} /> : null;
   }
 
   return (
     <Breakdown
       key={code}
       code={code}
-      passphrase={unlockedPass}
-      onChangeGame={() => { setCode(null); setCodeInput(""); }}
-      onLock={() => { setUnlockedPass(null); setPass(""); setCode(null); setCodeInput(""); }}
+      auth={auth}
+      onAuthChange={setAuth}
+      onChangeGame={auth.passphrase ? () => { setCode(null); setCodeInput(""); } : undefined}
+      onLock={() => { setAuth(null); setPass(""); setCode(null); setCodeInput(""); }}
     />
   );
 }
@@ -200,7 +212,68 @@ function NowRow({ icon, label, text, tone, testID }: { icon: ComponentProps<type
   );
 }
 
-function Breakdown({ code, passphrase, onChangeGame, onLock }: { code: string; passphrase: string; onChangeGame: () => void; onLock: () => void }) {
+/** Set or change this game's ClaudAI PIN — the per-game ClaudAI login. */
+function ClaudAIPin({ code, auth, hasPin, onAuthChange }: { code: string; auth: ModAuth; hasPin: boolean; onAuthChange: (a: ModAuth) => void }) {
+  const styles = useStyles();
+  const { colors } = useTheme();
+  const qc = useQueryClient();
+  const [open, setOpen] = useState(false);
+  const [pin, setPin] = useState("");
+  const save = useMutation({
+    mutationFn: () => api.moderatorSetPin(code, auth, pin),
+    onSuccess: (v) => {
+      // Signed in with the old PIN? Carry on with the new one.
+      if (auth.pin) onAuthChange({ pin });
+      qc.setQueryData(["moderator", code], v);
+      setOpen(false);
+      setPin("");
+    },
+  });
+  return (
+    <View style={styles.card} testID="moderator-pin-card">
+      <Text style={styles.cardLabel}>ClaudAI PIN for this game</Text>
+      <Text style={styles.planText}>
+        {hasPin
+          ? "Set — enter it on the ClaudAI screen to open this game without the passphrase."
+          : "Not set — give this game a 4-digit ClaudAI PIN so a host can open ClaudAI without the passphrase."}
+      </Text>
+      {open ? (
+        <>
+          <TextInput
+            testID="moderator-new-pin-input"
+            value={pin}
+            onChangeText={(t) => { save.reset(); setPin(t.replace(/\D/g, "").slice(0, 4)); }}
+            placeholder="New 4-digit PIN"
+            placeholderTextColor={colors.muted}
+            keyboardType="number-pad"
+            secureTextEntry
+            maxLength={4}
+            style={styles.input}
+          />
+          <ErrorText testID="moderator-pin-error" message={save.error?.message} />
+          <Button testID="moderator-pin-save" label="Save ClaudAI PIN" icon="key" disabled={pin.length !== 4} loading={save.isPending} onPress={() => save.mutate()} />
+        </>
+      ) : (
+        <Button testID="moderator-pin-open" label={hasPin ? "Change the ClaudAI PIN" : "Set a ClaudAI PIN"} variant="secondary" icon="key-outline" onPress={() => setOpen(true)} />
+      )}
+    </View>
+  );
+}
+
+function Breakdown({
+  code,
+  auth,
+  onAuthChange,
+  onChangeGame,
+  onLock,
+}: {
+  code: string;
+  auth: ModAuth;
+  onAuthChange: (a: ModAuth) => void;
+  /** Only with the passphrase: a game PIN can't switch games. */
+  onChangeGame?: () => void;
+  onLock: () => void;
+}) {
   const styles = useStyles();
   const { colors } = useTheme();
   const insets = useSafeAreaInsets();
@@ -210,7 +283,7 @@ function Breakdown({ code, passphrase, onChangeGame, onLock }: { code: string; p
   const [rolesShown, setRolesShown] = useState(false);
   const { data, isLoading, error, refetch, isRefetching } = useQuery({
     queryKey: ["moderator", code],
-    queryFn: () => api.moderatorView(code, passphrase),
+    queryFn: () => api.moderatorView(code, auth),
     refetchInterval: 4000,
     retry: false,
   });
@@ -218,7 +291,7 @@ function Breakdown({ code, passphrase, onChangeGame, onLock }: { code: string; p
   const qc = useQueryClient();
   const [confirmRevote, setConfirmRevote] = useState(false);
   const revote = useMutation({
-    mutationFn: () => api.moderatorRevote(code, passphrase),
+    mutationFn: () => api.moderatorRevote(code, auth),
     onSuccess: (v) => {
       qc.setQueryData(["moderator", code], v);
       setConfirmRevote(false);
@@ -237,8 +310,15 @@ function Breakdown({ code, passphrase, onChangeGame, onLock }: { code: string; p
       <View style={styles.root} testID="moderator-screen">
         <ScreenHeader title="ClaudAI" testID="moderator" />
         <View style={[styles.scroll, { gap: spacing.md }]}>
-          <ErrorText testID="moderator-view-error" message={`No game found with the code ${code}. Check the letters and try again.`} />
-          <Button testID="moderator-change-game-button" label="Try another code" icon="arrow-back" onPress={onChangeGame} />
+          <ErrorText
+            testID="moderator-view-error"
+            message={error instanceof ApiError && error.status !== 404 ? error.message : `No game found with the code ${code}.`}
+          />
+          {onChangeGame ? (
+            <Button testID="moderator-change-game-button" label="Try another game" icon="arrow-back" onPress={onChangeGame} />
+          ) : (
+            <Button testID="moderator-lock-button" label="Lock and leave" icon="lock-closed" onPress={onLock} />
+          )}
         </View>
       </View>
     );
@@ -483,9 +563,13 @@ function Breakdown({ code, passphrase, onChangeGame, onLock }: { code: string; p
           </>
         ) : null}
 
+        <ClaudAIPin code={code} auth={auth} hasPin={!!m.has_moderator_pin} onAuthChange={onAuthChange} />
+
         <View style={{ gap: spacing.sm, marginTop: spacing.lg }}>
           <Button testID="moderator-refresh-button" label="Refresh now" variant="secondary" icon="refresh" onPress={() => refetch()} />
-          <Button testID="moderator-change-game-button" label="Watch another game" variant="ghost" icon="swap-horizontal" onPress={onChangeGame} />
+          {onChangeGame ? (
+            <Button testID="moderator-change-game-button" label="Watch another game" variant="ghost" icon="swap-horizontal" onPress={onChangeGame} />
+          ) : null}
           <Button testID="moderator-lock-button" label="Lock and leave" variant="ghost" icon="lock-closed" onPress={() => { onLock(); router.back(); }} />
         </View>
       </ScrollView>
