@@ -249,10 +249,11 @@ function Dashboard({ game, refreshing, onRefresh }: { game: ActiveGame; refreshi
   }
   const startLabel = game.tables_per_day === 2 ? "Begin Day 1 · Lunch" : "Begin Day 1";
   const plotLabel = game.endgame ? "Gather for the final vote" : game.session === "evening" ? "The Traitors move" : "Night falls — the Traitors move";
-  // Murders can't come in quick succession: the next night opens at this local time. (The server
-  // only sends it while it's still in the future; the 4-second refresh clears it when it passes.)
-  const plotAt = game.next_plot_at
-    ? new Date(game.next_plot_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false })
+  // The Traitors get time to carry out the murder: after everyone has taken their plot turn the
+  // Round Table opens at this local time. (The server only sends it while it's still in the
+  // future; the 4-second refresh clears it when it passes.)
+  const tableAt = game.round_table_at
+    ? new Date(game.round_table_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false })
     : null;
   const takingTurns = phase === "setup" || phase === "night" || phase === "gather" || phase === "roundtable";
   const alive = game.players.filter((p) => p.alive);
@@ -366,13 +367,6 @@ function Dashboard({ game, refreshing, onRefresh }: { game: ActiveGame; refreshi
             <ErrorText testID="advance-error" message={advance.error?.message} />
             {phase === "setup" ? (
               <Button testID="advance-start-day-button" label={startLabel} icon="sunny" disabled={!allDone} loading={advance.isPending} onPress={() => setConfirmGo({ label: startLabel, run: () => advance.mutate() })} />
-            ) : phase === "day" && plotAt ? (
-              <>
-                <Button testID="advance-round-table-button" label={`${game.session === "evening" ? "The Traitors move" : "Night falls"} at ${plotAt}`} icon="time-outline" disabled onPress={() => {}} />
-                <Text style={styles.waitNote} testID="murder-gap-note">
-                  Murders are at least {game.murder_gap_hours ?? 3} hours apart.
-                </Text>
-              </>
             ) : phase === "day" ? (
               <Button testID="advance-round-table-button" label={plotLabel} icon={game.endgame ? "flame" : "moon"} loading={advance.isPending} onPress={() => setConfirmGo({ label: plotLabel, run: () => advance.mutate() })} />
             ) : phase === "roundtable" ? (
@@ -383,7 +377,16 @@ function Dashboard({ game, refreshing, onRefresh }: { game: ActiveGame; refreshi
                 ) : null}
               </>
             ) : phase === "night" ? (
-              <Button testID="advance-murder-button" label={allDone ? "Everyone to the Round Table" : "Awaiting treachery…"} icon="flame" disabled={!allDone} loading={advance.isPending} onPress={() => setConfirmGo({ label: "Everyone to the Round Table", run: () => advance.mutate() })} />
+              allDone && tableAt ? (
+                <>
+                  <Button testID="advance-murder-button" label={`Round Table opens at ${tableAt}`} icon="time-outline" disabled onPress={() => {}} />
+                  <Text style={styles.waitNote} testID="murder-window-note">
+                    The Traitors get {game.murder_window_minutes ?? 30} minutes to strike.
+                  </Text>
+                </>
+              ) : (
+                <Button testID="advance-murder-button" label={allDone ? "Everyone to the Round Table" : "Awaiting treachery…"} icon="flame" disabled={!allDone} loading={advance.isPending} onPress={() => setConfirmGo({ label: "Everyone to the Round Table", run: () => advance.mutate() })} />
+              )
             ) : phase === "gather" ? (
               <>
                 <Button testID="advance-gather-button" label={allDone ? "Reveal the murder" : "Everyone must check in first…"} icon="mail-open" disabled={!allDone} loading={advance.isPending && allDone} onPress={() => setConfirmGo({ label: "Reveal the murder", run: () => advance.mutate() })} />

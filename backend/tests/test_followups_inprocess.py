@@ -230,14 +230,11 @@ def test_claudai_changes_the_murder_gap():
         r = t.sched(passphrase=PASS, murder_gap_hours=3)
         assert r.status_code == 200, r.text
         mv = r.json()
-        assert mv["murder_gap_hours"] == 3 and mv["next_plot_at"]
-        wait = datetime.fromisoformat(mv["next_plot_at"]) - datetime.now(timezone.utc)
-        assert timedelta(hours=1, minutes=58) < wait <= timedelta(hours=2)
+        # the gap between murders is retired: still stored, but it never blocks the next plot
+        assert mv["murder_gap_hours"] == 3 and mv["next_plot_at"] is None
         assert (mv["tables_per_day"], mv["label"]) == (1, "Day 1")  # the schedule itself is untouched
         pub = c.get(f"/api/games/{t.code}").json()
-        assert pub["murder_gap_hours"] == 3 and pub["next_plot_at"] == mv["next_plot_at"]
-        assert c.post(f"/api/games/{t.code}/advance").status_code == 400  # too soon now
-        # half an hour: the hour since the murder is enough
+        assert pub["murder_gap_hours"] == 3 and pub["next_plot_at"] is None
         mv = t.sched(passphrase=PASS, murder_gap_hours=0.5).json()
         assert mv["murder_gap_hours"] == 0.5 and mv["next_plot_at"] is None
         # out of range or not a number: refused, nothing changed
@@ -270,7 +267,7 @@ def test_next_plot_at_is_none_in_the_endgame_and_the_ended_game_refuses():
         t.to_day()
         patch(t.code, lambda d: d.update(last_murder_at=datetime.now(timezone.utc).isoformat()))
         mv = t.sched(passphrase=PASS, murder_gap_hours=5).json()
-        assert mv["next_plot_at"]
+        assert mv["next_plot_at"] is None  # retired: never blocks
         keep = set(t.T) | set(t.F[:2])  # four left: the endgame (no murders)
         patch(t.code, lambda d: [p.update(lives=0) for p in d["players"] if p["name"] not in keep])
         mv = t.mod().json()

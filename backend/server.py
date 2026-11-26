@@ -45,6 +45,10 @@ ENDGAME_AT = 4  # at this many (or fewer) remain, each round is a "banish again 
 CODE_CHARS = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"  # no 0/O, 1/I/L mix-ups
 CODE_LEN = 5
 MAX_MURDER_GAP_HOURS = 24.0  # ClaudAI may set the minimum time between murders from 0 to this
+# After everyone has taken their plot turn, the Round Table stays shut this long, so the Traitors
+# always have time to carry out the murder in plain sight. ClaudAI can change it (0 to the max).
+DEFAULT_MURDER_WINDOW_MIN = 30.0
+MAX_MURDER_WINDOW_MIN = 120.0
 ACTION_CHOICES = 5  # secret murder methods a Traitor chooses from each night (always this many, all different)
 
 # ClaudAI (the moderator god-view) has no master key: each game nominates its own host,
@@ -201,7 +205,11 @@ class Game(BaseModel):
     recruit_credits: int = 0
     # When the last murder was revealed (ISO time), so murders can't come in quick succession.
     last_murder_at: Optional[str] = None
-    murder_gap_hours: float = 3.0
+    murder_gap_hours: float = 3.0  # retired: no longer enforced (see murder_window_minutes)
+    # When the last plot turn was taken this round (ISO), and how long the Round Table then
+    # stays shut so the Traitors have time to carry out the murder.
+    plot_done_at: Optional[str] = None
+    murder_window_minutes: float = DEFAULT_MURDER_WINDOW_MIN
     # Optional per-game ClaudAI login: the hashed ClaudAI passphrase that opens this game's
     # god-view (games from before passphrases may hold the plain hash of a 4-digit PIN).
     moderator_pin_hash: Optional[str] = None
@@ -297,6 +305,8 @@ class CreateGameIn(BaseModel):
     tables_per_day: int = 1  # Round Tables a day: 1, or 2 (lunch and 8pm)
     # Minimum hours between murders (default 3). Tests set 0.
     murder_gap_hours: Optional[float] = None
+    # Minutes the Round Table stays shut after the plot. Left out = 0 (API/tests); the app sends 30.
+    murder_window_minutes: Optional[float] = None
 
 
 class AuthIn(BaseModel):
@@ -328,6 +338,7 @@ class ScheduleIn(ModeratorIn):
     tables_per_day: Optional[int] = None  # 1 or 2; leave out to keep the schedule as it is
     session: Optional[str] = None  # which Round Table the CURRENT round is, when switching to 2
     murder_gap_hours: Optional[float] = None  # minimum hours between murders (0-24); leave out to keep it
+    murder_window_minutes: Optional[float] = None  # minutes to carry out the murder after the plot (0-120)
 
 
 class TurnIn(AuthIn):
@@ -454,6 +465,9 @@ def public_state(g: Game) -> dict:
         # Murders can't come in quick succession: the next night can't start before this time.
         "next_plot_at": next_plot_iso(g),
         "murder_gap_hours": g.murder_gap_hours,
+        # The Traitors get time to carry out the murder: the Round Table opens at this time.
+        "round_table_at": (lambda t: t.isoformat() if t else None)(round_table_at(g)),
+        "murder_window_minutes": g.murder_window_minutes,
         "turns_needed": len(g.players) if g.phase == "setup" else len(g.alive()),
         "turns_done": len(g.turns_done),
         # never reveal which secret action was used (strip from older records too);
@@ -480,11 +494,23 @@ def _last_murder_time(g: Game) -> Optional[datetime]:
 def next_plot_at(g: Game) -> Optional[datetime]:
     """The earliest the Traitors may plot again (the next night), or None if they may now.
     Murders must be at least murder_gap_hours apart."""
-    last = _last_murder_time(g)
-    if not last or g.murder_gap_hours <= 0:
+    # Retired: the owner wanted time between planning and carrying out a murder, not hours
+    # between murders. Kept so older clients still get a field (always None now).
+    return None
+
+
+def round_table_at(g: Game) -> Optional[datetime]:
+    """When the Round Table may open, if it must still wait: murder_window_minutes after the last
+    plot turn. Measured from when EVERYONE had taken their turn (not from when a murder was
+    sealed), so the wait looks the same whether the Traitors struck or lay low."""
+    if g.phase != "night" or not g.plot_done_at or g.murder_window_minutes <= 0:
         return None
-    nxt = last + timedelta(hours=g.murder_gap_hours)
-    return nxt if nxt > datetime.now(timezone.utc) else None
+    try:
+        done = datetime.fromisoformat(g.plot_done_at)
+    except ValueError:
+        return None
+    t = done + timedelta(minutes=g.murder_window_minutes)
+    return t if t > datetime.now(timezone.utc) else None
 
 
 def next_plot_iso(g: Game) -> Optional[str]:
@@ -702,7 +728,8 @@ def _now(g: Game) -> dict:
                else tap("Night falls — the Traitors move"))
     elif g.phase == "night":
         doing, what = "Night — everyone takes a turn while the Traitors secretly plot", "to take their night turn"
-        nxt = tap("Everyone to the Round Table") if ready else "Everyone still listed takes their night turn"
+        nxt = ("Wait — the Round Table opens a while after the plot (the dashboard shows when)" if ready and round_table_at(g)
+               else tap("Everyone to the Round Table") if ready else "Everyone still listed takes their night turn")
     elif g.phase == "gather":
         doing, what = "Heading to the Round Table — everyone checks in", "to check in"
         nxt = tap("Reveal the murder") if ready else "Everyone still listed checks in"
@@ -790,6 +817,8 @@ def moderator_state(g: Game) -> dict:
         # Minimum hours between murders, and when the Traitors may next plot (None if they may now).
         "murder_gap_hours": g.murder_gap_hours,
         "next_plot_at": next_plot_iso(g),
+        "round_table_at": (lambda t: t.isoformat() if t else None)(round_table_at(g)),
+        "murder_window_minutes": g.murder_window_minutes,
         "total_days": TOTAL_DAYS,
         "phase": g.phase,
         "stage": _stage(g),
@@ -1084,9 +1113,12 @@ async def moderator_schedule(code: str, data: ScheduleIn):
     if g.phase == "ended":
         raise HTTPException(400, "The game is over")
     gap = data.murder_gap_hours
+    window = data.murder_window_minutes
     # Everything is checked before anything changes.
-    if data.tables_per_day is None and gap is None:
+    if data.tables_per_day is None and gap is None and window is None:
         raise HTTPException(400, "Choose one or two Round Tables a day")
+    if window is not None and not (math.isfinite(window) and 0 <= window <= MAX_MURDER_WINDOW_MIN):
+        raise HTTPException(400, f"Choose between 0 and {MAX_MURDER_WINDOW_MIN:g} minutes to carry out the murder")
     if gap is not None and not (math.isfinite(gap) and 0 <= gap <= MAX_MURDER_GAP_HOURS):
         raise HTTPException(400, f"Choose between 0 and {MAX_MURDER_GAP_HOURS:g} hours between murders")
     if data.tables_per_day is not None:
@@ -1102,6 +1134,9 @@ async def moderator_schedule(code: str, data: ScheduleIn):
         g.tables_per_day, g.session = data.tables_per_day, session
         plan = "two Round Tables a day (lunch and 8pm)" if g.tables_per_day == 2 else "one Round Table a day"
         log(g, "schedule", f"ClaudAI switched the game to {plan} — {before} is now {round_label(g)}")
+    if window is not None:
+        old_w, g.murder_window_minutes = g.murder_window_minutes, float(window)
+        log(g, "schedule", f"ClaudAI changed the time to carry out the murder from {old_w:g} to {g.murder_window_minutes:g} minutes")
     if gap is not None:
         old, g.murder_gap_hours = g.murder_gap_hours, float(gap)
         log(g, "schedule", f"ClaudAI changed the time between murders from {old:g} to {g.murder_gap_hours:g} hours")
@@ -1439,6 +1474,7 @@ async def create_game(data: CreateGameIn):
         g.moderator_pin_hash = await asyncio.to_thread(hash_passphrase, secret)
     if data.murder_gap_hours is not None:
         g.murder_gap_hours = max(0.0, min(MAX_MURDER_GAP_HOURS, data.murder_gap_hours))
+    g.murder_window_minutes = max(0.0, min(MAX_MURDER_WINDOW_MIN, data.murder_window_minutes or 0.0))
     traitors = ", ".join(pl.name for pl in players if pl.role == "traitor")
     tables = "two Round Tables a day (lunch and 8pm)" if g.tables_per_day == 2 else "one Round Table a day"
     log(g, "setup", f"Game created: {len(players)} players, host {players[0].name}, {tables}. Traitors: {traitors}",
@@ -1571,6 +1607,9 @@ async def take_turn(code: str, data: TurnIn):
         # the victim and is offered five secret actions (step 1, not yet committed),
         # then picks one to confirm the murder (step 2). Everyone else — and a
         # Traitor lying low — just passes, so watching who taps never reveals them.
+        if g.plot_done_at and is_traitor and (data.recruit_id or data.target_id or data.action):
+            # Everyone has gone: the plan is locked, so a late change can't cut the time to strike.
+            raise HTTPException(400, "The plan is locked — everyone has taken their turn")
         if is_traitor and p.lives > 0 and data.recruit_id:
             # Recruit a Faithful to replace a lost Traitor (instead of murdering tonight)
             if not recruitment_available(g):
@@ -1628,6 +1667,10 @@ async def take_turn(code: str, data: TurnIn):
 
     if p.id not in g.turns_done:
         g.turns_done.append(p.id)
+    if g.phase == "night" and not g.plot_done_at and {pl.id for pl in g.alive()}.issubset(set(g.turns_done)):
+        # Everyone has taken their plot turn: the Traitors now get time to carry out the murder.
+        g.plot_done_at = datetime.now(timezone.utc).isoformat()
+        log(g, "stage", f"Everyone has taken their plot turn — the Round Table opens in {g.murder_window_minutes:g} minutes")
     await save(g)
     return await private_view(code, AuthIn(player_id=data.player_id, pin=data.pin))
 
@@ -1663,6 +1706,7 @@ async def advance(code: str, expected: Optional[str] = None, expected_day: Optio
             g.phase = "night"
             g.turns_done, g.target_id, g.action, g.murder_confirmed, g.action_choices, g.recruit_id = [], None, None, False, [], None
             g.murder_done = False
+            g.plot_done_at = None
             log(g, "stage", f"The Traitors plot ({round_label(g)})")
     elif g.phase == "night":
         # The Traitors have planned their victim and action. The murder itself is carried
@@ -1670,6 +1714,11 @@ async def advance(code: str, expected: Optional[str] = None, expected_day: Optio
         alive_ids = {p.id for p in g.alive()}
         if not alive_ids.issubset(set(g.turns_done)):
             raise HTTPException(400, "Everyone must take their turn before the Round Table")
+        wait = round_table_at(g)
+        if wait:
+            mins = max(1, math.ceil((wait - datetime.now(timezone.utc)).total_seconds() / 60))
+            raise HTTPException(400, f"The Round Table opens in {mins} minute{'s' if mins != 1 else ''} — "
+                                     f"the Traitors get {g.murder_window_minutes:g} minutes to carry out the murder.")
         if g.recruit_id:
             plan = f"{PLAN_PREFIX}recruit {name_of(g, g.recruit_id)}"
         elif g.murder_confirmed:

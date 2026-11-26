@@ -77,8 +77,8 @@ const SECTIONS: Section[] = [
     tips: [
       ["Before Day 1", "everyone taps their name to see their role. Then Begin Day 1."],
       ["Two Round Tables a day", "at lunch and at about 8pm (or one each evening). Each one goes like this:"],
-      ["The plot", "everyone taps their name once — the Traitors secretly pick their victim and method. Then Everyone to the Round Table."],
-      ["The murder", "the Traitors carry it out in plain sight before the Round Table. Watch closely."],
+      ["The plot", "everyone taps their name once — the Traitors secretly pick their victim and method."],
+      ["The murder", "the Traitors then get 30 minutes to carry it out in plain sight — the Round Table opens after that. Watch closely."],
       ["Check in", "everyone taps their name to check in; the Traitors confirm the kill in secret. Then Reveal the murder — before anyone votes."],
       ["The vote", "now everyone votes in private to banish someone — first tapping to check who they are now. Then Reveal the banishment. On a tie, everyone votes again — only the top-voted players can be chosen."],
       ["Everyone must take part", "each reveal stays locked until every player still in has checked in or voted — a missing turn could give the Traitors away."],

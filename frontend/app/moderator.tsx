@@ -155,13 +155,8 @@ function ClaudAIPassphrase({ code, auth, onAuthChange }: { code: string; auth: M
   );
 }
 
-/** The choices for the minimum time between murders, in hours. */
-const GAP_CHOICES = [0, 1, 2, 3, 4, 6];
-
-/** "1 hour", "3 hours", "1.5 hours". */
-function hoursText(h: number): string {
-  return `${Number(h.toFixed(2))} hour${h === 1 ? "" : "s"}`;
-}
+/** The choices for how long the Traitors get to carry out the murder, in minutes. */
+const WINDOW_CHOICES = [0, 15, 30, 45, 60, 90];
 
 /** An ISO time as local "HH:MM". */
 function clockOf(t: string): string {
@@ -170,7 +165,7 @@ function clockOf(t: string): string {
 }
 
 /**
- * One Round Table a day, or two (lunch and about 8pm), and the minimum time between murders.
+ * One Round Table a day, or two (lunch and about 8pm), and how long the Traitors get to strike.
  * ClaudAI can change both during the game.
  */
 function Schedule({ code, auth, m }: { code: string; auth: ModAuth; m: ModeratorView }) {
@@ -187,11 +182,11 @@ function Schedule({ code, auth, m }: { code: string; auth: ModAuth; m: Moderator
       setStep("idle");
     },
   });
-  // Minimum time between murders (games from before this setting have the server's default).
-  const gap = m.murder_gap_hours ?? 3;
-  const plotAt = m.next_plot_at && m.phase !== "ended" ? clockOf(m.next_plot_at) : "";
+  // How long the Traitors get to carry out the murder after the plot (older games: the default).
+  const gap = m.murder_window_minutes ?? 30;
+  const plotAt = m.round_table_at && m.phase !== "ended" ? clockOf(m.round_table_at) : "";
   const saveGap = useMutation({
-    mutationFn: (hours: number) => api.moderatorMurderGap(code, auth, hours),
+    mutationFn: (minutes: number) => api.moderatorMurderWindow(code, auth, minutes),
     onSuccess: (v) => qc.setQueryData(["moderator", code], v),
   });
   return (
@@ -235,24 +230,24 @@ function Schedule({ code, auth, m }: { code: string; auth: ModAuth; m: Moderator
       )}
 
       <View style={styles.gapSection} testID="moderator-gap">
-        <Text style={styles.cardLabel}>Minimum time between murders</Text>
+        <Text style={styles.cardLabel}>Time to carry out the murder</Text>
         <Text style={styles.progressText} testID="moderator-gap-current">
-          {gap > 0 ? `At least ${hoursText(gap)}` : "No minimum"}
+          {gap > 0 ? `${gap} minutes` : "No wait"}
         </Text>
         <Text style={styles.planText}>
           {gap > 0
-            ? `After a murder, the Traitors can't plot again for ${hoursText(gap)}.`
-            : "The Traitors can plot again straight after a murder."}
+            ? `Once everyone has taken their plot turn, the Round Table stays shut for ${gap} minutes.`
+            : "The Round Table can open as soon as everyone has taken their plot turn."}
         </Text>
         {plotAt ? (
           <Text style={[styles.planText, { color: colors.onSurface, fontWeight: "700" }]} testID="moderator-gap-next">
-            Traitors can plot again from {plotAt}.
+            Round Table opens at {plotAt}.
           </Text>
         ) : null}
         <ErrorText testID="moderator-gap-error" message={saveGap.error?.message} />
         {m.phase === "ended" ? null : (
           <View style={styles.gapRow} accessibilityRole="radiogroup">
-            {GAP_CHOICES.map((h) => {
+            {WINDOW_CHOICES.map((h) => {
               const on = gap === h;
               const busy = saveGap.isPending && saveGap.variables === h;
               return (
@@ -264,12 +259,12 @@ function Schedule({ code, auth, m }: { code: string; auth: ModAuth; m: Moderator
                   style={[styles.gapChip, on && styles.gapChipOn]}
                   accessibilityRole="radio"
                   accessibilityState={{ selected: on, disabled: saveGap.isPending }}
-                  accessibilityLabel={h === 0 ? "No minimum" : hoursText(h)}
+                  accessibilityLabel={h === 0 ? "No wait" : `${h} minutes`}
                 >
                   {busy ? (
                     <ActivityIndicator size="small" color={colors.brand} />
                   ) : (
-                    <Text style={[styles.gapChipText, on && styles.gapChipTextOn]}>{h === 0 ? "None" : `${h}h`}</Text>
+                    <Text style={[styles.gapChipText, on && styles.gapChipTextOn]}>{h === 0 ? "None" : `${h}m`}</Text>
                   )}
                 </Pressable>
               );
