@@ -309,6 +309,9 @@ function RoleCard({
           <Text testID="role-title" style={styles.roleTitle}>
             {traitor ? "A Traitor" : "Faithful"}
           </Text>
+          {view.recruited_now ? (
+            <Body testID="role-recruited">You&apos;ve just been recruited — you plot with the Traitors now. Keep it secret.</Body>
+          ) : null}
           {traitor && view.fellow_traitors ? (
             <Body testID="fellow-traitors">
               {view.fellow_traitors.length
