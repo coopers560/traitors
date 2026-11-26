@@ -108,7 +108,10 @@ export type PrivateView = {
   /** This player was recruited into the Traitors today (only ever sent to them). */
   recruited_now?: boolean;
   endgame?: boolean;
+  /** Fellow Traitors still in the game (Traitors only). */
   fellow_traitors?: string[];
+  /** Fellow Traitors who are out — banished (Traitors only). */
+  fellow_traitors_out?: string[];
   target?: { id: string; name: string } | null;
   action?: string | null;
   action_choices?: string[];
@@ -273,6 +276,7 @@ export const api = {
       single: true,
       tables_per_day: opts.tablesPerDay ?? 2,
       murder_window_minutes: 30, // the Traitors get 30 minutes to carry out each murder
+      skip_day: true, // straight from the start / the banishment into the next plot
       ...(opts.claudaiPassphrase ? { claudai_passphrase: opts.claudaiPassphrase } : {}),
     }),
   /** The group's game in progress, if any — phones join it without a code. */

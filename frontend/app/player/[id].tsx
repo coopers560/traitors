@@ -207,7 +207,6 @@ function RoleCheck({
   const insets = useSafeAreaInsets();
   const [shown, setShown] = useState(false); // the role has been shown at least once
   const traitor = view.role === "traitor";
-  const fellows = view.fellow_traitors ?? [];
   return (
     <ScrollView contentContainerStyle={[styles.scroll, { flexGrow: 1, justifyContent: "center", paddingBottom: insets.bottom + spacing.lg }]} testID="role-check">
       <Animated.View entering={FadeInDown.duration(500)} style={{ gap: spacing.sm }}>
@@ -245,7 +244,7 @@ function RoleCheck({
           )}
           {traitor ? (
             <Body testID="role-check-fellows">
-              {fellows.length ? `Your fellow Traitor${fellows.length > 1 ? "s" : ""}: ${fellows.join(", ")}` : "You are the only Traitor."}
+              {fellowsText(view)}
             </Body>
           ) : (
             <Body>Nothing has changed for you. Find the Traitors.</Body>
@@ -272,6 +271,15 @@ function UnreadLine({ view, testID }: { view: PrivateView; testID: string }) {
       <Text style={styles.unreadText}>{n ? `${n} unread message${n === 1 ? "" : "s"}` : "No unread messages"}</Text>
     </View>
   );
+}
+
+/** "Your fellow Traitor: Bob8", or "You are the only Traitor left — Bob8 was banished." */
+function fellowsText(view: PrivateView): string {
+  const inGame = view.fellow_traitors ?? [];
+  const out = view.fellow_traitors_out ?? [];
+  const outText = out.length ? ` (${out.join(", ")} ${out.length > 1 ? "were" : "was"} banished.)` : "";
+  if (inGame.length) return `Your fellow Traitor${inGame.length > 1 ? "s" : ""}: ${inGame.join(", ")}.${outText}`;
+  return out.length ? `You are the only Traitor left — ${out.join(", ")} ${out.length > 1 ? "were" : "was"} banished.` : "You are the only Traitor.";
 }
 
 function RoleCard({
@@ -313,11 +321,7 @@ function RoleCard({
             <Body testID="role-recruited">You&apos;ve just been recruited — you plot with the Traitors now. Keep it secret.</Body>
           ) : null}
           {traitor && view.fellow_traitors ? (
-            <Body testID="fellow-traitors">
-              {view.fellow_traitors.length
-                ? `Your fellow Traitor${view.fellow_traitors.length > 1 ? "s" : ""}: ${view.fellow_traitors.join(", ")}`
-                : "You are the only Traitor."}
-            </Body>
+            <Body testID="fellow-traitors">{fellowsText(view)}</Body>
           ) : !traitor ? (
             <Body>Find the Traitors and banish them at the Round Table.</Body>
           ) : null}
@@ -721,7 +725,6 @@ function TraitorsMenu({ view: initial, pin, round, onClose }: { view: PrivateVie
   };
 
   const messages = traitor ? chat?.messages ?? [] : [];
-  const fellows = view.fellow_traitors ?? [];
   const plotting = view.phase === "night" || view.phase === "gather";
   const plan =
     !traitor || !plotting
@@ -735,6 +738,15 @@ function TraitorsMenu({ view: initial, pin, round, onClose }: { view: PrivateVie
             }
           : null;
   const hidden = "Only the Traitors can see this.";
+  // No plan to show: say where the game is instead of a misleading "no murder planned".
+  const planStageText = (v: PrivateView): string => {
+    const next = v.can_recruit ? " You can recruit a Faithful at the next plot." : "";
+    if (plotting) return "No victim chosen yet — or you're lying low." + next;
+    if (v.phase === "reveal") return "The murder has been revealed. The next plot starts after the Round Table." + next;
+    if (v.phase === "roundtable" || v.phase === "banished") return "The next plot starts after the Round Table." + next;
+    if (v.phase === "day") return "The next plot starts when night falls." + next;
+    return "Nothing to plan right now.";
+  };
   const time = (t: string) => new Date(t).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false });
   const seenBy = (names: string[]) => names.map((n) => (n === view.name ? "you" : n)).join(", ");
 
@@ -759,18 +771,18 @@ function TraitorsMenu({ view: initial, pin, round, onClose }: { view: PrivateVie
         <View style={[styles.menuCard, styles.menuFellows]} testID="menu-fellows">
           <Eyebrow>Fellow Traitors</Eyebrow>
           <Text style={styles.menuText} testID="menu-fellows-text">
-            {!traitor ? hidden : fellows.length ? fellows.join(", ") : "You are the only Traitor."}
+            {!traitor ? hidden : fellowsText(view)}
           </Text>
         </View>
         <View style={[styles.menuCard, styles.menuPlan]} testID="menu-plan">
-          <Eyebrow>Tonight&apos;s plan · {round}</Eyebrow>
+          <Eyebrow>The plan · {round}</Eyebrow>
           {plan ? (
             <>
               <Text style={styles.menuWho} testID="menu-plan-victim">{plan.who}</Text>
               <Text style={styles.menuText} testID="menu-plan-action">{plan.what}</Text>
             </>
           ) : (
-            <Text style={styles.menuText}>{traitor ? "No murder is planned right now." : hidden}</Text>
+            <Text style={styles.menuText} testID="menu-plan-stage">{traitor ? planStageText(view) : hidden}</Text>
           )}
         </View>
         <View style={styles.menuChat} testID="secret-chat">
