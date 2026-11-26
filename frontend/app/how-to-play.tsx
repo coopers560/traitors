@@ -37,7 +37,7 @@ const STEPS: { icon: React.ComponentProps<typeof Ionicons>["name"]; title: strin
   {
     icon: "phone-portrait-outline",
     title: "Playing on several phones",
-    body: "Open the app on as many phones as you like, for example one per couple. The phone that starts the game shows a 5-character join code at the top. On the other phones tap \"Join with a code\" and enter it. Every phone then shows the same game and updates by itself. Anyone can take their turn on any phone: tap your own name and enter your PIN, then hide the screen before handing it back. Other families can run their own game with their own code. You need an internet connection.",
+    body: "Open the app on as many phones as you like, for example one per couple. There are no codes: once a game has started, every other phone just opens the app and taps \"Join the game\". Every phone then shows the same game and updates by itself. Anyone can take their turn on any phone: tap your own name and enter your PIN, then hide the screen before handing it back. There is only ever one game at a time. Traitors also get a secret group chat on their private screen. You need an internet connection.",
   },
   {
     icon: "eye-off",

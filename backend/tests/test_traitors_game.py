@@ -773,3 +773,88 @@ class TestRecruitedNow:
         assert private(tr["id"], pin_of(tr["name"])).json()["recruited_now"] is False
         assert S.post(f"{G()}/advance").json()["phase"] == "roundtable"
         assert private(fa[0]["id"], pin_of(fa[0]["name"])).json()["recruited_now"] is True
+
+
+class TestSingleCohort:
+    def test_current_game_and_no_second_live_game(self):
+        g, roles = setup_game(6)
+        cur = S.get(f"{API}/current").json()
+        assert cur["code"] == g["code"] and cur["phase"] == "setup" and cur["players"] == 6
+        # the app asks for a single game: refused while one is in progress
+        r = S.post(f"{API}/games", json={"players": mk_players(5), "single": True})
+        assert r.status_code == 409 and "in progress" in r.json()["detail"]
+
+
+class TestTraitorChat:
+    def test_only_traitors_still_in_can_read_and_send(self):
+        g, roles = setup_game_traitors(8, 2)
+        ps = g["players"]
+        t1, t2 = [p for p in ps if roles[p["id"]] == "traitor"]
+        fa = next(p for p in ps if roles[p["id"]] == "faithful")
+        send = lambda p, text: S.post(f"{G()}/chat/send", json={"player_id": p["id"], "pin": pin_of(p["name"]), "text": text})
+        read = lambda p: S.post(f"{G()}/chat", json={"player_id": p["id"], "pin": pin_of(p["name"])})
+        # not during setup
+        assert send(t1, "too early").status_code == 403
+        finish_setup(ps)
+        assert send(t1, "  Who first?  ").status_code == 200
+        assert send(t2, "Not me").status_code == 200
+        msgs = read(t2).json()
+        assert msgs["allowed"] is True and [m["text"] for m in msgs["messages"]] == ["Who first?", "Not me"]
+        assert msgs["messages"][0]["from_name"] == t1["name"]
+        # a Faithful sees nothing and cannot post; a wrong PIN is refused
+        assert read(fa).json() == {"allowed": False, "messages": []}
+        assert send(fa, "hello?").status_code == 403
+        assert S.post(f"{G()}/chat", json={"player_id": t1["id"], "pin": "9999"}).status_code == 401
+        assert send(t1, "").status_code == 400 and send(t1, "x" * 501).status_code == 400
+        # never in the public state; the moderator sees it
+        assert "traitor_chat" not in S.get(G()).json()
+        mod = S.post(f"{G()}/moderator", json={"passphrase": "!Uganda02!"}).json()
+        assert len(mod["traitor_chat"]) == 2
+
+
+class TestClaudAIPin:
+    def test_per_game_pin_opens_only_that_game(self):
+        if CUR["code"]:
+            del_game()
+        r = S.post(f"{API}/games", json={"players": mk_players(5), "moderator_pin": "0001"})
+        assert r.status_code == 400 and "no player" in r.json()["detail"]  # TEST_P1 uses 0001
+        r = S.post(f"{API}/games", json={"players": mk_players(5), "moderator_pin": "12a4"})
+        assert r.status_code == 400
+        r = S.post(f"{API}/games", json={"players": mk_players(5), "moderator_pin": "7777"})
+        assert r.status_code == 200
+        CUR["code"] = r.json()["code"]
+        assert "moderator_pin_hash" not in r.json()
+        # the PIN opens this game's ClaudAI; the passphrase still works; nothing else does
+        mod = S.post(f"{G()}/moderator", json={"pin": "7777"}).json()
+        assert mod["code"] == CUR["code"] and mod["has_moderator_pin"] is True and len(mod["players"]) == 5
+        assert S.post(f"{G()}/moderator", json={"passphrase": "!Uganda02!"}).status_code == 200
+        assert S.post(f"{G()}/moderator", json={"pin": "7778"}).status_code == 403
+        assert S.post(f"{G()}/moderator", json={}).status_code == 403
+        # a game PIN can't list every game or unlock the master view
+        assert S.post(f"{API}/moderator/games", json={"pin": "7777"}).status_code == 403
+        # PIN login finds the game in progress
+        assert S.post(f"{API}/moderator/pin", json={"pin": "7777"}).json() == {"code": CUR["code"]}
+        # change it (needs the current PIN or the passphrase)
+        assert S.post(f"{G()}/moderator/pin", json={"pin": "0000", "new_pin": "1212"}).status_code == 403
+        assert S.post(f"{G()}/moderator/pin", json={"pin": "7777", "new_pin": "1212"}).status_code == 200
+        assert S.post(f"{G()}/moderator", json={"pin": "1212"}).status_code == 200
+        assert S.post(f"{G()}/moderator", json={"pin": "7777"}).status_code == 403
+
+    def test_too_many_wrong_pins_locks_it(self):
+        if CUR["code"]:
+            del_game()
+        r = S.post(f"{API}/games", json={"players": mk_players(5), "moderator_pin": "4321"})
+        CUR["code"] = r.json()["code"]
+        for _ in range(8):
+            assert S.post(f"{G()}/moderator", json={"pin": "0000"}).status_code == 403
+        r = S.post(f"{G()}/moderator", json={"pin": "4321"})
+        assert r.status_code == 429  # even the right PIN waits
+
+    def test_game_without_pin_needs_the_passphrase(self):
+        g, roles = setup_game(5)
+        assert S.post(f"{G()}/moderator", json={"pin": "1234"}).status_code == 403
+        mod = S.post(f"{G()}/moderator", json={"passphrase": "!Uganda02!"}).json()
+        assert mod["has_moderator_pin"] is False
+        # the passphrase can give an existing game a ClaudAI PIN
+        assert S.post(f"{G()}/moderator/pin", json={"passphrase": "!Uganda02!", "new_pin": "5656"}).status_code == 200
+        assert S.post(f"{G()}/moderator", json={"pin": "5656"}).status_code == 200

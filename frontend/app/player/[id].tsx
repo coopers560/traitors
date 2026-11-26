@@ -1,8 +1,9 @@
 import Ionicons from "@react-native-vector-icons/ionicons";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useLocalSearchParams, useRouter } from "expo-router";
-import { useEffect, useRef, useState } from "react";
-import { Pressable, ScrollView, Text, View } from "react-native";
+import { useEffect, useRef, useState, type ComponentRef } from "react";
+import { Pressable, ScrollView, Text, TextInput, View } from "react-native";
+import { KeyboardAvoidingView } from "react-native-keyboard-controller";
 import Animated, { FadeIn, FadeInDown } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
@@ -33,6 +34,7 @@ export default function PlayerTurn() {
   // looking at their phone never stands out.
   const [roleChecked, setRoleChecked] = useState(false);
   const [roleSeen, setRoleSeen] = useState(false);
+  const [chatOpen, setChatOpen] = useState(false);
   const autoTried = useRef(false);
 
   const players = game?.exists ? game.players : [];
@@ -102,6 +104,8 @@ export default function PlayerTurn() {
         </View>
       ) : sealed ? (
         <Sealed onDone={leave} />
+      ) : chatOpen ? (
+        <SecretChat view={view} pin={pin} onClose={() => setChatOpen(false)} />
       ) : mode === "turn" && view.phase === "roundtable" && view.alive && !roleChecked ? (
         <RoleCheck view={view} onDone={() => setRoleChecked(true)} />
       ) : (
@@ -133,6 +137,16 @@ export default function PlayerTurn() {
               </View>
             </Pressable>
           )}
+          {view.phase !== "setup" ? (
+            <Pressable testID="secret-chat-button" onPress={() => setChatOpen(true)} style={styles.remember}>
+              <Ionicons name="chatbubbles-outline" size={20} color={colors.brand} />
+              <View style={{ flex: 1 }}>
+                <Text style={styles.rememberText}>Secret chat</Text>
+                <Text style={styles.rememberSub}>The Traitors&apos; private group chat.</Text>
+              </View>
+              <Ionicons name="chevron-forward" size={18} color={colors.muted} />
+            </Pressable>
+          ) : null}
           {mode === "turn" && view.phase === "setup" ? (
             <SetupTurn view={view} pin={pin} seen={roleSeen} onSealed={() => setSealed(true)} />
           ) : mode === "turn" && view.phase === "gather" && view.alive ? (
@@ -315,12 +329,22 @@ function VictimPicker({
   );
 }
 
-function ActionChoices({ options, selected, onSelect }: { options: string[]; selected: string | null; onSelect: (a: string) => void }) {
+function ActionChoices({
+  options,
+  selected,
+  onSelect,
+  label = "Choose your secret action",
+}: {
+  options: string[];
+  selected: string | null;
+  onSelect: (a: string) => void;
+  label?: string;
+}) {
   const styles = useStyles();
   const { colors } = useTheme();
   return (
     <View style={{ gap: spacing.sm }}>
-      <Text style={styles.pickLabel}>Choose your secret action</Text>
+      <Text style={styles.pickLabel}>{label}</Text>
       {options.map((a) => {
         const on = selected === a;
         return (
@@ -371,16 +395,7 @@ function NightTurn({ view, pin, players, onSealed }: { view: PrivateView; pin: s
   // Faithful (and eliminated players) have nothing to do; everyone still takes a
   // night turn so watching who taps never reveals the Traitors.
   if (!traitor) {
-    return (
-      <>
-        <Body testID="night-faithful-note">
-          The castle sleeps. There is nothing for you to do tonight — just pass the phone on, so no one can tell who the
-          Traitors are.
-        </Body>
-        <ErrorText testID="turn-error" message={pass.error?.message} />
-        <Button testID="night-pass-button" label="Pass the phone on" icon="eye-off" loading={pass.isPending} onPress={() => pass.mutate()} />
-      </>
-    );
+    return <FaithfulNight view={view} pin={pin} players={players} onSealed={onSealed} />;
   }
   // This phone just sealed the murder.
   if (result) {
@@ -423,7 +438,7 @@ function NightTurn({ view, pin, players, onSealed }: { view: PrivateView; pin: s
         <Body>Victim: {victimName}. Choose how you&apos;ll do it — pick one of these three secret actions to perform in plain sight:</Body>
         <ActionChoices options={choices} selected={chosen} onSelect={setChosen} />
         <ErrorText testID="turn-error" message={confirm.error?.message || pass.error?.message} />
-        <Button testID="night-confirm-button" label="Seal the murder" icon="skull" disabled={!chosen} loading={confirm.isPending} onPress={() => chosen && confirm.mutate(chosen)} />
+        <Button testID="night-confirm-button" label="Seal the murder" icon="lock-closed" disabled={!chosen} loading={confirm.isPending} onPress={() => chosen && confirm.mutate(chosen)} />
         <Button testID="night-skip-button" label="Lie low — no murder tonight" variant="ghost" loading={pass.isPending} onPress={() => pass.mutate()} />
       </>
     );
@@ -452,7 +467,7 @@ function NightTurn({ view, pin, players, onSealed }: { view: PrivateView; pin: s
           </Body>
           <VictimPicker label={`New Traitor · Day ${view.day}`} prefix="night-recruit" players={candidates} selected={recruitTarget} onSelect={setRecruitTarget} />
           <ErrorText testID="turn-error" message={recruit.error?.message || pass.error?.message} />
-          <Button testID="night-recruit-button" label="Seal the recruitment" icon="people" disabled={!recruitTarget} loading={recruit.isPending} onPress={() => recruitTarget && recruit.mutate(recruitTarget)} />
+          <Button testID="night-recruit-button" label="Seal the recruitment" icon="lock-closed" disabled={!recruitTarget} loading={recruit.isPending} onPress={() => recruitTarget && recruit.mutate(recruitTarget)} />
           <Button testID="night-no-recruit-button" label="Don't recruit — murder instead" variant="secondary" icon="skull-outline" onPress={() => { setMode("murder"); setRecruitTarget(null); }} />
           <Button testID="night-skip-button" label="Lie low — nothing tonight" variant="ghost" loading={pass.isPending} onPress={() => pass.mutate()} />
         </>
@@ -469,6 +484,148 @@ function NightTurn({ view, pin, players, onSealed }: { view: PrivateView; pin: s
         </>
       )}
     </>
+  );
+}
+
+const SURE = ["Just a hunch", "Fairly sure", "Certain — it's them"];
+
+/**
+ * The Faithful's night turn. It has exactly the shape of a Traitor's — pick a name, then one
+ * of three options, then seal — so nobody watching can tell the two apart. Nothing chosen
+ * here is sent or saved; sealing simply takes the night turn.
+ */
+function FaithfulNight({ view, pin, players, onSealed }: { view: PrivateView; pin: string; players: PublicPlayer[]; onSealed: () => void }) {
+  const styles = useStyles();
+  const [suspect, setSuspect] = useState<string | null>(null);
+  const [step, setStep] = useState<1 | 2 | 3>(1);
+  const [sure, setSure] = useState<string | null>(null);
+  const seal = useMutation({ mutationFn: () => api.takeTurn({ player_id: view.player_id, pin }), onSuccess: () => setStep(3) });
+  const skip = useMutation({ mutationFn: () => api.takeTurn({ player_id: view.player_id, pin }), onSuccess: onSealed });
+  const name = players.find((p) => p.id === suspect)?.name;
+  const error = seal.error?.message || skip.error?.message;
+  if (step === 3) {
+    return (
+      <>
+        <View style={styles.brief} testID="suspect-brief">
+          <Eyebrow>Your suspicion · Day {view.day}</Eyebrow>
+          <Text style={styles.briefTarget}>{name}</Text>
+          <Text style={styles.briefLabel}>How sure you are:</Text>
+          <Text style={styles.briefAction}>{sure}</Text>
+          <Body style={{ fontSize: 15 }}>Only you know this — it isn&apos;t shared or saved. Watch them closely tomorrow.</Body>
+        </View>
+        <Button testID="night-done-button" label="Hide & pass the phone" icon="eye-off" onPress={onSealed} />
+      </>
+    );
+  }
+  if (step === 2) {
+    return (
+      <>
+        <Body>Suspect: {name}. How sure are you? Pick one — it&apos;s only for you:</Body>
+        <ActionChoices options={SURE} selected={sure} onSelect={setSure} label="How sure are you?" />
+        <ErrorText testID="turn-error" message={error} />
+        <Button testID="night-confirm-button" label="Seal my suspicion" icon="lock-closed" disabled={!sure} loading={seal.isPending} onPress={() => seal.mutate()} />
+        <Button testID="night-skip-button" label="Skip — pass the phone on" variant="ghost" loading={skip.isPending} onPress={() => skip.mutate()} />
+      </>
+    );
+  }
+  return (
+    <>
+      <Body testID="night-faithful-note">
+        The castle sleeps while the Traitors plot. Choose who you suspect most — then how sure you are. It&apos;s only for
+        you: nothing here is shared or saved.
+      </Body>
+      <VictimPicker label={`Your suspect · Day ${view.day}`} prefix="night-suspect" players={players} selected={suspect} onSelect={setSuspect} excludeId={view.player_id} />
+      <ErrorText testID="turn-error" message={error} />
+      <Button testID="night-pick-button" label="Choose how sure" icon="arrow-forward" disabled={!suspect} onPress={() => setStep(2)} />
+      <Button testID="night-skip-button" label="Skip — pass the phone on" variant="ghost" loading={skip.isPending} onPress={() => skip.mutate()} />
+    </>
+  );
+}
+
+/**
+ * The Traitors' secret group chat. Everyone has the same button and sees the same screen;
+ * only a Traitor still in the game gets messages back, and only they can send.
+ */
+function SecretChat({ view, pin, onClose }: { view: PrivateView; pin: string; onClose: () => void }) {
+  const styles = useStyles();
+  const { colors } = useTheme();
+  const insets = useSafeAreaInsets();
+  const qc = useQueryClient();
+  const scroll = useRef<ComponentRef<typeof ScrollView>>(null);
+  const [text, setText] = useState("");
+  const { data } = useQuery({
+    queryKey: ["chat", view.player_id],
+    queryFn: () => api.readChat(view.player_id, pin),
+    refetchInterval: 3000,
+  });
+  const send = useMutation({
+    mutationFn: () => api.sendChat(view.player_id, pin, text.trim()),
+    onSuccess: (d) => {
+      qc.setQueryData(["chat", view.player_id], d);
+      setText("");
+    },
+  });
+  const messages = data?.messages ?? [];
+  const time = (t: string) => new Date(t).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false });
+  return (
+    <KeyboardAvoidingView behavior="padding" style={{ flex: 1 }} testID="secret-chat">
+      <View style={styles.chatHead}>
+        <Pressable testID="chat-close-button" onPress={onClose} style={styles.iconBtn} hitSlop={8} accessibilityLabel="Back">
+          <Ionicons name="chevron-back" size={24} color={colors.onSurface} />
+        </Pressable>
+        <View style={{ flex: 1 }}>
+          <Text style={styles.chatTitle}>Secret chat</Text>
+          <Text style={styles.chatSub}>Only the Traitors can see or send messages here.</Text>
+        </View>
+      </View>
+      <ScrollView
+        ref={scroll}
+        style={{ flex: 1 }}
+        contentContainerStyle={styles.chatList}
+        onContentSizeChange={() => scroll.current?.scrollToEnd({ animated: false })}
+        keyboardShouldPersistTaps="handled"
+      >
+        {messages.length === 0 ? (
+          <View style={styles.chatEmpty} testID="chat-empty">
+            <Ionicons name="chatbubbles-outline" size={34} color={colors.muted} />
+            <Text style={styles.chatEmptyText}>No messages.</Text>
+          </View>
+        ) : (
+          messages.map((m) => {
+            const mine = m.from_id === view.player_id;
+            return (
+              <View key={m.id} style={[styles.bubble, mine ? styles.bubbleMine : styles.bubbleTheirs]} testID="chat-message">
+                {!mine ? <Text style={styles.bubbleName}>{m.from_name}</Text> : null}
+                <Text style={styles.bubbleText}>{m.text}</Text>
+                <Text style={styles.bubbleTime}>{time(m.t)}</Text>
+              </View>
+            );
+          })
+        )}
+      </ScrollView>
+      <ErrorText testID="chat-error" message={send.error?.message} />
+      <View style={[styles.chatBar, { paddingBottom: insets.bottom + spacing.sm }]}>
+        <TextInput
+          testID="chat-input"
+          value={text}
+          onChangeText={setText}
+          placeholder="Message…"
+          placeholderTextColor={colors.muted}
+          style={styles.chatInput}
+          maxLength={500}
+          multiline
+        />
+        <Pressable
+          testID="chat-send-button"
+          onPress={() => text.trim() && send.mutate()}
+          disabled={!text.trim() || send.isPending}
+          style={[styles.chatSend, (!text.trim() || send.isPending) && { opacity: 0.45 }]}
+          accessibilityLabel="Send"
+        >
+          <Ionicons name="send" size={20} color={colors.onBrandPrimary} />
+        </Pressable>
+      </View>
+    </KeyboardAvoidingView>
   );
 }
 
@@ -656,6 +813,34 @@ const useStyles = makeStyles((c) => ({
   },
   pickOn: { backgroundColor: c.brandPrimary, borderColor: c.brandPrimary },
   pickText: { color: c.onSurface, fontSize: 19, fontWeight: "600" },
+  chatHead: { flexDirection: "row", alignItems: "center", gap: spacing.md, paddingHorizontal: spacing.lg, paddingBottom: spacing.sm },
+  chatTitle: { fontFamily: fonts.display, fontSize: 28, lineHeight: 32, color: c.onSurface },
+  chatSub: { color: c.muted, fontSize: 14, lineHeight: 19 },
+  chatList: { padding: spacing.lg, gap: spacing.sm, flexGrow: 1, justifyContent: "flex-end" },
+  chatEmpty: { flex: 1, alignItems: "center", justifyContent: "center", gap: spacing.sm, paddingVertical: spacing.xl },
+  chatEmptyText: { color: c.muted, fontSize: 16 },
+  bubble: { maxWidth: "82%", borderRadius: radius.lg, paddingHorizontal: spacing.md, paddingVertical: spacing.sm, gap: 2 },
+  bubbleMine: { alignSelf: "flex-end", backgroundColor: c.brandTertiary, borderBottomRightRadius: 4 },
+  bubbleTheirs: { alignSelf: "flex-start", backgroundColor: c.surfaceSecondary, borderWidth: 1, borderColor: c.border, borderBottomLeftRadius: 4 },
+  bubbleName: { color: c.brand, fontSize: 13, fontWeight: "700" },
+  bubbleText: { color: c.onSurface, fontSize: 17, lineHeight: 23 },
+  bubbleTime: { color: c.muted, fontSize: 11, alignSelf: "flex-end" },
+  chatBar: { flexDirection: "row", alignItems: "flex-end", gap: spacing.sm, paddingHorizontal: spacing.md, paddingTop: spacing.sm, borderTopWidth: 1, borderTopColor: c.divider },
+  chatInput: {
+    flex: 1,
+    minHeight: 48,
+    maxHeight: 120,
+    borderRadius: radius.lg,
+    borderWidth: 1,
+    borderColor: c.border,
+    backgroundColor: c.surfaceSecondary,
+    color: c.onSurface,
+    fontSize: 17,
+    paddingHorizontal: spacing.md,
+    paddingTop: 12,
+    paddingBottom: 12,
+  },
+  chatSend: { width: 48, height: 48, borderRadius: 24, alignItems: "center", justifyContent: "center", backgroundColor: c.brandPrimary },
   remember: { flexDirection: "row", alignItems: "center", gap: spacing.sm, backgroundColor: c.surfaceSecondary, borderWidth: 1, borderColor: c.brandSecondary, borderRadius: radius.md, padding: spacing.md },
   rememberText: { color: c.onSurface, fontSize: 16, fontWeight: "700" },
   rememberSub: { color: c.muted, fontSize: 13, lineHeight: 18, marginTop: 1 },
