@@ -241,6 +241,26 @@ export type ModeratorView = {
   history: DayResult[];
 };
 
+/** One spot on the sign-up sheet. A spot still being filled in has no name yet. */
+export type LobbySlot = { id: string; name: string | null; ready: boolean; mine: boolean; host: boolean };
+
+/** The sign-up sheet, as this phone sees it. */
+export type Lobby =
+  | { exists: false }
+  | {
+      exists: true;
+      you_host: boolean;
+      host_name: string | null;
+      tables_per_day: number;
+      slots: LobbySlot[];
+      ready_count: number;
+      max_players: number;
+      /** Set once the host has chosen the Traitors: the game to go to. */
+      started_code: string | null;
+      /** Once started: this phone's spots -> the players they became. */
+      my_players: Record<string, string>;
+    };
+
 async function request<T>(path: string, method = "GET", body?: unknown): Promise<T> {
   const res = await fetch(`${BASE}${path}`, {
     method,
@@ -295,6 +315,21 @@ export const api = {
     }),
   /** The group's game in progress, if any — phones join it without a code. */
   currentGame: () => request<CurrentGame>("/current"),
+  /** The sign-up sheet (everyone adds themselves on their own phone). */
+  lobby: (device: string) => request<Lobby>(`/lobby?device=${encodeURIComponent(device)}`),
+  /** Start a sign-up, hosted by this phone (or see the one already open). */
+  lobbyOpen: (device: string, tablesPerDay = 2) => request<Lobby>("/lobby", "POST", { device, tables_per_day: tablesPerDay }),
+  /** A new spot, locked to this phone straight away. */
+  lobbyJoin: (device: string) => request<Lobby>("/lobby/join", "POST", { device }),
+  lobbySave: (device: string, slot_id: string, name: string, pin: string) =>
+    request<Lobby>("/lobby/save", "POST", { device, slot_id, name, pin }),
+  lobbyRemove: (device: string, slot_id: string) => request<Lobby>("/lobby/remove", "POST", { device, slot_id }),
+  lobbySettings: (device: string, tablesPerDay: 1 | 2) =>
+    request<Lobby>("/lobby/settings", "POST", { device, tables_per_day: tablesPerDay }),
+  /** The host chooses the Traitors: the sign-up becomes the game. */
+  lobbyStart: (device: string, claudaiPassphrase?: string) =>
+    request<Lobby>("/lobby/start", "POST", { device, ...(claudaiPassphrase ? { claudai_passphrase: claudaiPassphrase } : {}) }),
+  lobbyCancel: (device: string) => request<Lobby>(`/lobby?device=${encodeURIComponent(device)}`, "DELETE"),
   readChat: (player_id: string, pin: string) => request<ChatState>(`/games/${currentCode}/chat`, "POST", { player_id, pin }),
   sendChat: (player_id: string, pin: string, text: string) =>
     request<ChatState>(`/games/${currentCode}/chat/send`, "POST", { player_id, pin, text }),
