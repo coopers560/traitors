@@ -29,11 +29,11 @@ function exitWithLabel(history: DayResult[], playerId: string): { how: "murdered
   return { how: e.how, label: h ? roundLabel(h) : `Day ${e.day}` };
 }
 
-// The hold on the role card: the role shows after 3 seconds, the Traitors' menu opens after 6.
+// The hold on the role card: the role shows after 2 seconds, the Traitors' menu opens after 8.
 // Exactly the same for every player, whatever their role — the hint is shown to everyone.
-const REVEAL_MS = 1500; // the role shows after 1.5 seconds of holding
-const MENU_MS = 4500; // …and 3 seconds more opens the Traitors' menu
-const MENU_HINT = "Keep holding 3 more seconds for the Traitors' menu";
+const REVEAL_MS = 2000; // the role shows after 2 seconds of holding
+const MENU_MS = 8000; // …and 6 seconds more opens the Traitors' menu
+const MENU_HINT = "Keep holding 6 more seconds for the Traitors' menu";
 /** Extra cover height for the hint, so the card doesn't grow when the role shows. */
 const HINT_SPACE = 76;
 
@@ -291,7 +291,7 @@ function RoleCard({
   exit: { how: "murdered" | "banished"; label: string } | null;
   /** The role has been shown (after the 3-second hold). */
   onReveal?: () => void;
-  /** Held on for 6 seconds: open the Traitors' menu. */
+  /** Held on for 8 seconds: open the Traitors' menu. */
   onLongHold?: () => void;
   children?: React.ReactNode;
 }) {
@@ -570,7 +570,7 @@ function PlotActions({
 }
 
 /**
- * The Traitors' menu, opened by holding the role card for six seconds. Anyone can open it and it
+ * The Traitors' menu, opened by holding the role card for eight seconds. Anyone can open it and it
  * looks the same for everyone: the same title, the same frames, the same message box. Only a
  * Traitor still in the game sees what is in it — fellow Traitors, tonight's plan and the secret
  * chat. Anyone else's frames just say so, and their messages go nowhere, with no error shown.
@@ -764,7 +764,7 @@ function SetupTurn({ view, pin, seen, onSealed }: { view: PrivateView; pin: stri
   });
   return (
     <>
-      {!seen ? <Body testID="setup-hold-note">Press and hold the card above for 1.5 seconds to see your role, then confirm.</Body> : null}
+      {!seen ? <Body testID="setup-hold-note">Press and hold the card above for 2 seconds to see your role, then confirm.</Body> : null}
       <ErrorText testID="turn-error" message={submit.error?.message} />
       <Button testID="setup-turn-confirm-button" label="I understand — hide it" icon="eye-off" disabled={!seen} loading={submit.isPending} onPress={() => submit.mutate()} />
     </>
