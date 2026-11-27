@@ -251,6 +251,8 @@ export type Lobby =
       exists: true;
       you_host: boolean;
       host_name: string | null;
+      /** The host's phone has gone (and they never added themselves): anyone can take over. */
+      host_away: boolean;
       tables_per_day: number;
       slots: LobbySlot[];
       ready_count: number;
@@ -329,6 +331,8 @@ export const api = {
   /** The host chooses the Traitors: the sign-up becomes the game. */
   lobbyStart: (device: string, claudaiPassphrase?: string) =>
     request<Lobby>("/lobby/start", "POST", { device, ...(claudaiPassphrase ? { claudai_passphrase: claudaiPassphrase } : {}) }),
+  /** Become the host on this phone (the host on a new phone gives their PIN). */
+  lobbyTakeOver: (device: string, pin?: string) => request<Lobby>("/lobby/host", "POST", { device, ...(pin ? { pin } : {}) }),
   lobbyCancel: (device: string) => request<Lobby>(`/lobby?device=${encodeURIComponent(device)}`, "DELETE"),
   readChat: (player_id: string, pin: string) => request<ChatState>(`/games/${currentCode}/chat`, "POST", { player_id, pin }),
   sendChat: (player_id: string, pin: string, text: string) =>

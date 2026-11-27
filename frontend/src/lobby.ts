@@ -30,11 +30,17 @@ export function useDeviceId(): string | null {
   return id;
 }
 
-const pinKey = (slotId: string) => `lobby_pin_${slotId}`;
+// The PIN of the one player this phone signed up, as "slotId:pin" — kept only while it's this
+// phone's only box, so a phone passed round never holds on to anyone else's PIN.
+const KEY_PIN = "lobby_my_pin";
 
-/** Keep the PIN typed into a spot on this phone, so it can skip the PIN once the game starts. */
-export async function rememberSpotPin(slotId: string, pin: string): Promise<void> {
-  await storage.setItem(pinKey(slotId), pin);
+/**
+ * Keep the PIN typed into this phone's box, so it can skip the PIN once the game starts — but only
+ * if it's this phone's only box. A phone that signs up a second player forgets any PIN it kept.
+ */
+export async function rememberSpotPin(slotId: string, pin: string, onlyBox: boolean): Promise<void> {
+  if (onlyBox) await storage.setItem(KEY_PIN, `${slotId}:${pin}`);
+  else await storage.removeItem(KEY_PIN);
 }
 
 /**
@@ -49,10 +55,12 @@ export async function claimMyPlayer(
   const code = lobby.started_code;
   if (!code) return null;
   const mine = Object.entries(lobby.my_players ?? {});
+  const kept = String((await storage.getItem(KEY_PIN, "")) ?? "");
+  await storage.removeItem(KEY_PIN); // used once, then gone either way
   if (mine.length === 1) {
     const [slotId, playerId] = mine[0];
-    const pin = (await storage.getItem(pinKey(slotId), "")) as string;
-    if (/^\d{4}$/.test(pin)) await setMe(playerId, pin, code);
+    const [keptSlot, pin] = kept.split(":");
+    if (keptSlot === slotId && /^\d{4}$/.test(pin ?? "")) await setMe(playerId, pin, code);
   }
   return code;
 }

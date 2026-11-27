@@ -156,6 +156,18 @@ function Sheet({ lobby, device, put }: { lobby: OpenLobby; device: string; put: 
   // Spots this phone has opened again to change.
   const [editing, setEditing] = useState<string[]>([]);
   const [asked, setAsked] = useState<string | null>(null); // a remove waiting for its second tap
+  useEffect(() => {
+    if (!asked) return;
+    const t = setTimeout(() => setAsked(null), 4000); // not tapped again in time: never mind
+    return () => clearTimeout(t);
+  }, [asked]);
+  const [takeOver, setTakeOver] = useState(false);
+  const [hostPin, setHostPin] = useState("");
+  const claim = useMutation({
+    mutationFn: (pin?: string) => api.lobbyTakeOver(device, pin),
+    onSuccess: (l) => { setTakeOver(false); setHostPin(""); put(l); },
+    onError: () => setHostPin(""),
+  });
   const join = useMutation({ mutationFn: (pos: number) => api.lobbyJoin(device, pos), onSuccess: put });
   const remove = useMutation({
     mutationFn: (id: string) => api.lobbyRemove(device, id),
@@ -207,6 +219,7 @@ function Sheet({ lobby, device, put }: { lobby: OpenLobby; device: string; put: 
               index={i}
               slot={s}
               device={device}
+              onlyBox={lobby.slots.filter((x) => x.mine && x.id !== s.id).length === 0}
               onSaved={(l) => { setEditing((e) => e.filter((x) => x !== s.id)); put(l); }}
               onCancelEdit={s.ready ? () => setEditing((e) => e.filter((x) => x !== s.id)) : undefined}
               onRemove={() => remove.mutate(s.id)}
@@ -259,9 +272,41 @@ function Sheet({ lobby, device, put }: { lobby: OpenLobby; device: string; put: 
       {lobby.you_host ? (
         <HostControls lobby={lobby} device={device} put={put} />
       ) : (
-        <Text style={styles.note} testID="lobby-waiting-note">
-          Waiting for {lobby.host_name ?? "the host"} to choose the Traitors.
-        </Text>
+        <>
+          <Text style={styles.note} testID="lobby-waiting-note">
+            Waiting for {lobby.host_name ?? "the host"} to choose the Traitors.
+          </Text>
+          <ErrorText testID="lobby-takeover-error" message={claim.error?.message} />
+          {lobby.host_away ? (
+            // The host's phone has gone and they never added themselves: someone has to take over.
+            <Button testID="lobby-takeover-button" label="The host has gone — take over as host" variant="ghost" icon="key-outline" loading={claim.isPending} onPress={() => claim.mutate(undefined)} />
+          ) : lobby.host_name ? (
+            takeOver ? (
+              <View style={styles.form} testID="lobby-takeover-form">
+                <Text style={styles.formTitle}>{lobby.host_name}, on a different phone?</Text>
+                <Text style={styles.formNote}>Enter your PIN to carry on as host on this phone. Your box moves here too.</Text>
+                <TextInput
+                  testID="lobby-takeover-pin"
+                  value={hostPin}
+                  onChangeText={(t) => setHostPin(t.replace(/\D/g, "").slice(0, 4))}
+                  placeholder={`${lobby.host_name}'s PIN`}
+                  placeholderTextColor={colors.muted}
+                  style={[styles.input, { letterSpacing: hostPin ? 6 : 0 }]}
+                  keyboardType="number-pad"
+                  secureTextEntry
+                  maxLength={4}
+                />
+                <Button testID="lobby-takeover-confirm" label="Take over as host" icon="key-outline" disabled={hostPin.length !== 4} loading={claim.isPending} onPress={() => claim.mutate(hostPin)} />
+                <Button testID="lobby-takeover-cancel" label="Never mind" variant="secondary" onPress={() => { setTakeOver(false); setHostPin(""); claim.reset(); }} />
+              </View>
+            ) : (
+              <Pressable testID="lobby-takeover-link" onPress={() => setTakeOver(true)} style={styles.link} hitSlop={6}>
+                <Ionicons name="key-outline" size={16} color={colors.brand} />
+                <Text style={styles.linkText}>Are you {lobby.host_name} on a different phone?</Text>
+              </Pressable>
+            )
+          ) : null}
+        </>
       )}
     </>
   );
@@ -272,6 +317,7 @@ function SpotForm({
   index,
   slot,
   device,
+  onlyBox,
   onSaved,
   onCancelEdit,
   onRemove,
@@ -280,6 +326,8 @@ function SpotForm({
   index: number;
   slot: LobbySlot;
   device: string;
+  /** This phone has no other box (only then is the PIN kept, to skip it once the game starts). */
+  onlyBox: boolean;
   onSaved: (l: Lobby) => void;
   onCancelEdit?: () => void;
   onRemove: () => void;
@@ -292,7 +340,7 @@ function SpotForm({
   const save = useMutation({
     mutationFn: async () => {
       const l = await api.lobbySave(device, slot.id, name.trim(), pin);
-      await rememberSpotPin(slot.id, pin);
+      await rememberSpotPin(slot.id, pin, onlyBox);
       return l;
     },
     onSuccess: onSaved,
@@ -351,13 +399,21 @@ function HostControls({ lobby, device, put }: { lobby: OpenLobby; device: string
   const [modPass2, setModPass2] = useState("");
   const passOk = !passphraseProblem(modPass) && modPass === modPass2;
   const [cancelAsk, setCancelAsk] = useState(false);
+  useEffect(() => {
+    if (!cancelAsk) return;
+    const t = setTimeout(() => setCancelAsk(false), 4000); // not tapped again in time: never mind
+    return () => clearTimeout(t);
+  }, [cancelAsk]);
   const settings = useMutation({ mutationFn: (n: 1 | 2) => api.lobbySettings(device, n), onSuccess: put });
   const start = useMutation({ mutationFn: () => api.lobbyStart(device, claudai ? modPass : undefined), onSuccess: put });
   const cancel = useMutation({ mutationFn: () => api.lobbyCancel(device), onSuccess: put });
   const waiting = lobby.slots.filter((s) => !s.ready).length;
   const enough = lobby.ready_count >= 4;
-  const blocked = !enough || waiting > 0 || (claudai && !passOk);
-  const why = !enough
+  const hostHasBox = lobby.slots.some((s) => s.mine && s.host);
+  const blocked = !enough || waiting > 0 || !hostHasBox || (claudai && !passOk);
+  const why = !hostHasBox
+    ? "Add yourself first — the host needs a box too (your PIN is the one that can end the game)."
+    : !enough
     ? `${4 - lobby.ready_count} more player${4 - lobby.ready_count === 1 ? "" : "s"} needed (10–15 is ideal).`
     : waiting
       ? `Waiting for ${waiting} to finish adding their details.`

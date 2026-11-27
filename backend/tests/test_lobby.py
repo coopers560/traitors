@@ -240,3 +240,55 @@ def test_saved_box_is_kept_and_only_its_phone_or_the_host_can_remove_it():
         assert c.post("/api/lobby/join", json={"device": PHONES[1], "pos": next(s["pos"] for s in _lobby(c, HOST)["slots"] if s["id"] == sid)}).status_code == 409
         assert c.post("/api/lobby/remove", json={"device": PHONES[1], "slot_id": sid}).status_code == 403
         assert c.post("/api/lobby/remove", json={"device": PHONES[0], "slot_id": sid}).status_code == 200
+
+
+def test_the_host_on_a_new_phone_takes_over_with_their_pin():
+    _clean()
+    with TestClient(server.app) as c:
+        st = c.post("/api/lobby", json={"device": HOST}).json()
+        c.post("/api/lobby/save", json={"device": HOST, "slot_id": st["slots"][0]["id"], "name": "Dale", "pin": "1111"})
+        new = "device-host-new-0002"
+        assert c.post("/api/lobby/host", json={"device": new, "pin": "9999"}).status_code == 403
+        st = c.post("/api/lobby/host", json={"device": new, "pin": "1111"}).json()
+        assert st["you_host"] and st["slots"][0]["mine"] and st["host_name"] == "Dale"
+        assert _lobby(c, HOST)["you_host"] is False
+
+
+def test_anyone_takes_over_from_a_host_who_never_added_themselves_and_left():
+    _clean()
+    with TestClient(server.app) as c:
+        c.post("/api/lobby", json={"device": HOST})
+        assert c.post("/api/lobby/host", json={"device": PHONES[0]}).status_code == 403  # the host is still here
+
+        async def gone():
+            doc = await server.db.lobbies.find_one({"id": "current"})
+            doc["host_seen_at"] = (datetime.now(timezone.utc) - timedelta(minutes=3)).isoformat()
+            await server.db.lobbies.replace_one({"id": "current"}, doc)
+        asyncio.run(gone())
+        assert _lobby(c, PHONES[0])["host_away"] is True
+        assert c.post("/api/lobby/host", json={"device": PHONES[0]}).json()["you_host"] is True
+
+
+def test_the_host_needs_a_box_to_start():
+    _clean()
+    with TestClient(server.app) as c:
+        st = c.post("/api/lobby", json={"device": HOST}).json()
+        c.post("/api/lobby/remove", json={"device": HOST, "slot_id": st["slots"][0]["id"]})
+        for i in range(4):
+            _sign_up(c, PHONES[i], f"P{i}", f"{4000 + i}")
+        r = c.post("/api/lobby/start", json={"device": HOST})
+        assert r.status_code == 400 and "host" in r.json()["detail"]
+
+
+def test_a_game_made_the_old_way_closes_the_open_sign_up():
+    _clean()
+    with TestClient(server.app) as c:
+        c.post("/api/lobby", json={"device": HOST})
+        r = c.post("/api/games", json={"players": [{"name": f"Q{i}", "pin": "1234"} for i in range(4)], "single": True})
+        assert r.status_code == 200
+        code = r.json()["code"]
+
+        async def end():
+            await server.db.games.update_one({"code": code}, {"$set": {"phase": "ended"}})
+        asyncio.run(end())
+        assert _lobby(c, HOST) == {"exists": False}  # the old sheet doesn't come back
