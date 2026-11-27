@@ -315,6 +315,9 @@ export const api = {
       traitors_plot_alone: true, // only the Traitors take part in the plot, from their menu
       ...(opts.claudaiPassphrase ? { claudai_passphrase: opts.claudaiPassphrase } : {}),
     }),
+  /** A player changes their own PIN (the current one proves it's them). */
+  changePin: (player_id: string, pin: string, new_pin: string) =>
+    request<{ ok: boolean }>(`/games/${currentCode}/pin`, "POST", { player_id, pin, new_pin }),
   /** The group's game in progress, if any — phones join it without a code. */
   currentGame: () => request<CurrentGame>("/current"),
   /** The sign-up sheet (everyone adds themselves on their own phone). */

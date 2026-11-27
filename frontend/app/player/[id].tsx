@@ -172,6 +172,14 @@ export default function PlayerTurn() {
                     </View>
                   </Pressable>
                 )}
+                <ChangePin
+                  playerId={id}
+                  pin={pin}
+                  onChanged={(newPin) => {
+                    setPin(newPin);
+                    if (boundHere) void setMe(id, newPin);
+                  }}
+                />
                 {mode === "turn" && view.phase === "setup" ? (
                   <SetupTurn view={view} pin={pin} seen={roleSeen} onSealed={() => setSealed(true)} />
                 ) : mode === "turn" && view.phase === "gather" && view.alive ? (
@@ -186,6 +194,68 @@ export default function PlayerTurn() {
           </View>
         </>
       )}
+    </View>
+  );
+}
+
+/** Change your own PIN: the same small link on everyone's screen, opening a form when tapped. */
+function ChangePin({ playerId, pin, onChanged }: { playerId: string; pin: string; onChanged: (newPin: string) => void }) {
+  const styles = useStyles();
+  const { colors } = useTheme();
+  const [open, setOpen] = useState(false);
+  const [next, setNext] = useState("");
+  const [again, setAgain] = useState("");
+  const [done, setDone] = useState(false);
+  const save = useMutation({
+    mutationFn: () => api.changePin(playerId, pin, next),
+    onSuccess: () => {
+      onChanged(next);
+      setOpen(false);
+      setNext("");
+      setAgain("");
+      setDone(true);
+    },
+  });
+  const digits = (t: string) => t.replace(/\D/g, "").slice(0, 4);
+  const ok = /^\d{4}$/.test(next) && next === again;
+  if (!open) {
+    return (
+      <Pressable testID="change-pin-link" onPress={() => { setOpen(true); setDone(false); save.reset(); }} style={styles.rememberOn} hitSlop={6}>
+        <Ionicons name={done ? "checkmark-circle" : "key-outline"} size={18} color={colors.brand} />
+        <Text style={styles.rememberOnText}>{done ? "PIN changed — use your new one from now on." : "Change my PIN"}</Text>
+      </Pressable>
+    );
+  }
+  return (
+    <View style={styles.pinForm} testID="change-pin-form">
+      <Text style={styles.rememberText}>Change my PIN</Text>
+      <TextInput
+        testID="change-pin-new"
+        value={next}
+        onChangeText={(t) => setNext(digits(t))}
+        placeholder="New 4-digit PIN"
+        placeholderTextColor={colors.muted}
+        style={[styles.pinInput, { letterSpacing: next ? 6 : 0 }]}
+        keyboardType="number-pad"
+        secureTextEntry
+        maxLength={4}
+        autoFocus
+      />
+      <TextInput
+        testID="change-pin-again"
+        value={again}
+        onChangeText={(t) => setAgain(digits(t))}
+        placeholder="Type it again"
+        placeholderTextColor={colors.muted}
+        style={[styles.pinInput, { letterSpacing: again ? 6 : 0 }]}
+        keyboardType="number-pad"
+        secureTextEntry
+        maxLength={4}
+      />
+      {again.length === 4 && next !== again ? <Text style={styles.rememberSub}>The two don&apos;t match yet.</Text> : null}
+      <ErrorText testID="change-pin-error" message={save.error?.message} />
+      <Button testID="change-pin-save" label="Save my new PIN" icon="key" disabled={!ok} loading={save.isPending} onPress={() => save.mutate()} />
+      <Button testID="change-pin-cancel" label="Keep my PIN" variant="secondary" onPress={() => { setOpen(false); setNext(""); setAgain(""); }} />
     </View>
   );
 }
@@ -984,6 +1054,17 @@ const useStyles = makeStyles((c) => ({
   remember: { flexDirection: "row", alignItems: "center", gap: spacing.sm, backgroundColor: c.surfaceSecondary, borderWidth: 1, borderColor: c.brandSecondary, borderRadius: radius.md, padding: spacing.md },
   rememberText: { color: c.onSurface, fontSize: 16, fontWeight: "700" },
   rememberSub: { color: c.muted, fontSize: 13, lineHeight: 18, marginTop: 1 },
+  pinForm: { gap: spacing.sm, padding: spacing.md, borderRadius: radius.md, borderWidth: 1, borderColor: c.brandSecondary, backgroundColor: c.surfaceSecondary },
+  pinInput: {
+    height: 52,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: c.border,
+    backgroundColor: c.surface,
+    color: c.onSurface,
+    fontSize: 18,
+    paddingHorizontal: spacing.md,
+  },
   rememberOn: { flexDirection: "row", alignItems: "center", gap: spacing.sm, paddingVertical: spacing.xs },
   rememberOnText: { color: c.onSurfaceTertiary, fontSize: 14, flex: 1 },
   outBox: { marginTop: spacing.sm, paddingTop: spacing.sm, borderTopWidth: 1, borderTopColor: c.divider, gap: 4 },
