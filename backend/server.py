@@ -1604,6 +1604,9 @@ async def create_game(data: CreateGameIn):
         window=data.murder_window_minutes or 0.0, skip_day=bool(data.skip_day),
         plot_alone=bool(data.traitors_plot_alone), gap=data.murder_gap_hours,
     )
+    if data.single:
+        # The group's game is made: an open sign-up is finished with (it mustn't come back later).
+        await db.lobbies.update_one({"id": LOBBY_ID, "started_code": None, "cancelled": False}, {"$set": {"cancelled": True}})
     return public_state(g)
 
 
@@ -1651,7 +1654,9 @@ LOBBY_ID = "current"
 LOBBY_HOLD = timedelta(seconds=30)  # an unsaved box frees up this long after its phone last checked in
 LOBBY_TOUCH_EVERY = timedelta(seconds=5)  # how often a phone's refresh renews its hold
 LOBBY_LIVE_FOR = timedelta(days=2)
-LOBBY_LOCK = asyncio.Lock()
+# The same lock as creating a game the old way (POST /games), so the two can never both make a game.
+LOBBY_LOCK = CREATE_LOCK
+HOST_AWAY = timedelta(minutes=2)  # a host who hasn't added themselves and has been gone this long can be replaced
 MAX_PLAYERS = 15
 DEVICE_RE = re.compile(r"^[A-Za-z0-9_-]{8,64}$")
 # What the app sets for a new game (the same as its single-phone setup).
@@ -1676,6 +1681,7 @@ class Lobby(BaseModel):
     created_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
     updated_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
     cancelled: bool = False
+    host_seen_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
     started_code: Optional[str] = None
     started_players: Dict[str, str] = {}  # spot id -> player id, once the game is made
 
@@ -1758,6 +1764,16 @@ def _host_slot(lb: Lobby) -> Optional[LobbySlot]:
     return next((sl for sl in sorted(lb.slots, key=lambda x: x.pos) if sl.device == lb.host_device and sl.ready), None)
 
 
+def _host_away(lb: Lobby) -> bool:
+    """The host hasn't added themselves and their phone has been gone a while: anyone may take over."""
+    if _host_slot(lb):
+        return False
+    try:
+        return datetime.now(timezone.utc) - datetime.fromisoformat(lb.host_seen_at) > HOST_AWAY
+    except ValueError:
+        return True
+
+
 def lobby_out(lb: Optional[Lobby], device: str) -> dict:
     """What one phone sees of the sign-up. PINs never leave the server; a spot still being filled
     in shows no name."""
@@ -1769,6 +1785,8 @@ def lobby_out(lb: Optional[Lobby], device: str) -> dict:
         "exists": True,
         "you_host": device == lb.host_device,
         "host_name": host.name if host else None,
+        # The host's phone is gone (and they never added themselves): anyone can take over.
+        "host_away": device != lb.host_device and _host_away(lb),
         "tables_per_day": lb.tables_per_day,
         "slots": [
             {
@@ -1809,8 +1827,18 @@ async def get_lobby(device: str):
     d = _device(device)
     async with LOBBY_LOCK:
         lb = await _load_lobby()
-        if lb and not lb.started_code and (_renew_holds(lb, d) | _prune(lb)):
-            await _save_lobby(lb)
+        if lb and not lb.started_code:
+            changed = _renew_holds(lb, d) | _prune(lb)
+            if d == lb.host_device:
+                try:
+                    stale = datetime.now(timezone.utc) - datetime.fromisoformat(lb.host_seen_at) >= LOBBY_TOUCH_EVERY
+                except ValueError:
+                    stale = True
+                if stale:
+                    lb.host_seen_at = datetime.now(timezone.utc).isoformat()
+                    changed = True
+            if changed:
+                await _save_lobby(lb)
         return lobby_out(lb, d)
 
 
@@ -1897,6 +1925,31 @@ async def remove_lobby_slot(data: LobbyIn):
         return lobby_out(lb, d)
 
 
+@api_router.post("/lobby/host")
+async def take_over_lobby(data: LobbyIn):
+    """Become the host on this phone: the host on a new phone (their own PIN proves it — their
+    boxes move to this phone too), or anyone, if the host never added themselves and has gone."""
+    d = _device(data.device)
+    async with LOBBY_LOCK:
+        lb = _open_lobby(await _load_lobby())
+        if d == lb.host_device:
+            return lobby_out(lb, d)
+        host = _host_slot(lb)
+        if host:
+            if not (data.pin and host.pin_hash and hmac.compare_digest(hash_pin(data.pin), host.pin_hash)):
+                raise HTTPException(403, f"That isn't {host.name}'s PIN")
+            old = lb.host_device
+            for sl in lb.slots:
+                if sl.device == old:
+                    sl.device = d
+        elif not _host_away(lb):
+            raise HTTPException(403, "The host is still adding themselves — wait a moment")
+        lb.host_device = d
+        lb.host_seen_at = datetime.now(timezone.utc).isoformat()
+        await _save_lobby(lb)
+        return lobby_out(lb, d)
+
+
 @api_router.post("/lobby/settings")
 async def lobby_settings(data: LobbyIn):
     d = _device(data.device)
@@ -1927,16 +1980,20 @@ async def start_lobby(data: LobbyIn):
         ready = sorted((sl for sl in lb.slots if sl.ready), key=lambda x: x.pos)
         if len(ready) < 4:
             raise HTTPException(400, "You need at least 4 players (10–15 is ideal)")
+        if not _host_slot(lb):
+            # The host's PIN is the one that can end the game for everyone, so they need a box.
+            raise HTTPException(400, "Add yourself first — the host needs a box too")
         secret = data.claudai_passphrase or None
         if secret and passphrase_problem(secret):
             raise HTTPException(400, PASSPHRASE_RULE)
         if await current_game_doc():
             raise HTTPException(409, "A game is already in progress. Join it — or the host can end it from the ⋯ menu first.")
         host = _host_slot(lb)
+        assert host is not None
         g = await make_game(
             [sl.name for sl in ready], [sl.pin_hash or "" for sl in ready], secret, lb.tables_per_day,
             window=APP_MURDER_WINDOW_MIN, skip_day=True, plot_alone=True,
-            host_index=ready.index(host) if host else 0,
+            host_index=ready.index(host),
         )
         lb.started_code = g.code
         lb.started_players = {sl.id: pl.id for sl, pl in zip(ready, g.players)}
