@@ -107,8 +107,8 @@ export default function Setup() {
               : startedCode
                 ? "The Traitors have been chosen. Joining the game…"
                 : lobby.you_host
-                  ? "Everyone opens the app on their own phone and taps Add me — or pass this phone round. Each person picks a secret 4-digit PIN they'll remember for 12 days."
-                  : `Add yourself below with a secret 4-digit PIN you'll remember for 12 days. ${lobby.host_name ?? "The host"} chooses the Traitors once everyone's in.`}
+                  ? "Everyone opens the app on their own phone and taps an empty box — or pass this phone round. Each person picks a secret 4-digit PIN they'll remember for 12 days."
+                  : `Tap an empty box to add yourself, with a secret 4-digit PIN you'll remember for 12 days. ${lobby.host_name ?? "The host"} chooses the Traitors once everyone's in.`}
           </Body>
           {/* The start screen is this one now, so its two links live here */}
           <View style={styles.links}>
@@ -156,15 +156,19 @@ function Sheet({ lobby, device, put }: { lobby: OpenLobby; device: string; put: 
   // Spots this phone has opened again to change.
   const [editing, setEditing] = useState<string[]>([]);
   const [asked, setAsked] = useState<string | null>(null); // a remove waiting for its second tap
-  const join = useMutation({ mutationFn: () => api.lobbyJoin(device), onSuccess: put });
+  const join = useMutation({ mutationFn: (pos: number) => api.lobbyJoin(device, pos), onSuccess: put });
   const remove = useMutation({
     mutationFn: (id: string) => api.lobbyRemove(device, id),
     onSuccess: (l) => { setAsked(null); put(l); },
   });
   const mineCount = lobby.slots.filter((s) => s.mine).length;
-  const unfinishedMine = lobby.slots.some((s) => s.mine && !s.ready);
   const full = lobby.slots.length >= lobby.max_players;
   const waiting = lobby.slots.filter((s) => !s.ready).length;
+  // The boxes: every taken one, plus empty ones to tap — at least 10, and always one spare (up to the maximum).
+  const lastTaken = lobby.slots.reduce((m, s) => Math.max(m, s.pos), -1);
+  const boxCount = Math.min(lobby.max_players, Math.max(10, lastTaken + 2, lobby.slots.length + 1));
+  const boxes = Array.from({ length: boxCount }, (_, pos) => ({ pos, slot: lobby.slots.find((s) => s.pos === pos) }));
+  const hasSaved = lobby.slots.some((s) => s.mine && s.ready);
 
   return (
     <>
@@ -177,8 +181,27 @@ function Sheet({ lobby, device, put }: { lobby: OpenLobby; device: string; put: 
       </View>
 
       <View style={{ gap: spacing.sm }} testID="lobby-slots">
-        {lobby.slots.map((s, i) =>
-          s.mine && (!s.ready || editing.includes(s.id)) ? (
+        {boxes.map(({ pos: i, slot: s }) =>
+          !s ? (
+            // An empty box: tap it and it's held for this phone straight away.
+            <Pressable
+              key={`empty-${i}`}
+              testID={`lobby-box-${i}`}
+              onPress={() => join.mutate(i)}
+              disabled={join.isPending}
+              style={[styles.spot, styles.spotEmpty]}
+              accessibilityRole="button"
+              accessibilityLabel={`Box ${i + 1}: tap to add ${hasSaved ? "another player" : "yourself"}`}
+            >
+              <Text style={styles.num}>{i + 1}</Text>
+              {join.isPending && join.variables === i ? (
+                <ActivityIndicator color={colors.brand} />
+              ) : (
+                <Ionicons name="add-circle-outline" size={22} color={colors.brand} />
+              )}
+              <Text style={styles.spotEmptyText}>{hasSaved ? "Tap to add another player" : "Tap to add yourself"}</Text>
+            </Pressable>
+          ) : s.mine && (!s.ready || editing.includes(s.id)) ? (
             <SpotForm
               key={s.id}
               index={i}
@@ -231,18 +254,7 @@ function Sheet({ lobby, device, put }: { lobby: OpenLobby; device: string; put: 
       </View>
 
       <ErrorText testID="lobby-error" message={join.error?.message || remove.error?.message} />
-      {!full && !unfinishedMine ? (
-        <Button
-          testID="lobby-add-button"
-          label={mineCount === 0 ? "Add me" : "Add another player on this phone"}
-          variant={mineCount === 0 ? "primary" : "ghost"}
-          icon="person-add-outline"
-          loading={join.isPending}
-          onPress={() => join.mutate()}
-        />
-      ) : full ? (
-        <Text style={styles.note}>The game is full — {lobby.max_players} players at most.</Text>
-      ) : null}
+      {full ? <Text style={styles.note}>The game is full — {lobby.max_players} players at most.</Text> : null}
 
       {lobby.you_host ? (
         <HostControls lobby={lobby} device={device} put={put} />
@@ -291,7 +303,7 @@ function SpotForm({
       <Text style={styles.formTitle}>
         {index + 1}. {slot.ready ? "Change your details" : "Your details"}
       </Text>
-      <Text style={styles.formNote}>This spot is locked to this phone while you fill it in.</Text>
+      <Text style={styles.formNote}>Held for you while you&apos;re here. Save to keep it — leave without saving and it frees up again.</Text>
       <TextInput
         testID={`lobby-name-input-${index}`}
         value={name}
@@ -322,7 +334,7 @@ function SpotForm({
       {onCancelEdit ? (
         <Button testID={`lobby-cancel-edit-${index}`} label="Keep it as it was" variant="secondary" onPress={onCancelEdit} />
       ) : (
-        <Button testID={`lobby-cancel-${index}`} label="Never mind — free this spot" variant="secondary" icon="close" loading={removing} onPress={onRemove} />
+        <Button testID={`lobby-cancel-${index}`} label="Never mind — free this box" variant="secondary" icon="close" loading={removing} onPress={onRemove} />
       )}
     </View>
   );
@@ -553,6 +565,8 @@ const useStyles = makeStyles((c) => ({
     backgroundColor: c.surfaceSecondary,
   },
   spotMine: { borderColor: c.brandSecondary },
+  spotEmpty: { borderStyle: "dashed", backgroundColor: "transparent" },
+  spotEmptyText: { color: c.brand, fontSize: 16, fontWeight: "700", flex: 1 },
   spotName: { color: c.onSurface, fontSize: 18, fontWeight: "700" },
   spotWaiting: { color: c.muted, fontWeight: "600", fontStyle: "italic" },
   spotTag: { color: c.brand, fontSize: 13, fontWeight: "700" },

@@ -1640,12 +1640,16 @@ async def make_game(names: List[str], pin_hashes: List[str], secret: Optional[st
 
 
 # ---------------- The sign-up sheet: everyone adds themselves on their own phone ----------------
-# One group, one sign-up at a time. Whoever opens it is the host. "Add me" makes a new spot that
-# is locked to that phone straight away, so two people can never type into the same spot. Every
-# phone watches the sheet (it polls), and when the host chooses the Traitors each phone is told
-# which player it signed up, so it can go straight into the game.
+# One group, one sign-up at a time. Whoever opens it is the host. The sheet is a column of numbered
+# boxes: tapping an empty one holds it for that phone straight away, so two people can never type
+# into the same box. The hold lasts only while that phone stays on the sign-up (each refresh keeps
+# it): leave without saving and the box frees up again. Saving a name and PIN keeps the box for
+# good — only that phone (or the host) can then change or remove it. Every phone watches the sheet
+# (it polls), and when the host chooses the Traitors each phone is told which player it signed up,
+# so it can go straight into the game.
 LOBBY_ID = "current"
-LOBBY_STALE = timedelta(minutes=10)  # a spot left half-filled this long frees up
+LOBBY_HOLD = timedelta(seconds=30)  # an unsaved box frees up this long after its phone last checked in
+LOBBY_TOUCH_EVERY = timedelta(seconds=5)  # how often a phone's refresh renews its hold
 LOBBY_LIVE_FOR = timedelta(days=2)
 LOBBY_LOCK = asyncio.Lock()
 MAX_PLAYERS = 15
@@ -1656,7 +1660,8 @@ APP_MURDER_WINDOW_MIN = 30.0
 
 class LobbySlot(BaseModel):
     id: str = Field(default_factory=lambda: uuid.uuid4().hex[:8])
-    device: str  # the phone that made this spot; only it (or the host) can change it
+    pos: int = 0  # which box (0 = the first)
+    device: str  # the phone that holds this box; only it (or the host) can change it
     name: str = ""
     pin_hash: Optional[str] = None
     ready: bool = False  # name and PIN saved
@@ -1678,6 +1683,7 @@ class Lobby(BaseModel):
 class LobbyIn(BaseModel):
     device: str
     slot_id: Optional[str] = None
+    pos: Optional[int] = None
     name: Optional[str] = None
     pin: Optional[str] = None
     tables_per_day: Optional[int] = None
@@ -1717,8 +1723,8 @@ async def _save_lobby(lb: Lobby) -> None:
 
 
 def _prune(lb: Lobby) -> bool:
-    """Free spots left half-filled for too long. True if any went."""
-    cutoff = datetime.now(timezone.utc) - LOBBY_STALE
+    """Free unsaved boxes whose phone has gone away. True if any went."""
+    cutoff = datetime.now(timezone.utc) - LOBBY_HOLD
     keep = []
     for sl in lb.slots:
         try:
@@ -1732,8 +1738,24 @@ def _prune(lb: Lobby) -> bool:
     return changed
 
 
+def _renew_holds(lb: Lobby, device: str) -> bool:
+    """This phone is still on the sign-up: keep its unsaved boxes held. True if any changed."""
+    now = datetime.now(timezone.utc)
+    changed = False
+    for sl in lb.slots:
+        if sl.device == device and not sl.ready:
+            try:
+                fresh = now - datetime.fromisoformat(sl.touched_at) < LOBBY_TOUCH_EVERY
+            except ValueError:
+                fresh = False
+            if not fresh:
+                sl.touched_at = now.isoformat()
+                changed = True
+    return changed
+
+
 def _host_slot(lb: Lobby) -> Optional[LobbySlot]:
-    return next((sl for sl in lb.slots if sl.device == lb.host_device and sl.ready), None)
+    return next((sl for sl in sorted(lb.slots, key=lambda x: x.pos) if sl.device == lb.host_device and sl.ready), None)
 
 
 def lobby_out(lb: Optional[Lobby], device: str) -> dict:
@@ -1751,12 +1773,13 @@ def lobby_out(lb: Optional[Lobby], device: str) -> dict:
         "slots": [
             {
                 "id": sl.id,
+                "pos": sl.pos,
                 "name": sl.name if sl.ready else None,
                 "ready": sl.ready,
                 "mine": sl.device == device,
                 "host": host is not None and sl.id == host.id,
             }
-            for sl in lb.slots
+            for sl in sorted(lb.slots, key=lambda x: x.pos)
         ],
         "ready_count": sum(1 for sl in lb.slots if sl.ready),
         "max_players": MAX_PLAYERS,
@@ -1786,7 +1809,7 @@ async def get_lobby(device: str):
     d = _device(device)
     async with LOBBY_LOCK:
         lb = await _load_lobby()
-        if lb and not lb.started_code and _prune(lb):
+        if lb and not lb.started_code and (_renew_holds(lb, d) | _prune(lb)):
             await _save_lobby(lb)
         return lobby_out(lb, d)
 
@@ -1802,23 +1825,39 @@ async def open_lobby(data: LobbyIn):
         if lb and not lb.started_code:
             return lobby_out(lb, d)
         tables = data.tables_per_day if data.tables_per_day in (1, 2) else 2
-        lb = Lobby(host_device=d, tables_per_day=tables, slots=[LobbySlot(device=d)])
+        lb = Lobby(host_device=d, tables_per_day=tables, slots=[LobbySlot(device=d, pos=0)])
         await _save_lobby(lb)
         return lobby_out(lb, d)
 
 
 @api_router.post("/lobby/join")
 async def join_lobby(data: LobbyIn):
-    """A new spot, locked to this phone at once. A phone with a spot it hasn't finished gets that
-    one back instead of another."""
+    """Hold a box for this phone at once: the one tapped (`pos`), or the first free one. A phone
+    already holding an unsaved box moves its hold to the new one rather than taking two."""
     d = _device(data.device)
     async with LOBBY_LOCK:
         lb = _open_lobby(await _load_lobby())
         _prune(lb)
-        if not any(sl.device == d and not sl.ready for sl in lb.slots):
-            if len(lb.slots) >= MAX_PLAYERS:
+        taken = {sl.pos: sl for sl in lb.slots}
+        pos = data.pos
+        if pos is None:
+            pos = next((i for i in range(MAX_PLAYERS) if i not in taken), None)
+            if pos is None:
                 raise HTTPException(400, f"The game is full — {MAX_PLAYERS} players at most")
-            lb.slots.append(LobbySlot(device=d))
+        if not (0 <= pos < MAX_PLAYERS):
+            raise HTTPException(400, "Pick one of the boxes")
+        here = taken.get(pos)
+        if here and not (here.device == d and not here.ready):
+            raise HTTPException(409, "Someone has just taken that box — pick another")
+        if not here:
+            held = next((sl for sl in lb.slots if sl.device == d and not sl.ready), None)
+            if held:
+                held.pos = pos
+                held.touched_at = datetime.now(timezone.utc).isoformat()
+            else:
+                lb.slots.append(LobbySlot(device=d, pos=pos))
+        else:
+            here.touched_at = datetime.now(timezone.utc).isoformat()
         await _save_lobby(lb)
         return lobby_out(lb, d)
 
@@ -1885,7 +1924,7 @@ async def start_lobby(data: LobbyIn):
         if waiting:
             n = len(waiting)
             raise HTTPException(400, f"Wait for {n} more to finish adding their details — or remove {'that spot' if n == 1 else 'those spots'}")
-        ready = [sl for sl in lb.slots if sl.ready]
+        ready = sorted((sl for sl in lb.slots if sl.ready), key=lambda x: x.pos)
         if len(ready) < 4:
             raise HTTPException(400, "You need at least 4 players (10–15 is ideal)")
         secret = data.claudai_passphrase or None

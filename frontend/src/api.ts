@@ -242,7 +242,7 @@ export type ModeratorView = {
 };
 
 /** One spot on the sign-up sheet. A spot still being filled in has no name yet. */
-export type LobbySlot = { id: string; name: string | null; ready: boolean; mine: boolean; host: boolean };
+export type LobbySlot = { id: string; pos: number; name: string | null; ready: boolean; mine: boolean; host: boolean };
 
 /** The sign-up sheet, as this phone sees it. */
 export type Lobby =
@@ -319,8 +319,8 @@ export const api = {
   lobby: (device: string) => request<Lobby>(`/lobby?device=${encodeURIComponent(device)}`),
   /** Start a sign-up, hosted by this phone (or see the one already open). */
   lobbyOpen: (device: string, tablesPerDay = 2) => request<Lobby>("/lobby", "POST", { device, tables_per_day: tablesPerDay }),
-  /** A new spot, locked to this phone straight away. */
-  lobbyJoin: (device: string) => request<Lobby>("/lobby/join", "POST", { device }),
+  /** Hold a box for this phone straight away (the one tapped, or the first free one). */
+  lobbyJoin: (device: string, pos?: number) => request<Lobby>("/lobby/join", "POST", { device, ...(pos !== undefined ? { pos } : {}) }),
   lobbySave: (device: string, slot_id: string, name: string, pin: string) =>
     request<Lobby>("/lobby/save", "POST", { device, slot_id, name, pin }),
   lobbyRemove: (device: string, slot_id: string) => request<Lobby>("/lobby/remove", "POST", { device, slot_id }),

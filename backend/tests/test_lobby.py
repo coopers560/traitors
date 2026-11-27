@@ -182,3 +182,61 @@ def test_bad_device_ids_are_refused():
     with TestClient(server.app) as c:
         assert c.get("/api/lobby?device=x").status_code == 400
         assert c.post("/api/lobby", json={"device": "bad id!"}).status_code == 400
+
+
+def _age_holds(seconds):
+    async def go():
+        doc = await server.db.lobbies.find_one({"id": "current"})
+        for sl in doc["slots"]:
+            if not sl["ready"]:
+                sl["touched_at"] = (datetime.now(timezone.utc) - timedelta(seconds=seconds)).isoformat()
+        await server.db.lobbies.replace_one({"id": "current"}, doc)
+    asyncio.run(go())
+
+
+def test_tapping_a_box_holds_it_and_a_taken_box_is_refused():
+    _clean()
+    with TestClient(server.app) as c:
+        c.post("/api/lobby", json={"device": HOST})
+        st = c.post("/api/lobby/join", json={"device": PHONES[0], "pos": 4}).json()
+        mine = next(s for s in st["slots"] if s["mine"])
+        assert mine["pos"] == 4 and not mine["ready"]
+        r = c.post("/api/lobby/join", json={"device": PHONES[1], "pos": 4})
+        assert r.status_code == 409  # someone is already in that box
+        # Tapping another box moves this phone's hold there instead of taking two.
+        st = c.post("/api/lobby/join", json={"device": PHONES[0], "pos": 6}).json()
+        assert [s["pos"] for s in st["slots"] if s["mine"]] == [6]
+        assert c.post("/api/lobby/join", json={"device": PHONES[1], "pos": 4}).status_code == 200
+        assert c.post("/api/lobby/join", json={"device": PHONES[2], "pos": 15}).status_code == 400
+
+
+def test_leaving_without_saving_frees_the_box_and_staying_keeps_it():
+    _clean()
+    with TestClient(server.app) as c:
+        c.post("/api/lobby", json={"device": HOST})
+        c.post("/api/lobby/join", json={"device": PHONES[0], "pos": 1})
+        c.post("/api/lobby/join", json={"device": PHONES[1], "pos": 2})
+        _age_holds(25)
+        _lobby(c, PHONES[0])  # phone 0 is still on the sign-up: its refresh renews the hold
+        async def age_only(device, seconds):
+            doc = await server.db.lobbies.find_one({"id": "current"})
+            for sl in doc["slots"]:
+                if not sl["ready"] and sl["device"] == device:
+                    sl["touched_at"] = (datetime.now(timezone.utc) - timedelta(seconds=seconds)).isoformat()
+            await server.db.lobbies.replace_one({"id": "current"}, doc)
+        asyncio.run(age_only(PHONES[1], 40))  # phone 1 left 40 seconds ago
+        st = _lobby(c, HOST)
+        held = sorted(s["pos"] for s in st["slots"])
+        assert 1 in held and 2 not in held
+
+
+def test_saved_box_is_kept_and_only_its_phone_or_the_host_can_remove_it():
+    _clean()
+    with TestClient(server.app) as c:
+        c.post("/api/lobby", json={"device": HOST})
+        sid = _sign_up(c, PHONES[0], "Ada", "1234")
+        _age_holds(3600)
+        assert any(s["id"] == sid for s in _lobby(c, PHONES[1])["slots"])  # saved boxes never expire
+        assert c.post("/api/lobby/join", json={"device": PHONES[1], "pos": next(s["pos"] for s in _lobby(c, HOST)["slots"] if s["id"] == sid)}).status_code == 409
+        assert c.post("/api/lobby/remove", json={"device": PHONES[1], "slot_id": sid}).status_code == 403
+        assert c.post("/api/lobby/remove", json={"device": PHONES[0], "slot_id": sid}).status_code == 200

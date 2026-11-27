@@ -39,9 +39,9 @@ const SECTIONS: Section[] = [
     title: "New game",
     tips: [
       ["Start the sign-up", "on one phone — that person is the host. Only the host's PIN can end the game for everyone."],
-      ["Everyone else", "opens the app on their own phone and taps Add me. Your spot is locked to your phone while you type your name and a 4-digit PIN. Keep the PIN to yourself."],
-      ["Live", "every phone sees the list fill up as people add themselves. No phone? Tap Add another player and pass this one round."],
-      ["4 to 15 players.", "Change or remove your own spot with the pencil or the cross. The host can remove any spot."],
+      ["Everyone else", "opens the app on their own phone and taps an empty box. It's held for you while you type your name and a 4-digit PIN — leave without saving and it frees up again. Keep the PIN to yourself."],
+      ["Live", "every phone sees the boxes fill up as people add themselves. No phone? Tap another box and pass this one round."],
+      ["4 to 15 players.", "Once saved, a box is yours: change or remove it with the pencil or the cross on your phone. The host can remove any box."],
       ["When the game starts", "each phone that added one player goes straight to that player — no PIN needed on your own phone."],
       ["Round Tables per day", "two (lunch and about 8pm) for a faster game, or one each evening."],
       ["Add ClaudAI", "optional: a host who sees everything. Set the game's ClaudAI passphrase (8+ characters with upper and lower case, a number and a symbol), typed twice. It can't be recovered and there's no master key — keep it safe."],
