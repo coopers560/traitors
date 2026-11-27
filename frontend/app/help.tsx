@@ -38,7 +38,7 @@ const SECTIONS: Section[] = [
     icon: "person-add-outline",
     title: "New game",
     tips: [
-      ["Start the sign-up", "on one phone — that person is the host. Only the host's PIN can end the game for everyone."],
+      ["Start the sign-up", "on one phone — that person is the host and always box 1. Only the host's PIN can end the game for everyone."],
       ["Everyone else", "opens the app on their own phone and taps an empty box. It's held for you while you type your name and a 4-digit PIN — leave without saving and it frees up again. Keep the PIN to yourself."],
       ["Live", "every phone sees the boxes fill up as people add themselves. No phone? Tap another box and pass this one round."],
       ["4 to 15 players.", "Once saved, a box is yours: change or remove it with the pencil or the cross on your phone. The host can remove any box."],

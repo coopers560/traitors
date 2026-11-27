@@ -194,7 +194,13 @@ function Sheet({ lobby, device, put }: { lobby: OpenLobby; device: string; put: 
 
       <View style={{ gap: spacing.sm }} testID="lobby-slots">
         {boxes.map(({ pos: i, slot: s }) =>
-          !s ? (
+          !s && i === 0 && !lobby.you_host ? (
+            <View key="empty-0" style={[styles.spot, styles.spotEmpty]} testID="lobby-box-0">
+              <Text style={styles.num}>1</Text>
+              <Ionicons name="key-outline" size={20} color={colors.muted} />
+              <Text style={[styles.spotName, styles.spotWaiting]}>Kept for the host</Text>
+            </View>
+          ) : !s ? (
             // An empty box: tap it and it's held for this phone straight away.
             <Pressable
               key={`empty-${i}`}
@@ -482,10 +488,6 @@ function HostControls({ lobby, device, put }: { lobby: OpenLobby; device: string
         ) : null}
       </View>
 
-      <ErrorText testID="setup-start-error" message={start.error?.message || settings.error?.message || cancel.error?.message} />
-      <Button testID="setup-start-button" label="Choose the Traitors" icon="flame" disabled={blocked} loading={start.isPending} onPress={() => start.mutate()} />
-      {why ? <Text style={styles.note} testID="setup-start-why">{why}</Text> : null}
-      <Text style={styles.note}>The app secretly picks the Traitors. Nobody — not even the host — will know who they are.</Text>
       <Button
         testID="lobby-cancel-signup"
         label={cancelAsk ? "Tap again to cancel the sign-up" : "Cancel the sign-up"}
@@ -494,6 +496,11 @@ function HostControls({ lobby, device, put }: { lobby: OpenLobby; device: string
         loading={cancel.isPending}
         onPress={() => (cancelAsk ? cancel.mutate() : setCancelAsk(true))}
       />
+      {/* The host's big button, last on the page. */}
+      <Text style={styles.note}>The app secretly picks the Traitors. Nobody — not even the host — will know who they are.</Text>
+      {why ? <Text style={styles.note} testID="setup-start-why">{why}</Text> : null}
+      <ErrorText testID="setup-start-error" message={start.error?.message || settings.error?.message || cancel.error?.message} />
+      <Button testID="setup-start-button" label="Choose the Traitors" icon="flame" disabled={blocked} loading={start.isPending} onPress={() => start.mutate()} />
     </>
   );
 }
