@@ -1599,31 +1599,361 @@ async def create_game(data: CreateGameIn):
         raise HTTPException(400, PASSPHRASE_RULE)
     if data.tables_per_day not in (1, 2):
         raise HTTPException(400, "Choose one or two Round Tables a day")
-    # One Traitor for a small group (5 or fewer), otherwise exactly two.
+    g = await make_game(
+        names, [hash_pin(p.pin) for p in data.players], secret, data.tables_per_day,
+        window=data.murder_window_minutes or 0.0, skip_day=bool(data.skip_day),
+        plot_alone=bool(data.traitors_plot_alone), gap=data.murder_gap_hours,
+    )
+    return public_state(g)
+
+
+async def make_game(names: List[str], pin_hashes: List[str], secret: Optional[str], tables_per_day: int, *,
+                    window: float, skip_day: bool, plot_alone: bool, gap: Optional[float] = None,
+                    host_index: int = 0) -> Game:
+    """Create and save a new game: the Traitors chosen at random — one for a small group (5 or
+    fewer), otherwise exactly two. Inputs are already checked."""
     n_traitors = 1 if len(names) <= 5 else 2
     traitor_idx = set(random.sample(range(len(names)), n_traitors))
     players = []
-    for i, p in enumerate(data.players):
+    for i, name in enumerate(names):
         role = "traitor" if i in traitor_idx else "faithful"
-        players.append(Player(name=names[i], pin_hash=hash_pin(p.pin), role=role, started_as=role))
+        players.append(Player(name=name, pin_hash=pin_hashes[i], role=role, started_as=role))
     g = Game(
         code=await new_code(), players=players, day=1, cal_day=1,
-        tables_per_day=data.tables_per_day, session="lunch" if data.tables_per_day == 2 else "",
+        tables_per_day=tables_per_day, session="lunch" if tables_per_day == 2 else "",
     )
-    g.host_id = players[0].id  # the first player entered is the host/creator
+    host = players[host_index]
+    g.host_id = host.id  # the host/creator (the first player entered, or whoever opened the sign-up)
     if secret:
         g.moderator_pin_hash = await asyncio.to_thread(hash_passphrase, secret)
-    if data.murder_gap_hours is not None:
-        g.murder_gap_hours = max(0.0, min(MAX_MURDER_GAP_HOURS, data.murder_gap_hours))
-    g.murder_window_minutes = max(0.0, min(MAX_MURDER_WINDOW_MIN, data.murder_window_minutes or 0.0))
-    g.skip_day = bool(data.skip_day)
-    g.traitors_plot_alone = bool(data.traitors_plot_alone)
+    if gap is not None:
+        g.murder_gap_hours = max(0.0, min(MAX_MURDER_GAP_HOURS, gap))
+    g.murder_window_minutes = max(0.0, min(MAX_MURDER_WINDOW_MIN, window))
+    g.skip_day = skip_day
+    g.traitors_plot_alone = plot_alone
     traitors = ", ".join(pl.name for pl in players if pl.role == "traitor")
     tables = "two Round Tables a day (lunch and 8pm)" if g.tables_per_day == 2 else "one Round Table a day"
-    log(g, "setup", f"Game created: {len(players)} players, host {players[0].name}, {tables}. Traitors: {traitors}",
-        f"Game created: {len(players)} players, host {players[0].name}, {tables}")
+    log(g, "setup", f"Game created: {len(players)} players, host {host.name}, {tables}. Traitors: {traitors}",
+        f"Game created: {len(players)} players, host {host.name}, {tables}")
     await save(g)
-    return public_state(g)
+    return g
+
+
+# ---------------- The sign-up sheet: everyone adds themselves on their own phone ----------------
+# One group, one sign-up at a time. Whoever opens it is the host. The sheet is a column of numbered
+# boxes: tapping an empty one holds it for that phone straight away, so two people can never type
+# into the same box. The hold lasts only while that phone stays on the sign-up (each refresh keeps
+# it): leave without saving and the box frees up again. Saving a name and PIN keeps the box for
+# good — only that phone (or the host) can then change or remove it. Every phone watches the sheet
+# (it polls), and when the host chooses the Traitors each phone is told which player it signed up,
+# so it can go straight into the game.
+LOBBY_ID = "current"
+LOBBY_HOLD = timedelta(seconds=30)  # an unsaved box frees up this long after its phone last checked in
+LOBBY_TOUCH_EVERY = timedelta(seconds=5)  # how often a phone's refresh renews its hold
+LOBBY_LIVE_FOR = timedelta(days=2)
+LOBBY_LOCK = asyncio.Lock()
+MAX_PLAYERS = 15
+DEVICE_RE = re.compile(r"^[A-Za-z0-9_-]{8,64}$")
+# What the app sets for a new game (the same as its single-phone setup).
+APP_MURDER_WINDOW_MIN = 30.0
+
+
+class LobbySlot(BaseModel):
+    id: str = Field(default_factory=lambda: uuid.uuid4().hex[:8])
+    pos: int = 0  # which box (0 = the first)
+    device: str  # the phone that holds this box; only it (or the host) can change it
+    name: str = ""
+    pin_hash: Optional[str] = None
+    ready: bool = False  # name and PIN saved
+    touched_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+
+
+class Lobby(BaseModel):
+    id: str = LOBBY_ID
+    host_device: str
+    tables_per_day: int = 2
+    slots: List[LobbySlot] = []
+    created_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+    updated_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+    cancelled: bool = False
+    started_code: Optional[str] = None
+    started_players: Dict[str, str] = {}  # spot id -> player id, once the game is made
+
+
+class LobbyIn(BaseModel):
+    device: str
+    slot_id: Optional[str] = None
+    pos: Optional[int] = None
+    name: Optional[str] = None
+    pin: Optional[str] = None
+    tables_per_day: Optional[int] = None
+    claudai_passphrase: Optional[str] = None
+
+
+def _device(d: Optional[str]) -> str:
+    if not d or not DEVICE_RE.match(d):
+        raise HTTPException(400, "This phone isn't recognised — reload the app")
+    return d
+
+
+async def _load_lobby() -> Optional[Lobby]:
+    """The sign-up in progress (or just turned into a game that is still going), if any."""
+    doc = await db.lobbies.find_one({"id": LOBBY_ID}, {"_id": 0})
+    if not doc:
+        return None
+    lb = Lobby(**doc)
+    if lb.cancelled:
+        return None
+    try:
+        if datetime.fromisoformat(lb.updated_at) < datetime.now(timezone.utc) - LOBBY_LIVE_FOR:
+            return None
+    except ValueError:
+        return None
+    if lb.started_code:
+        # Only while that game is still going: after it ends, a new sign-up can start.
+        gd = await db.games.find_one({"code": lb.started_code}, {"_id": 0, "phase": 1, "archived": 1})
+        if not gd or gd.get("phase") == "ended" or gd.get("archived"):
+            return None
+    return lb
+
+
+async def _save_lobby(lb: Lobby) -> None:
+    lb.updated_at = datetime.now(timezone.utc).isoformat()
+    await db.lobbies.replace_one({"id": LOBBY_ID}, lb.model_dump(), upsert=True)
+
+
+def _prune(lb: Lobby) -> bool:
+    """Free unsaved boxes whose phone has gone away. True if any went."""
+    cutoff = datetime.now(timezone.utc) - LOBBY_HOLD
+    keep = []
+    for sl in lb.slots:
+        try:
+            stale = not sl.ready and datetime.fromisoformat(sl.touched_at) < cutoff
+        except ValueError:
+            stale = not sl.ready
+        if not stale:
+            keep.append(sl)
+    changed = len(keep) != len(lb.slots)
+    lb.slots = keep
+    return changed
+
+
+def _renew_holds(lb: Lobby, device: str) -> bool:
+    """This phone is still on the sign-up: keep its unsaved boxes held. True if any changed."""
+    now = datetime.now(timezone.utc)
+    changed = False
+    for sl in lb.slots:
+        if sl.device == device and not sl.ready:
+            try:
+                fresh = now - datetime.fromisoformat(sl.touched_at) < LOBBY_TOUCH_EVERY
+            except ValueError:
+                fresh = False
+            if not fresh:
+                sl.touched_at = now.isoformat()
+                changed = True
+    return changed
+
+
+def _host_slot(lb: Lobby) -> Optional[LobbySlot]:
+    return next((sl for sl in sorted(lb.slots, key=lambda x: x.pos) if sl.device == lb.host_device and sl.ready), None)
+
+
+def lobby_out(lb: Optional[Lobby], device: str) -> dict:
+    """What one phone sees of the sign-up. PINs never leave the server; a spot still being filled
+    in shows no name."""
+    if not lb:
+        return {"exists": False}
+    host = _host_slot(lb)
+    mine = [sl.id for sl in lb.slots if sl.device == device]
+    return {
+        "exists": True,
+        "you_host": device == lb.host_device,
+        "host_name": host.name if host else None,
+        "tables_per_day": lb.tables_per_day,
+        "slots": [
+            {
+                "id": sl.id,
+                "pos": sl.pos,
+                "name": sl.name if sl.ready else None,
+                "ready": sl.ready,
+                "mine": sl.device == device,
+                "host": host is not None and sl.id == host.id,
+            }
+            for sl in sorted(lb.slots, key=lambda x: x.pos)
+        ],
+        "ready_count": sum(1 for sl in lb.slots if sl.ready),
+        "max_players": MAX_PLAYERS,
+        "started_code": lb.started_code,
+        # Once the game is made: this phone's spots -> the players they became.
+        "my_players": {sid: pid for sid, pid in lb.started_players.items() if sid in mine} if lb.started_code else {},
+    }
+
+
+def _open_lobby(lb: Optional[Lobby]) -> Lobby:
+    if not lb or lb.started_code:
+        raise HTTPException(404, "There's no sign-up open — start a new one")
+    return lb
+
+
+def _my_slot(lb: Lobby, slot_id: Optional[str], device: str, host_ok: bool = False) -> LobbySlot:
+    sl = next((x for x in lb.slots if x.id == slot_id), None)
+    if not sl:
+        raise HTTPException(404, "That spot has gone — add yourself again")
+    if sl.device != device and not (host_ok and device == lb.host_device):
+        raise HTTPException(403, "Someone else is filling in that spot")
+    return sl
+
+
+@api_router.get("/lobby")
+async def get_lobby(device: str):
+    d = _device(device)
+    async with LOBBY_LOCK:
+        lb = await _load_lobby()
+        if lb and not lb.started_code and (_renew_holds(lb, d) | _prune(lb)):
+            await _save_lobby(lb)
+        return lobby_out(lb, d)
+
+
+@api_router.post("/lobby")
+async def open_lobby(data: LobbyIn):
+    """Start a sign-up (this phone hosts it) — or, if one is already open, just show it."""
+    d = _device(data.device)
+    async with LOBBY_LOCK:
+        if await current_game_doc():
+            raise HTTPException(409, "A game is already in progress. Join it — or the host can end it from the ⋯ menu first.")
+        lb = await _load_lobby()
+        if lb and not lb.started_code:
+            return lobby_out(lb, d)
+        tables = data.tables_per_day if data.tables_per_day in (1, 2) else 2
+        lb = Lobby(host_device=d, tables_per_day=tables, slots=[LobbySlot(device=d, pos=0)])
+        await _save_lobby(lb)
+        return lobby_out(lb, d)
+
+
+@api_router.post("/lobby/join")
+async def join_lobby(data: LobbyIn):
+    """Hold a box for this phone at once: the one tapped (`pos`), or the first free one. A phone
+    already holding an unsaved box moves its hold to the new one rather than taking two."""
+    d = _device(data.device)
+    async with LOBBY_LOCK:
+        lb = _open_lobby(await _load_lobby())
+        _prune(lb)
+        taken = {sl.pos: sl for sl in lb.slots}
+        pos = data.pos
+        if pos is None:
+            pos = next((i for i in range(MAX_PLAYERS) if i not in taken), None)
+            if pos is None:
+                raise HTTPException(400, f"The game is full — {MAX_PLAYERS} players at most")
+        if not (0 <= pos < MAX_PLAYERS):
+            raise HTTPException(400, "Pick one of the boxes")
+        here = taken.get(pos)
+        if here and not (here.device == d and not here.ready):
+            raise HTTPException(409, "Someone has just taken that box — pick another")
+        if not here:
+            held = next((sl for sl in lb.slots if sl.device == d and not sl.ready), None)
+            if held:
+                held.pos = pos
+                held.touched_at = datetime.now(timezone.utc).isoformat()
+            else:
+                lb.slots.append(LobbySlot(device=d, pos=pos))
+        else:
+            here.touched_at = datetime.now(timezone.utc).isoformat()
+        await _save_lobby(lb)
+        return lobby_out(lb, d)
+
+
+@api_router.post("/lobby/save")
+async def save_lobby_slot(data: LobbyIn):
+    """Save a name and PIN into this phone's spot (also to change them later)."""
+    d = _device(data.device)
+    name = (data.name or "").strip()
+    pin = data.pin or ""
+    async with LOBBY_LOCK:
+        lb = _open_lobby(await _load_lobby())
+        sl = _my_slot(lb, data.slot_id, d)
+        if not name:
+            raise HTTPException(400, "Type your name")
+        if len(name) > 20:
+            raise HTTPException(400, "Keep your name to 20 characters")
+        if any(x.ready and x.id != sl.id and x.name.lower() == name.lower() for x in lb.slots):
+            raise HTTPException(400, f"{name} is already playing — add something to tell you apart")
+        if not (pin.isdigit() and len(pin) == 4):
+            raise HTTPException(400, "Choose a 4-digit PIN")
+        sl.name, sl.pin_hash, sl.ready = name, hash_pin(pin), True
+        sl.touched_at = datetime.now(timezone.utc).isoformat()
+        await _save_lobby(lb)
+        return lobby_out(lb, d)
+
+
+@api_router.post("/lobby/remove")
+async def remove_lobby_slot(data: LobbyIn):
+    """Take a spot off the sheet: your own, or (the host) anyone's."""
+    d = _device(data.device)
+    async with LOBBY_LOCK:
+        lb = _open_lobby(await _load_lobby())
+        sl = _my_slot(lb, data.slot_id, d, host_ok=True)
+        lb.slots = [x for x in lb.slots if x.id != sl.id]
+        await _save_lobby(lb)
+        return lobby_out(lb, d)
+
+
+@api_router.post("/lobby/settings")
+async def lobby_settings(data: LobbyIn):
+    d = _device(data.device)
+    async with LOBBY_LOCK:
+        lb = _open_lobby(await _load_lobby())
+        if d != lb.host_device:
+            raise HTTPException(403, "Only the host can change this")
+        if data.tables_per_day not in (1, 2):
+            raise HTTPException(400, "Choose one or two Round Tables a day")
+        lb.tables_per_day = data.tables_per_day
+        await _save_lobby(lb)
+        return lobby_out(lb, d)
+
+
+@api_router.post("/lobby/start")
+async def start_lobby(data: LobbyIn):
+    """The host chooses the Traitors: the sign-up becomes the game."""
+    d = _device(data.device)
+    async with LOBBY_LOCK:
+        lb = _open_lobby(await _load_lobby())
+        if d != lb.host_device:
+            raise HTTPException(403, "Only the host can start the game")
+        _prune(lb)
+        waiting = [sl for sl in lb.slots if not sl.ready]
+        if waiting:
+            n = len(waiting)
+            raise HTTPException(400, f"Wait for {n} more to finish adding their details — or remove {'that spot' if n == 1 else 'those spots'}")
+        ready = sorted((sl for sl in lb.slots if sl.ready), key=lambda x: x.pos)
+        if len(ready) < 4:
+            raise HTTPException(400, "You need at least 4 players (10–15 is ideal)")
+        secret = data.claudai_passphrase or None
+        if secret and passphrase_problem(secret):
+            raise HTTPException(400, PASSPHRASE_RULE)
+        if await current_game_doc():
+            raise HTTPException(409, "A game is already in progress. Join it — or the host can end it from the ⋯ menu first.")
+        host = _host_slot(lb)
+        g = await make_game(
+            [sl.name for sl in ready], [sl.pin_hash or "" for sl in ready], secret, lb.tables_per_day,
+            window=APP_MURDER_WINDOW_MIN, skip_day=True, plot_alone=True,
+            host_index=ready.index(host) if host else 0,
+        )
+        lb.started_code = g.code
+        lb.started_players = {sl.id: pl.id for sl, pl in zip(ready, g.players)}
+        await _save_lobby(lb)
+        return lobby_out(lb, d)
+
+
+@api_router.delete("/lobby")
+async def cancel_lobby(device: str):
+    d = _device(device)
+    async with LOBBY_LOCK:
+        lb = _open_lobby(await _load_lobby())
+        if d != lb.host_device:
+            raise HTTPException(403, "Only the host can cancel the sign-up")
+        lb.cancelled = True
+        await _save_lobby(lb)
+        return {"exists": False}
 
 
 class EndGameIn(BaseModel):

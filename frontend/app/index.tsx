@@ -19,6 +19,7 @@ import { useMe } from "@/src/me";
 import { inviteLink, shareInvite, shareToWhatsApp } from "@/src/utils/invite";
 import { fonts, makeStyles, radius, spacing, useTheme } from "@/src/theme";
 
+import { claimFromLobby, useDeviceId } from "@/src/lobby";
 import Setup from "./setup";
 
 type ActiveGame = Extract<GameState, { exists: true }>;
@@ -101,9 +102,13 @@ function NoGame({ gone }: { gone: boolean }) {
   });
   // Only ever act on an answer fetched now, never on a cached one from before.
   const live = isFetchedAfterMount && current?.code ? current.code : null;
+  const device = useDeviceId();
+  const { setMe } = useMe();
   useEffect(() => {
-    if (live) void setCode(live);
-  }, [live, setCode]);
+    if (!live || !device) return;
+    // A game made from the sign-up: this phone becomes its player's phone (if it signed up one).
+    void claimFromLobby(device, live, setMe).then(() => setCode(live));
+  }, [live, device, setCode, setMe]);
 
   if (!forgetting && isFetchedAfterMount && error && !current) {
     return (

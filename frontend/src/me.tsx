@@ -14,7 +14,8 @@ const KEY_PIN = "me_pin";
 type Me = { playerId: string; pin: string };
 type Ctx = {
   me: Me | null;
-  setMe: (playerId: string, pin: string) => Promise<void>;
+  /** `forCode`: the game this is for, when the phone hasn't switched to it yet. */
+  setMe: (playerId: string, pin: string, forCode?: string) => Promise<void>;
   clearMe: () => Promise<void>;
 };
 const MeContext = createContext<Ctx>({ me: null, setMe: async () => {}, clearMe: async () => {} });
@@ -40,9 +41,10 @@ export function MeProvider({ children }: { children: React.ReactNode }) {
     return () => { active = false; };
   }, [code]);
 
-  const setMe = useCallback(async (playerId: string, pin: string) => {
+  const setMe = useCallback(async (playerId: string, pin: string, forCode?: string) => {
     setMeState({ playerId, pin });
-    if (code) await storage.setItem(KEY_CODE, code);
+    const c = forCode ?? code;
+    if (c) await storage.setItem(KEY_CODE, c);
     await storage.setItem(KEY_PID, playerId);
     await storage.setItem(KEY_PIN, pin);
   }, [code]);
