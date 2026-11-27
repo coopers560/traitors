@@ -1643,8 +1643,8 @@ async def make_game(names: List[str], pin_hashes: List[str], secret: Optional[st
 
 
 # ---------------- The sign-up sheet: everyone adds themselves on their own phone ----------------
-# One group, one sign-up at a time. Whoever opens it is the host. The sheet is a column of numbered
-# boxes: tapping an empty one holds it for that phone straight away, so two people can never type
+# One group, one sign-up at a time. Whoever opens it is the host, and box 1 is always theirs. The
+# sheet is a column of numbered boxes: tapping an empty one holds it for that phone straight away, so two people can never type
 # into the same box. The hold lasts only while that phone stays on the sign-up (each refresh keeps
 # it): leave without saving and the box frees up again. Saving a name and PIN keeps the box for
 # good — only that phone (or the host) can then change or remove it. Every phone watches the sheet
@@ -1867,13 +1867,18 @@ async def join_lobby(data: LobbyIn):
         lb = _open_lobby(await _load_lobby())
         _prune(lb)
         taken = {sl.pos: sl for sl in lb.slots}
+        is_host = d == lb.host_device
         pos = data.pos
+        if is_host and 0 not in taken:
+            pos = 0  # box 1 is always the host's
         if pos is None:
-            pos = next((i for i in range(MAX_PLAYERS) if i not in taken), None)
+            pos = next((i for i in range(1, MAX_PLAYERS) if i not in taken), None)
             if pos is None:
                 raise HTTPException(400, f"The game is full — {MAX_PLAYERS} players at most")
         if not (0 <= pos < MAX_PLAYERS):
             raise HTTPException(400, "Pick one of the boxes")
+        if pos == 0 and not is_host:
+            raise HTTPException(409, "Box 1 is kept for the host — pick another")
         here = taken.get(pos)
         if here and not (here.device == d and not here.ready):
             raise HTTPException(409, "Someone has just taken that box — pick another")

@@ -292,3 +292,16 @@ def test_a_game_made_the_old_way_closes_the_open_sign_up():
             await server.db.games.update_one({"code": code}, {"$set": {"phase": "ended"}})
         asyncio.run(end())
         assert _lobby(c, HOST) == {"exists": False}  # the old sheet doesn't come back
+
+
+def test_box_one_is_always_the_hosts():
+    _clean()
+    with TestClient(server.app) as c:
+        st = c.post("/api/lobby", json={"device": HOST}).json()
+        assert st["slots"][0]["pos"] == 0 and st["slots"][0]["mine"]
+        c.post("/api/lobby/remove", json={"device": HOST, "slot_id": st["slots"][0]["id"]})
+        assert c.post("/api/lobby/join", json={"device": PHONES[0], "pos": 0}).status_code == 409
+        st = c.post("/api/lobby/join", json={"device": PHONES[0]}).json()
+        assert [s["pos"] for s in st["slots"] if s["mine"]] == [1]  # never box 1
+        st = c.post("/api/lobby/join", json={"device": HOST, "pos": 5}).json()
+        assert [s["pos"] for s in st["slots"] if s["mine"]] == [0]  # the host goes back to box 1
