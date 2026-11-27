@@ -4,6 +4,7 @@ import { Pressable, ScrollView, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { Body, Button, Eyebrow, Title } from "@/src/components/ui";
+import { SHOW_CLAUDAI } from "@/src/features";
 import { fonts, makeStyles, radius, spacing, useTheme } from "@/src/theme";
 
 // Rules only, and nothing that would spoil a game: no examples of the secret
@@ -79,7 +80,7 @@ export default function HowToPlay() {
           <Eyebrow>12 days · one hit and you&apos;re out</Eyebrow>
           <Title>The rules</Title>
         </View>
-        {STEPS.map((s) => (
+        {STEPS.filter((s) => SHOW_CLAUDAI || !/ClaudAI/.test(s.title)).map((s) => (
           <View key={s.title} style={styles.card}>
             <View style={styles.cardHead}>
               <Ionicons name={s.icon} size={24} color={colors.brand} />

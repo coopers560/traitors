@@ -5,6 +5,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { ScreenHeader } from "@/src/components/screen-header";
 import { Body, Button, Eyebrow, Title } from "@/src/components/ui";
+import { SHOW_CLAUDAI } from "@/src/features";
 import { fonts, makeStyles, radius, spacing, useTheme } from "@/src/theme";
 
 // Everything on this page is fixed text, identical for every player and every
@@ -22,7 +23,7 @@ const QUICK: string[] = [
   "Do what the screen says, then hide it and hand the phone back.",
 ];
 
-const SECTIONS: Section[] = [
+const ALL_SECTIONS: Section[] = [
   {
     id: "welcome",
     icon: "home-outline",
@@ -151,6 +152,11 @@ const SECTIONS: Section[] = [
     ],
   },
 ];
+
+// While ClaudAI is hidden (src/features.ts), Help doesn't mention it.
+const SECTIONS: Section[] = SHOW_CLAUDAI
+  ? ALL_SECTIONS
+  : ALL_SECTIONS.map((sec) => ({ ...sec, tips: sec.tips.filter(([t, d]) => !/ClaudAI/.test(`${t} ${d}`)) }));
 
 // Where each screen's "?" lands. Several screens share a section.
 const FROM: Record<string, string> = {

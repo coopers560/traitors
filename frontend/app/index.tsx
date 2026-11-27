@@ -19,6 +19,7 @@ import { useMe } from "@/src/me";
 import { inviteLink, shareInvite, shareToWhatsApp } from "@/src/utils/invite";
 import { fonts, makeStyles, radius, spacing, useTheme } from "@/src/theme";
 
+import { SHOW_CLAUDAI } from "@/src/features";
 import { claimFromLobby, useDeviceId } from "@/src/lobby";
 import Setup from "./setup";
 
@@ -308,8 +309,10 @@ function Dashboard({ game, refreshing, onRefresh }: { game: ActiveGame; refreshi
           {boundPlayer ? (
             <Button testID="menu-forget-me-button" label={`Forget me on this phone (${boundPlayer.name})`} variant="secondary" icon="phone-portrait-outline" onPress={() => { setMenu(false); clearMe(); }} />
           ) : null}
-          <Button testID="menu-claudai-button" label="ClaudAI (host)" variant="secondary" icon="shield-half" onPress={() => { setMenu(false); router.push("/moderator"); }} />
-          {!game.claudai && phase !== "ended" ? (
+          {SHOW_CLAUDAI ? (
+            <Button testID="menu-claudai-button" label="ClaudAI (host)" variant="secondary" icon="shield-half" onPress={() => { setMenu(false); router.push("/moderator"); }} />
+          ) : null}
+          {SHOW_CLAUDAI && !game.claudai && phase !== "ended" ? (
             <Button testID="menu-nominate-claudai-button" label="Nominate a ClaudAI host" variant="secondary" icon="shield-half-outline" onPress={() => { setMenu(false); setNominate(true); }} />
           ) : null}
           <Button testID="menu-end-game-button" label="End this game for everyone" variant="danger" icon="trash-outline" onPress={() => { setMenu(false); setEndPin(""); endGame.reset(); setConfirmEnd(true); }} />

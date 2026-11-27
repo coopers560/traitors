@@ -8,6 +8,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { api, ApiError, Lobby, LobbySlot, passphraseProblem } from "@/src/api";
 import { HelpButton } from "@/src/components/help-button";
+import { SHOW_CLAUDAI } from "@/src/features";
 import { useGameCode } from "@/src/game-code";
 import { claimMyPlayer, rememberSpotPin, useDeviceId } from "@/src/lobby";
 import { useMe } from "@/src/me";
@@ -456,37 +457,39 @@ function HostControls({ lobby, device, put }: { lobby: OpenLobby; device: string
         })}
       </View>
 
-      <View style={styles.claudai} testID="setup-claudai">
-        <Pressable
-          testID="setup-claudai-toggle"
-          onPress={() => setClaudai((v) => !v)}
-          style={styles.claudaiRow}
-          accessibilityRole="checkbox"
-          accessibilityState={{ checked: claudai }}
-        >
-          <Ionicons name={claudai ? "checkbox" : "square-outline"} size={26} color={colors.brand} />
-          <View style={{ flex: 1 }}>
-            <Text style={styles.claudaiTitle}>
-              Add Claud<Text style={{ color: colors.traitor }}>AI</Text>
-            </Text>
-            <Text style={[styles.note, { textAlign: "left" }]}>
-              A host who sees every role and move, so nobody else has to. Opened from the ⋯ menu (“ClaudAI (host)”) with its own passphrase.
-            </Text>
-          </View>
-        </Pressable>
-        {claudai ? (
-          <>
-            <PassphraseFields testID="setup-claudai-pin" value={modPass} confirm={modPass2} onChange={setModPass} onConfirmChange={setModPass2} />
-            <View style={styles.warnRow} testID="setup-claudai-warning">
-              <Ionicons name="warning-outline" size={18} color={colors.traitor} style={{ marginTop: 1 }} />
-              <Text style={styles.warnText}>
-                Give it only to the ClaudAI host and write it down somewhere safe. It can never be recovered or reset —
-                there is no master key, not even for the app&apos;s makers. Lose it and nobody can open ClaudAI for this game.
+      {SHOW_CLAUDAI ? (
+        <View style={styles.claudai} testID="setup-claudai">
+          <Pressable
+            testID="setup-claudai-toggle"
+            onPress={() => setClaudai((v) => !v)}
+            style={styles.claudaiRow}
+            accessibilityRole="checkbox"
+            accessibilityState={{ checked: claudai }}
+          >
+            <Ionicons name={claudai ? "checkbox" : "square-outline"} size={26} color={colors.brand} />
+            <View style={{ flex: 1 }}>
+              <Text style={styles.claudaiTitle}>
+                Add Claud<Text style={{ color: colors.traitor }}>AI</Text>
+              </Text>
+              <Text style={[styles.note, { textAlign: "left" }]}>
+                A host who sees every role and move, so nobody else has to. Opened from the ⋯ menu (“ClaudAI (host)”) with its own passphrase.
               </Text>
             </View>
-          </>
-        ) : null}
-      </View>
+          </Pressable>
+          {claudai ? (
+            <>
+              <PassphraseFields testID="setup-claudai-pin" value={modPass} confirm={modPass2} onChange={setModPass} onConfirmChange={setModPass2} />
+              <View style={styles.warnRow} testID="setup-claudai-warning">
+                <Ionicons name="warning-outline" size={18} color={colors.traitor} style={{ marginTop: 1 }} />
+                <Text style={styles.warnText}>
+                  Give it only to the ClaudAI host and write it down somewhere safe. It can never be recovered or reset —
+                  there is no master key, not even for the app&apos;s makers. Lose it and nobody can open ClaudAI for this game.
+                </Text>
+              </View>
+            </>
+          ) : null}
+        </View>
+      ) : null}
 
       <Button
         testID="lobby-cancel-signup"
