@@ -97,6 +97,7 @@ const ALL_SECTIONS: Section[] = [
       ["Wrong PIN?", "The dots clear. Just try again."],
       ["Follow the screen.", "Sometimes there is a choice to make, sometimes only a button to pass the phone on."],
       ["Everyone takes a turn", "to see their role, check in and vote — and every turn looks the same from across the room. Don't skip yours."],
+      ["Change my PIN", "under your role card: type the new one twice. Your own phone remembers the new one; any other phone just asks for it."],
       ["Your role", "hold the card — it shows after 2 seconds; let go and it hides again."],
       ["Traitors' menu", "keep holding 6 more seconds. Everyone can open it; only the Traitors can use it — plan the murder (or lie low, or recruit), fellow Traitors and the secret chat (with who's seen each message)."],
       ["Always finish", "with the button at the bottom so the screen is hidden before the phone leaves your hand."],

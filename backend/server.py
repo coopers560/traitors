@@ -2101,6 +2101,26 @@ async def private_view(code: str, data: AuthIn):
     return private_out(g, p)
 
 
+class ChangePinIn(AuthIn):
+    new_pin: str
+
+
+@api_router.post("/games/{code}/pin")
+@locked
+async def change_pin(code: str, data: ChangePinIn):
+    """A player changes their own 4-digit PIN during the game (the current one proves it's them).
+    Any phone that remembered the old PIN simply asks for the new one next time."""
+    g = await require_game(code)
+    p = auth(g, data)
+    new = data.new_pin or ""
+    if not (new.isdigit() and len(new) == 4):
+        raise HTTPException(400, "Choose a 4-digit PIN")
+    p.pin_hash = hash_pin(new)
+    log(g, "pin", f"{p.name} changed their PIN")
+    await save(g)
+    return {"ok": True}
+
+
 @api_router.post("/games/{code}/turn")
 @locked
 async def take_turn(code: str, data: TurnIn):
